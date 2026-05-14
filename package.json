@@ -1,0 +1,31 @@
+{
+  "name": "crawler-qa-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Playwright-based QA automation for Revenge Games canvas games",
+  "type": "module",
+  "scripts": {
+    "record": "tsx src/discovery/record-traffic.ts",
+    "analyze": "tsx src/discovery/analyze.ts",
+    "auto": "tsx src/auto-play.ts",
+    "rules": "tsx src/extract-rules.ts",
+    "options": "tsx src/extract-options.ts",
+    "qa": "tsx src/generate-and-run.ts",
+    "serve": "tsx src/server/index.ts",
+    "clean": "tsx src/clean.ts",
+    "test": "playwright test",
+    "report": "playwright show-report"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.118",
+    "@anthropic-ai/sdk": "^0.88.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0",
+    "@types/node": "^22.7.0",
+    "dotenv": "^16.4.5",
+    "playwright": "^1.60.0",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.2"
+  }
+}
