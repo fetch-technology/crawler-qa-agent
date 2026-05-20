@@ -1,0 +1,130 @@
+[
+  {
+    "n": 1,
+    "filename": "001-hybrid-pregame-00.png",
+    "label": "hybrid-pregame-00",
+    "scope": null,
+    "caseScope": null,
+    "timestamp": "2026-05-15T06:02:48.781Z"
+  },
+  {
+    "n": 2,
+    "filename": "002-hybrid-pregame-01.png",
+    "label": "hybrid-pregame-01",
+    "scope": null,
+    "caseScope": null,
+    "timestamp": "2026-05-15T06:02:57.725Z"
+  },
+  {
+    "n": 3,
+    "filename": "003-hybrid-pregame-02.png",
+    "label": "hybrid-pregame-02",
+    "scope": null,
+    "caseScope": null,
+    "timestamp": "2026-05-15T06:03:05.045Z"
+  },
+  {
+    "n": 4,
+    "filename": "004-hybrid-pregame-03.png",
+    "label": "hybrid-pregame-03",
+    "scope": null,
+    "caseScope": null,
+    "timestamp": "2026-05-15T06:03:13.114Z"
+  },
+  {
+    "n": 5,
+    "filename": "005-hybrid-pregame-04.png",
+    "label": "hybrid-pregame-04",
+    "scope": null,
+    "caseScope": null,
+    "timestamp": "2026-05-15T06:03:21.622Z"
+  },
+  {
+    "n": 6,
+    "filename": "006-hybrid-pregame-05.png",
+    "label": "hybrid-pregame-05",
+    "scope": null,
+    "caseScope": null,
+    "timestamp": "2026-05-15T06:03:30.974Z"
+  },
+  {
+    "n": 7,
+    "filename": "007-hybrid-pregame-06.png",
+    "label": "hybrid-pregame-06",
+    "scope": null,
+    "caseScope": null,
+    "timestamp": "2026-05-15T06:03:39.655Z"
+  },
+  {
+    "n": 8,
+    "filename": "008-hybrid-pregame-07.png",
+    "label": "hybrid-pregame-07",
+    "scope": null,
+    "caseScope": null,
+    "timestamp": "2026-05-15T06:03:49.943Z"
+  },
+  {
+    "n": 9,
+    "filename": "009-hybrid-pregame-nowin-00.png",
+    "label": "hybrid-pregame-nowin-00",
+    "scope": null,
+    "caseScope": null,
+    "timestamp": "2026-05-15T06:03:59.148Z"
+  },
+  {
+    "n": 10,
+    "filename": "010-hybrid-pregame-nowin-01.png",
+    "label": "hybrid-pregame-nowin-01",
+    "scope": null,
+    "caseScope": null,
+    "timestamp": "2026-05-15T06:04:06.239Z"
+  },
+  {
+    "n": 11,
+    "filename": "011-hybrid-pregame-nowin-02.png",
+    "label": "hybrid-pregame-nowin-02",
+    "scope": null,
+    "caseScope": null,
+    "timestamp": "2026-05-15T06:04:13.991Z"
+  },
+  {
+    "n": 12,
+    "filename": "012-hybrid-pregame-nowin-03.png",
+    "label": "hybrid-pregame-nowin-03",
+    "scope": null,
+    "caseScope": null,
+    "timestamp": "2026-05-15T06:04:21.712Z"
+  },
+  {
+    "n": 13,
+    "filename": "013-hybrid-pregame-nowin-04.png",
+    "label": "hybrid-pregame-nowin-04",
+    "scope": null,
+    "caseScope": null,
+    "timestamp": "2026-05-15T06:04:32.904Z"
+  },
+  {
+    "n": 14,
+    "filename": "014-hybrid-pregame-nowin-05.png",
+    "label": "hybrid-pregame-nowin-05",
+    "scope": null,
+    "caseScope": null,
+    "timestamp": "2026-05-15T06:04:43.593Z"
+  },
+  {
+    "n": 15,
+    "filename": "015-hybrid-pregame-nowin-06.png",
+    "label": "hybrid-pregame-nowin-06",
+    "scope": null,
+    "caseScope": null,
+    "timestamp": "2026-05-15T06:04:52.987Z"
+  },
+  {
+    "n": 16,
+    "filename": "016-hybrid-pregame-nowin-07.png",
+    "label": "hybrid-pregame-nowin-07",
+    "scope": null,
+    "caseScope": null,
+    "timestamp": "2026-05-15T06:05:01.774Z"
+  }
+]

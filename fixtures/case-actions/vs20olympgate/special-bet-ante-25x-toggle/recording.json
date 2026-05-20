@@ -1,0 +1,15 @@
+{
+  "slug": "vs20olympgate",
+  "case_id": "special-bet-ante-25x-toggle",
+  "recorded_at": "2026-05-19T12:07:31.225Z",
+  "instructions": [
+    "click the special bet toggle (Ante Bet / Double Chance / Special Bet button — usually below or beside spin button, labeled with '+25%' or 'ANTE' or '2x')"
+  ],
+  "clicks": [],
+  "baseline_png": "fixtures/case-actions/vs20olympgate/special-bet-ante-25x-toggle/baseline.png",
+  "max_diff_ratio": 0.05,
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  }
+}

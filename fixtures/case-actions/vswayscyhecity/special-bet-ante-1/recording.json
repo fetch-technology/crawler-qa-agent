@@ -1,0 +1,23 @@
+{
+  "slug": "vswayscyhecity",
+  "case_id": "special-bet-ante-1",
+  "recorded_at": "2026-05-20T01:59:35.981Z",
+  "instructions": [
+    "locate and click the special bet toggle (Ante/Double Chance/Special Bet)"
+  ],
+  "clicks": [
+    {
+      "x": 105,
+      "y": 565,
+      "delay_ms": 4473,
+      "reason": "Special Bets toggle button",
+      "step": 0
+    }
+  ],
+  "baseline_png": "fixtures/case-actions/vswayscyhecity/special-bet-ante-1/baseline.png",
+  "max_diff_ratio": 0.05,
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  }
+}

@@ -8,7 +8,7 @@ import {
   type TranscribedScreenValues,
 } from "../ai/vision.js";
 import { ScreenshotStore, getScreenshotStore } from "./screenshot-store.js";
-import { waitForGamePlayScreen } from "./pre-game.js";
+import { preGameWithReplayOrVision } from "./pre-game-replay.js";
 import {
   tryParseBody,
   scoreSpinShape,
@@ -16,11 +16,12 @@ import {
   shouldSkipUrl,
 } from "./spin-detect.js";
 import { applyFieldMapping, type FieldMapping } from "../ai/network-detect.js";
+import { resolveSpinButton } from "./spin-button-resolve.js";
 import { writeFileSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
 function loadHintsMapping(): FieldMapping | null {
-  const hintsFile = process.env.QA_HINTS_FILE;
+  const hintsFile = process.env.QA_HINTS_FILE ?? inferHintsFileFromGameUrl();
   if (!hintsFile) return null;
   try {
     if (!existsSync(hintsFile)) return null;
@@ -28,6 +29,19 @@ function loadHintsMapping(): FieldMapping | null {
     if (data?.field_mapping) return data.field_mapping as FieldMapping;
   } catch {}
   return null;
+}
+
+function inferHintsFileFromGameUrl(): string | null {
+  const gameUrl = process.env.GAME_URL;
+  if (!gameUrl) return null;
+  try {
+    const slug = new URL(gameUrl).pathname.split("/").filter(Boolean)[0];
+    if (!slug) return null;
+    const p = join("fixtures", "specs", slug, "network-hints.json");
+    return existsSync(p) ? p : null;
+  } catch {
+    return null;
+  }
 }
 
 export { test, expect };
@@ -349,6 +363,56 @@ export type SpinResponse = Record<string, unknown> & {
 const VIEWPORT = { width: 1440, height: 900 };
 const SPIN_URL_PATTERN = getSpinUrlPattern();
 
+function inferFallbackSpinButton(url: string): { x: number; y: number } {
+  // Pragmatic layouts are right-bottom and often drift near +/- controls.
+  if (/\/\/pp\.|pragmatic/i.test(url)) return { x: 1120, y: 840 };
+  // Legacy generic fallback.
+  return { x: 720, y: 810 };
+}
+
+function isSpinIntent(reason: string): boolean {
+  return /\bspin\b|start spin|start the next spin|reels?.*spin|single spin|press spin/i.test(
+    reason,
+  );
+}
+
+async function probeSpinAroundHint(
+  page: Page,
+  hint: { x: number; y: number } | null,
+  maxAttempts = 6,
+): Promise<boolean> {
+  if (!hint) return false;
+  const offsets = [
+    { dx: 0, dy: 0 },
+    { dx: -36, dy: 0 },
+    { dx: 36, dy: 0 },
+    { dx: 0, dy: -36 },
+    { dx: 0, dy: 36 },
+    { dx: -28, dy: -28 },
+    { dx: 28, dy: -28 },
+    { dx: -28, dy: 28 },
+    { dx: 28, dy: 28 },
+  ];
+  for (const o of offsets.slice(0, Math.max(1, maxAttempts))) {
+    const px = Math.max(1, Math.min(VIEWPORT.width - 1, hint.x + o.dx));
+    const py = Math.max(1, Math.min(VIEWPORT.height - 1, hint.y + o.dy));
+    await page.mouse.move(px, py);
+    await page.waitForTimeout(70);
+    await page.mouse.click(px, py);
+    const got = await page
+      .waitForResponse(
+        (r) =>
+          SPIN_URL_PATTERN.test(r.url()) &&
+          (r.request().method() === "POST" || r.request().method() === "GET"),
+        { timeout: 1_200 },
+      )
+      .then(() => true)
+      .catch(() => false);
+    if (got) return true;
+  }
+  return false;
+}
+
 export type SpinEvent = {
   kind: "spin";
   taskId: string | null;
@@ -374,6 +438,7 @@ export class SpinCollector {
   private taskId: string | null = null;
   private lastBalance: number | null = null;
   private fieldMapping: FieldMapping | null = null;
+  spinButtonHint: { x: number; y: number } | null = null;
 
   constructor(public page: Page) {
     this.taskId = process.env.QA_TASK_ID ?? null;
@@ -482,28 +547,41 @@ export async function openGame(page: Page, url: string): Promise<SpinCollector> 
   await page.setViewportSize(VIEWPORT);
   await page.goto(url, { waitUntil: "domcontentloaded" });
 
-  // Chờ render sơ bộ, rồi loop AI cho tới khi play screen ready.
-  // AI tự xử mọi blocker (age gate, terms, cookies, welcome, tutorial, loading).
+  // Replay-first pre-game by default, vision as fallback.
   await page.waitForTimeout(2_500);
-  const res = await waitForGamePlayScreen(page, {
+  const slug = (() => {
+    try {
+      const p = new URL(url).pathname.split("/").filter(Boolean)[0];
+      return p || "unknown";
+    } catch {
+      return "unknown";
+    }
+  })();
+  const res = await preGameWithReplayOrVision(page, {
+    slug,
     viewport: VIEWPORT,
     label: "pre-game",
-    maxIterations: Number(process.env.PRE_GAME_MAX_ITERATIONS ?? 25),
+    forceVision: process.env.PRE_GAME_FORCE_VISION === "1",
   });
   if (!res.ready) {
     console.warn(
-      `[openGame] WARNING: play screen chưa ready sau ${res.iterations} iter (${res.reason}). Test có thể fail.`,
+      `[openGame] WARNING: play screen chưa ready (source=${res.source}). Test có thể fail.`,
     );
   }
+
+  const sb = resolveSpinButton(res, inferFallbackSpinButton(url));
+  collector.spinButtonHint = sb.coord;
+  console.log(
+    `[openGame] spin button hint (${sb.coord.x},${sb.coord.y}) source=${sb.source}`,
+  );
 
   const store = getScreenshotStore();
   await store.take(page, "game-ready");
   emitEvent("game_ready", {
     url,
+    source: res.source,
+    autoHealed: res.autoHealed,
     ready: res.ready,
-    dismissed: res.dismissed,
-    iterations: res.iterations,
-    visible_elements: res.lastVisibleElements,
     screenshotDir: store.dir,
   });
   return collector;
@@ -527,12 +605,35 @@ export async function doAutoSpin(
   await store.take(page, `spin-${snum}-before`);
   let lastAction: { action: string; reason: string } | null = null;
 
+  // Fast path: probe spin around resolved hint before entering AI loop.
+  if (await probeSpinAroundHint(page, collector.spinButtonHint, 5)) {
+    await page.waitForTimeout(2_000);
+    if (collector.spins.length > startCount) {
+      await store.take(page, `spin-${snum}-after`);
+      return collector.last();
+    }
+  }
+
   for (let i = 0; i < maxIter; i++) {
     // Nếu đã có spin mới thì return luôn
     if (collector.spins.length > startCount) {
       await page.waitForTimeout(2_500);
       await store.take(page, `spin-${snum}-after`);
       return collector.last();
+    }
+
+    // If still no progress, periodically try deterministic probe first to
+    // avoid spending many expensive vision turns on a drifting click target.
+    if (i >= 2 && i % 2 === 0) {
+      const hit = await probeSpinAroundHint(page, collector.spinButtonHint, 4);
+      actionTrace.push(`[${i}] probe-first hit=${hit}`);
+      if (hit) {
+        await page.waitForTimeout(2_000);
+        if (collector.spins.length > startCount) {
+          await store.take(page, `spin-${snum}-after`);
+          return collector.last();
+        }
+      }
     }
 
     const shotPath = await store.take(page, `spin-${snum}-iter-${String(i).padStart(2, "0")}`);
@@ -549,22 +650,62 @@ export async function doAutoSpin(
     );
 
     if (decision.action === "click") {
-      const spinPromise = page
-        .waitForResponse(
-          (r) => SPIN_URL_PATTERN.test(r.url()) && r.request().method() === "POST",
-          { timeout: 15_000 },
-        )
-        .catch(() => null);
+      const spinIntent = isSpinIntent(decision.reason);
+      const spinPromise = spinIntent
+        ? page
+            .waitForResponse(
+              (r) =>
+                SPIN_URL_PATTERN.test(r.url()) &&
+                (r.request().method() === "POST" || r.request().method() === "GET"),
+              { timeout: 8_000 },
+            )
+            .catch(() => null)
+        : null;
 
       await page.mouse.move(decision.x, decision.y);
       await page.waitForTimeout(150);
       await page.mouse.click(decision.x, decision.y);
 
-      if (/spin|play|bet/i.test(decision.reason)) {
+      if (spinPromise) {
         await spinPromise;
       } else {
         await page.waitForTimeout(1_500);
       }
+
+      // Fallback probe: nếu đây là spin-intent click nhưng chưa thấy spin mới,
+      // thử click quanh spin hint để giảm no-spin-response do lệch tọa độ.
+      if (spinIntent && collector.spins.length <= startCount && collector.spinButtonHint) {
+        const h = collector.spinButtonHint;
+        const probeOffsets = [
+          { dx: 0, dy: 0 },
+          { dx: -36, dy: 0 },
+          { dx: 36, dy: 0 },
+          { dx: 0, dy: -36 },
+          { dx: 0, dy: 36 },
+          { dx: -28, dy: -28 },
+          { dx: 28, dy: -28 },
+          { dx: -28, dy: 28 },
+          { dx: 28, dy: 28 },
+        ];
+        for (const p of probeOffsets) {
+          if (collector.spins.length > startCount) break;
+          const px = Math.max(1, Math.min(VIEWPORT.width - 1, h.x + p.dx));
+          const py = Math.max(1, Math.min(VIEWPORT.height - 1, h.y + p.dy));
+          actionTrace.push(`  ↪ probe_spin@(${px},${py})`);
+          await page.mouse.move(px, py);
+          await page.waitForTimeout(80);
+          await page.mouse.click(px, py);
+          await page
+            .waitForResponse(
+              (r) =>
+                SPIN_URL_PATTERN.test(r.url()) &&
+                (r.request().method() === "POST" || r.request().method() === "GET"),
+              { timeout: 1_200 },
+            )
+            .catch(() => null);
+        }
+      }
+
       await page.waitForTimeout(2_000);
 
       if (collector.spins.length > startCount) {

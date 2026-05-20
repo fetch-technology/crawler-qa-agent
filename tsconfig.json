@@ -14,5 +14,5 @@
     "rootDir": "src"
   },
   "include": ["src/**/*.ts", "tests/**/*.ts"],
-  "exclude": ["node_modules", "dist", "fixtures", "reports", "tests/generated"]
+  "exclude": ["node_modules", "dist", "fixtures", "reports", "tests/generated", "tests/deterministic-example.spec.ts", "tests/deterministic-integration.spec.ts", "tests/deterministic-hybrid.spec.ts", "tests/adapter-resolve.spec.ts", "tests/mechanics.spec.ts", "tests/pre-game-replay.spec.ts"]
 }

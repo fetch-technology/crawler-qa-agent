@@ -5,6 +5,13 @@ import type { TaskQueue } from "./queue.js";
 import type { Task, TaskSpinEvent } from "./types.js";
 import { buildCaseReport, writeCaseReport } from "./case-report.js";
 import { categorizeError } from "./error-categorize.js";
+import { extractLatestForSlug } from "../runner/scenario-extractor.js";
+import {
+  onRunPhaseStart,
+  onSpinEvent,
+  onCaseEnd,
+  onTaskComplete,
+} from "./db-writethrough.js";
 
 /**
  * Tìm test case trong Playwright JSON output → trả error/skip reason + duration.
@@ -130,8 +137,10 @@ export class TaskRunner {
     }
     const task = this.queue.get(taskId);
     if (!task) return { ok: false, error: "Task không tồn tại" };
-    const specPath = resolve(join("tests", "generated", `${task.gameSlug}.spec.ts`));
-    if (!existsSync(specPath)) {
+    // At least ONE spec (vision OR hybrid) must exist — actual selection in runSingleCase.
+    const visionSpec = resolve(join("tests", "generated", `${task.gameSlug}.spec.ts`));
+    const hybridSpec = resolve(join("tests", "generated", `${task.gameSlug}.hybrid.spec.ts`));
+    if (!existsSync(visionSpec) && !existsSync(hybridSpec)) {
       return { ok: false, error: `Chưa có file spec — chạy full pipeline trước` };
     }
     const hintsAbsPath = resolve(join("fixtures/specs", task.gameSlug, "network-hints.json"));
@@ -153,9 +162,64 @@ export class TaskRunner {
     const task = this.queue.get(taskId);
     if (!task) return { ok: false, error: "Task không tồn tại" };
 
-    const specPath = resolve(join("tests", "generated", `${task.gameSlug}.spec.ts`));
+    // Smart routing — mirror logic from generate-and-run.ts run phase:
+    // Prefer hybrid spec (deterministic, $0-0.20) when scenarios exist + hybrid
+    // spec file present. Fall back to vision spec when not (real LLM cost).
+    const visionSpecPath = resolve(join("tests", "generated", `${task.gameSlug}.spec.ts`));
+    const hybridSpecPath = resolve(join("tests", "generated", `${task.gameSlug}.hybrid.spec.ts`));
+    const { listScenarios } = await import("../runner/scenario.js");
+    const scenarios = listScenarios(task.gameSlug);
+    const forceVision = process.env.QA_FORCE_VISION === "1";
+    const useHybrid = !forceVision && scenarios.length > 0 && existsSync(hybridSpecPath);
+    const specPath = useHybrid ? hybridSpecPath : visionSpecPath;
     if (!existsSync(specPath)) {
       return { ok: false, error: `Chưa có file spec tại ${specPath} — chạy full pipeline trước` };
+    }
+    // Catalog/spec drift detection — if spec doesn't contain a test() block
+    // for this caseId (vd catalog re-named after Generate), auto-regen spec
+    // from current catalog (codegen, no AI call).
+    if (useHybrid) {
+      const { readFileSync } = await import("node:fs");
+      const specContent = readFileSync(specPath, "utf8");
+      const grepPattern = `test\\(["\\\`]${caseId}:`;
+      if (!new RegExp(grepPattern).test(specContent)) {
+        this.queue.appendLog(taskId, {
+          t: 0,
+          timestamp: new Date().toISOString(),
+          stream: "system",
+          text: `[regen] Case "${caseId}" không có trong spec — regen hybrid spec từ catalog hiện tại`,
+        });
+        try {
+          const catalogPath = join("fixtures/specs", task.gameSlug, `${task.gameSlug}.test-cases.json`);
+          if (existsSync(catalogPath)) {
+            const { generateHybridTestCode } = await import("../ai/authoring.js");
+            const { writeFileSync } = await import("node:fs");
+            const catalog = JSON.parse(readFileSync(catalogPath, "utf8"));
+            const code = generateHybridTestCode({
+              gameSlug: task.gameSlug,
+              harnessImportPath: "unused",
+              envVarUrl: "GAME_URL",
+              catalog,
+            });
+            if (code) {
+              writeFileSync(specPath, code);
+              this.queue.appendLog(taskId, {
+                t: 0,
+                timestamp: new Date().toISOString(),
+                stream: "system",
+                text: `[regen] ✓ Re-emitted ${specPath} from catalog (${catalog.cases?.length ?? "?"} cases)`,
+              });
+            }
+          }
+        } catch (err) {
+          this.queue.appendLog(taskId, {
+            t: 0,
+            timestamp: new Date().toISOString(),
+            stream: "system",
+            text: `[regen] Spec regen failed: ${(err as Error).message} — proceeding anyway (grep may still fail)`,
+          });
+        }
+      }
     }
     const hintsAbsPath = resolve(join("fixtures/specs", task.gameSlug, "network-hints.json"));
     if (!existsSync(hintsAbsPath)) {
@@ -169,7 +233,7 @@ export class TaskRunner {
       t: 0,
       timestamp: new Date().toISOString(),
       stream: "system",
-      text: `>>> Re-running single case: ${caseId}`,
+      text: `>>> Re-running single case: ${caseId} (mode=${useHybrid ? "hybrid/deterministic — $0" : "vision/LLM — $$$"})`,
     });
     // Reset case status → running
     this.queue.updateCaseResult(taskId, caseId, {
@@ -192,6 +256,7 @@ export class TaskRunner {
       QA_HINTS_FILE: hintsAbsPath,
       QA_TOTAL_TESTS: "1", // single case → cuối cùng → harness keep-open dựa vào flag
       PLAYWRIGHT_JSON_OUTPUT_FILE: playwrightJsonPath,
+      QA_SLUG: task.gameSlug, // hybrid spec reads this to select scenarios
     };
 
     // Grep theo prefix `caseId:` (test titles format `${id}: ${name}`).
@@ -276,6 +341,471 @@ export class TaskRunner {
     return { ok: true };
   }
 
+  /**
+   * Chạy statistical RTP sim cho slug. Trả về promise resolve khi xong.
+   * Không spawn subprocess — call simulate() trực tiếp để stream progress qua log.
+   *
+   * @returns Promise<{ ok, error?, report? }>
+   */
+  async runStatsSim(
+    taskId: string,
+    opts: { spins: number; concurrency?: number; throttleMs?: number; historyAudit?: boolean },
+  ): Promise<{ ok: boolean; error?: string; report?: unknown }> {
+    const task = this.queue.get(taskId);
+    if (!task) return { ok: false, error: "Task không tồn tại" };
+    if (this.currentProcess) {
+      return { ok: false, error: "Worker đang bận với task khác" };
+    }
+
+    const { simulate, formatReport, TokenExpiredError } = await import("../statistical/simulate.js");
+
+    const startedAt = Date.now();
+    this.queue.appendLog(taskId, {
+      t: 0,
+      timestamp: new Date().toISOString(),
+      stream: "system",
+      text: `>>> Stats sim start: ${opts.spins} spins, concurrency=${opts.concurrency ?? 4}`,
+    });
+
+    // Load GameSpec → enable consistency check (server bug detection per spin).
+    const { existsSync, readFileSync } = await import("node:fs");
+    const specPath = join("fixtures/specs", task.gameSlug, `${task.gameSlug}.spec.json`);
+    let spec = null;
+    if (existsSync(specPath)) {
+      try {
+        spec = JSON.parse(readFileSync(specPath, "utf8"));
+      } catch {}
+    }
+
+    try {
+      const result = await simulate({
+        slug: task.gameSlug,
+        spins: opts.spins,
+        concurrency: opts.concurrency,
+        throttleMs: opts.throttleMs,
+        progressEvery: Math.max(50, Math.floor(opts.spins / 20)),
+        spec,
+        historyAudit: opts.historyAudit ?? true,
+      });
+
+      const dur = Date.now() - startedAt;
+      const consistencyTag = result.consistency
+        ? `  consistency: ${result.consistency.payoutMismatches}❌ / ${result.consistency.spinsChecked} (${result.consistency.inconclusive} inconclusive)`
+        : "";
+      this.queue.appendLog(taskId, {
+        t: dur,
+        timestamp: new Date().toISOString(),
+        stream: "system",
+        text:
+          `<<< Stats done: RTP=${((result.observedRTP ?? 0) * 100).toFixed(2)}% ` +
+          `HF=${((result.hitFrequency ?? 0) * 100).toFixed(2)}% ` +
+          `(${result.spinsSuccessful}/${result.spinsRequested} ok)` +
+          consistencyTag,
+      });
+
+      // DB write-through: persist as TestRun + StatReport + ValidationErrors
+      try {
+        const { isDbEnabled, createTestRun, upsertStatReport, insertValidationErrors, updateTestRunStatus } = await import(
+          "../db/index.js"
+        );
+        if (isDbEnabled()) {
+          const testRunId = await createTestRun({
+            gameCode: task.gameSlug,
+            url: task.gameUrl,
+            status: "running",
+            totalSpins: opts.spins,
+          });
+          if (testRunId) {
+            await updateTestRunStatus(testRunId, {
+              startedAt: new Date(startedAt),
+              endedAt: new Date(),
+              completedSpins: result.spinsSuccessful,
+              status: "completed",
+            });
+            await upsertStatReport({
+              testRunId,
+              totalSpins: result.spinsSuccessful,
+              totalBet: result.totalBet,
+              totalWin: result.totalWin,
+              rtp: result.observedRTP,
+              hitRate: result.hitFrequency,
+              maxWin: result.maxWin,
+              averageWin: result.averageWin,
+              volatility: result.volatility,
+              volatilityBand: result.volatilityBand,
+              rtpConfidence95: result.rtpConfidence95,
+              metrics: {
+                featureFrequency: result.featureFrequency,
+                symbolDistribution: result.symbolDistribution,
+                winDistribution: result.winDistribution,
+                maxWinMultiplier: result.maxWinMultiplier,
+                consistency: result.consistency,
+                source: "dashboard-run-stats",
+              },
+            });
+            if (result.consistency && result.consistency.examples.length > 0) {
+              await insertValidationErrors(
+                result.consistency.examples.map((ex) => ({
+                  testRunId,
+                  errorType: "PAYOUT_MISMATCH",
+                  severity: "error" as const,
+                  expectedValue: ex.expected.toFixed(4),
+                  actualValue: ex.actual.toFixed(4),
+                  message: `spin#${ex.spinIndex}: server=${ex.actual.toFixed(4)} vs rule-engine=${ex.expected.toFixed(4)} (Δ=${ex.delta.toFixed(4)}) reels=${ex.reels.slice(0, 30)}`,
+                })),
+              );
+              this.queue.appendLog(taskId, {
+                t: Date.now() - startedAt,
+                timestamp: new Date().toISOString(),
+                stream: "system",
+                text: `❌ Recorded ${result.consistency.examples.length} payout mismatch(es) → /api/test-runs/${testRunId}/errors`,
+              });
+            }
+          }
+        }
+      } catch (err) {
+        console.warn(`[runStatsSim] DB persist failed: ${(err as Error).message}`);
+      }
+
+      // Persist report (filesystem)
+      const { mkdirSync, writeFileSync } = await import("node:fs");
+      const outDir = "fixtures/statistical";
+      mkdirSync(outDir, { recursive: true });
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const outPath = join(outDir, `${task.gameSlug}-${stamp}.json`);
+      writeFileSync(outPath, JSON.stringify(result, null, 2));
+
+      // Log human-readable report
+      for (const line of formatReport(result).split("\n")) {
+        this.queue.appendLog(taskId, {
+          t: Date.now() - startedAt,
+          timestamp: new Date().toISOString(),
+          stream: "stdout",
+          text: line,
+        });
+      }
+
+      return { ok: true, report: { ...result, reportPath: outPath } };
+    } catch (err) {
+      const isTokenExpired = err instanceof TokenExpiredError;
+      const msg = (err as Error).message;
+      this.queue.appendLog(taskId, {
+        t: Date.now() - startedAt,
+        timestamp: new Date().toISOString(),
+        stream: "stderr",
+        text: `Stats failed${isTokenExpired ? " (token expired)" : ""}: ${msg}`,
+      });
+      return { ok: false, error: msg };
+    }
+  }
+
+  /**
+   * Kick off Playwright run cho hybrid spec (LLM pre-game + deterministic spin).
+   * Fire-and-forget: response trả ngay, output stream qua existing SSE.
+   *
+   * Yêu cầu: worker rảnh (không có currentProcess), spec file tồn tại.
+   */
+  runHybridSpec(
+    taskId: string,
+    specPath: string,
+    extraEnv: Record<string, string> = {},
+  ): { ok: boolean; error?: string } {
+    if (this.currentProcess) {
+      return { ok: false, error: "Worker đang bận với task khác — đợi xong" };
+    }
+    const task = this.queue.get(taskId);
+    if (!task) return { ok: false, error: "Task không tồn tại" };
+    if (!existsSync(specPath)) {
+      return { ok: false, error: `Spec không tồn tại: ${specPath}` };
+    }
+
+    this.currentTaskId = taskId;
+    const startedAt = Date.now();
+    const envFlags = Object.entries(extraEnv).map(([k, v]) => `${k}=${v}`).join(" ");
+    this.queue.appendLog(taskId, {
+      t: 0,
+      timestamp: new Date().toISOString(),
+      stream: "system",
+      text: `>>> Running hybrid spec: ${specPath}${envFlags ? ` (${envFlags})` : ""}`,
+    });
+
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      ...extraEnv,
+      GAME_URL: task.gameUrl,
+      QA_TASK_ID: taskId,
+    };
+
+    const child = spawn(
+      "npx",
+      ["playwright", "test", specPath, "--reporter=list"],
+      {
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
+        detached: process.platform !== "win32",
+      },
+    );
+    this.currentProcess = child;
+
+    const pipe = (stream: NodeJS.ReadableStream, name: "stdout" | "stderr") => {
+      let buf = "";
+      stream.on("data", (chunk: Buffer) => {
+        buf += chunk.toString("utf8");
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";
+        for (const line of lines) this.handleLine(taskId, name, line, startedAt);
+      });
+      stream.on("end", () => {
+        if (buf) this.handleLine(taskId, name, buf, startedAt);
+      });
+    };
+    if (child.stdout) pipe(child.stdout, "stdout");
+    if (child.stderr) pipe(child.stderr, "stderr");
+
+    child.on("exit", (code) => {
+      this.currentProcess = null;
+      this.currentTaskId = null;
+      const dur = Date.now() - startedAt;
+      this.queue.appendLog(taskId, {
+        t: dur,
+        timestamp: new Date().toISOString(),
+        stream: "system",
+        text: `<<< Hybrid spec finished (exit ${code}, ${(dur / 1000).toFixed(1)}s)`,
+      });
+    });
+    return { ok: true };
+  }
+
+  /**
+   * Run `auto-play.ts` with QA_CAPTURE_PREGAME=1 so the pre-game vision flow
+   * records click sequence + baseline. Fire-and-forget; output streams via SSE.
+   *
+   * Use case: dashboard button "Record Pre-game" — captures the click sequence
+   * needed for $0 deterministic regression replay.
+   */
+  /**
+   * Phase 2.5: spawn record-ui-flows.ts cho slug. Stream output qua task log.
+   * Trả về promise resolve khi xong. Fire-and-forget pattern giống pregame.
+   */
+  runUiFlowRecording(taskId: string): { ok: boolean; error?: string } {
+    if (this.currentProcess) {
+      return { ok: false, error: "Worker đang bận với task khác — đợi xong" };
+    }
+    const task = this.queue.get(taskId);
+    if (!task) return { ok: false, error: "Task không tồn tại" };
+
+    this.currentTaskId = taskId;
+    const startedAt = Date.now();
+    this.queue.appendLog(taskId, {
+      t: 0,
+      timestamp: new Date().toISOString(),
+      stream: "system",
+      text: ">>> Recording UI flows (Phase 2.5 — replay_or_vision cases)",
+    });
+
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      GAME_URL: task.gameUrl,
+      QA_TASK_ID: taskId,
+    };
+
+    const child = spawn(
+      "npx",
+      ["tsx", "src/runner/record-ui-flows.ts", task.gameSlug],
+      {
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
+        detached: process.platform !== "win32",
+      },
+    );
+    this.currentProcess = child;
+
+    const pipe = (stream: NodeJS.ReadableStream, name: "stdout" | "stderr") => {
+      let buf = "";
+      stream.on("data", (chunk: Buffer) => {
+        buf += chunk.toString("utf8");
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";
+        for (const line of lines) this.handleLine(taskId, name, line, startedAt);
+      });
+      stream.on("end", () => {
+        if (buf) this.handleLine(taskId, name, buf, startedAt);
+      });
+    };
+    if (child.stdout) pipe(child.stdout, "stdout");
+    if (child.stderr) pipe(child.stderr, "stderr");
+
+    child.on("exit", (code) => {
+      this.currentProcess = null;
+      this.currentTaskId = null;
+      const dur = Date.now() - startedAt;
+      this.queue.appendLog(taskId, {
+        t: dur,
+        timestamp: new Date().toISOString(),
+        stream: "system",
+        text: `<<< UI flow recording finished (exit ${code}, ${(dur / 1000).toFixed(1)}s)`,
+      });
+    });
+    return { ok: true };
+  }
+
+  /**
+   * Phase 2.6: spawn capture-fs-via-buy.ts. Click Buy Feature → capture FS chain
+   * → save scenarios/{slug}/free_spin_chain.json. Cần Buy Feature có sẵn UI.
+   */
+  runCaptureFsViaBuy(taskId: string): { ok: boolean; error?: string } {
+    if (this.currentProcess) {
+      return { ok: false, error: "Worker đang bận với task khác — đợi xong" };
+    }
+    const task = this.queue.get(taskId);
+    if (!task) return { ok: false, error: "Task không tồn tại" };
+
+    this.currentTaskId = taskId;
+    const startedAt = Date.now();
+    this.queue.appendLog(taskId, {
+      t: 0,
+      timestamp: new Date().toISOString(),
+      stream: "system",
+      text: ">>> Capturing FS chain via Buy Feature (Phase 2.6)",
+    });
+
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      GAME_URL: task.gameUrl,
+      QA_TASK_ID: taskId,
+    };
+
+    const child = spawn(
+      "npx",
+      ["tsx", "src/runner/capture-fs-via-buy.ts", task.gameSlug],
+      {
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
+        detached: process.platform !== "win32",
+      },
+    );
+    this.currentProcess = child;
+
+    const pipe = (stream: NodeJS.ReadableStream, name: "stdout" | "stderr") => {
+      let buf = "";
+      stream.on("data", (chunk: Buffer) => {
+        buf += chunk.toString("utf8");
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";
+        for (const line of lines) this.handleLine(taskId, name, line, startedAt);
+      });
+      stream.on("end", () => {
+        if (buf) this.handleLine(taskId, name, buf, startedAt);
+      });
+    };
+    if (child.stdout) pipe(child.stdout, "stdout");
+    if (child.stderr) pipe(child.stderr, "stderr");
+
+    child.on("exit", (code) => {
+      this.currentProcess = null;
+      this.currentTaskId = null;
+      const dur = Date.now() - startedAt;
+      this.queue.appendLog(taskId, {
+        t: dur,
+        timestamp: new Date().toISOString(),
+        stream: "system",
+        text: `<<< Capture FS via Buy finished (exit ${code}, ${(dur / 1000).toFixed(1)}s)`,
+      });
+    });
+    return { ok: true };
+  }
+
+  runPreGameRecording(taskId: string): { ok: boolean; error?: string } {
+    if (this.currentProcess) {
+      return { ok: false, error: "Worker đang bận với task khác — đợi xong" };
+    }
+    const task = this.queue.get(taskId);
+    if (!task) return { ok: false, error: "Task không tồn tại" };
+
+    this.currentTaskId = taskId;
+    const startedAt = Date.now();
+    this.queue.appendLog(taskId, {
+      t: 0,
+      timestamp: new Date().toISOString(),
+      stream: "system",
+      text: ">>> Recording pre-game click sequence (QA_CAPTURE_PREGAME=1)",
+    });
+
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      GAME_URL: task.gameUrl,
+      QA_TASK_ID: taskId,
+      QA_CAPTURE_PREGAME: "1",
+    };
+
+    const child = spawn("npx", ["tsx", "src/auto-play.ts"], {
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: process.platform !== "win32",
+    });
+    this.currentProcess = child;
+
+    const pipe = (stream: NodeJS.ReadableStream, name: "stdout" | "stderr") => {
+      let buf = "";
+      stream.on("data", (chunk: Buffer) => {
+        buf += chunk.toString("utf8");
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";
+        for (const line of lines) this.handleLine(taskId, name, line, startedAt);
+      });
+      stream.on("end", () => {
+        if (buf) this.handleLine(taskId, name, buf, startedAt);
+      });
+    };
+    if (child.stdout) pipe(child.stdout, "stdout");
+    if (child.stderr) pipe(child.stderr, "stderr");
+
+    child.on("exit", (code) => {
+      this.currentProcess = null;
+      this.currentTaskId = null;
+      const dur = Date.now() - startedAt;
+      this.queue.appendLog(taskId, {
+        t: dur,
+        timestamp: new Date().toISOString(),
+        stream: "system",
+        text: `<<< Pre-game recording finished (exit ${code}, ${(dur / 1000).toFixed(1)}s)`,
+      });
+    });
+    return { ok: true };
+  }
+
+  /**
+   * Best-effort scenario extraction sau Collect phase. Đọc recording mới nhất
+   * cho slug, phân loại spin responses, ghi vào fixtures/scenarios/{slug}/.
+   *
+   * Chạy sync ngay trong event handler — extractor file I/O thuần, không async,
+   * vài chục KB JSONL → typical < 50ms. Nếu task slug không tìm được recording
+   * (vd Collect chạy nhưng spin response chưa được capture) thì silent no-op.
+   */
+  private maybeExtractScenarios(taskId: string, t0: number): void {
+    const task = this.queue.get(taskId);
+    if (!task) return;
+    try {
+      const result = extractLatestForSlug(task.gameSlug);
+      const text = result.scenarios.length > 0
+        ? `Auto-extracted ${result.scenarios.length} scenario(s) → fixtures/scenarios/${task.gameSlug}/`
+        : `No scenarios extracted (no spin responses found in recording${result.recording ? "" : "; no recording"}).`;
+      this.queue.appendLog(taskId, {
+        t: Date.now() - t0,
+        timestamp: new Date().toISOString(),
+        stream: "system",
+        text,
+      });
+    } catch (err) {
+      this.queue.appendLog(taskId, {
+        t: Date.now() - t0,
+        timestamp: new Date().toISOString(),
+        stream: "system",
+        text: `Scenario extraction failed (non-fatal): ${(err as Error).message}`,
+      });
+    }
+  }
+
   cancelCurrent(taskId: string): boolean {
     if (this.currentTaskId !== taskId || !this.currentProcess) return false;
     if (this.cancellingTaskIds.has(taskId)) return true; // đã gọi rồi
@@ -336,6 +866,13 @@ export class TaskRunner {
     const phase = task.nextPhase ?? "all";
     this.queue.setStatus(task.id, "running", { startedAt: startedAtIso });
 
+    // DB write-through: upsert TestRun when this run will actually fire spins.
+    // Run phase + 'all' phase both end up running Playwright + producing spin
+    // events. Generate/collect-only phases don't (no spins → no TestRun row).
+    if (phase === "run" || phase === "all") {
+      void onRunPhaseStart(task);
+    }
+
     this.queue.appendLog(task.id, {
       t: 0,
       timestamp: startedAtIso,
@@ -345,6 +882,13 @@ export class TaskRunner {
 
     const screenshotDir = resolve(join("fixtures", "tasks", task.id, "screenshots"));
     const playwrightJsonPath = resolve(join("fixtures", "tasks", task.id, "playwright-results.json"));
+    // Auto-capture pre-game clicks during Collect / All phases. Cost is
+    // negligible (writes 1 JSON + 1 baseline PNG) and bundles the recording
+    // step into the existing vision pass — no separate user action needed.
+    // Disable via QA_NO_CAPTURE_PREGAME=1 if recording is unwanted.
+    const capturePreGame =
+      (phase === "collect" || phase === "all") &&
+      process.env.QA_NO_CAPTURE_PREGAME !== "1";
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       GAME_URL: task.gameUrl,
@@ -355,6 +899,7 @@ export class TaskRunner {
       QA_FORCE: task.forceRecollect ? "1" : "",
       PLAYWRIGHT_JSON_OUTPUT_FILE: playwrightJsonPath,
       QA_PLAYWRIGHT_JSON: playwrightJsonPath, // cho generate-and-run truyền tiếp vào --reporter
+      ...(capturePreGame ? { QA_CAPTURE_PREGAME: "1" } : {}),
     };
 
     const child = spawn("npx", ["tsx", "src/generate-and-run.ts"], {
@@ -400,6 +945,7 @@ export class TaskRunner {
     this.cancellingTaskIds.delete(task.id);
 
     const finishedAt = new Date().toISOString();
+    const finishedAtDate = new Date(finishedAt);
     const durationMs = Date.now() - startedAt;
     const status = exitCode === 0 ? "completed" : wasCancelled || exitCode === null ? "cancelled" : "failed";
     this.queue.setStatus(task.id, status, {
@@ -409,6 +955,13 @@ export class TaskRunner {
       lastError: status === "failed" ? `Pipeline exited with code ${exitCode}` : null,
       nextPhase: null, // clear sau khi run xong — runner cần signal mới (button click) để chạy tiếp
     });
+
+    // DB write-through: close TestRun + persist final stat report.
+    // Only fires for run/all phases (TestRun row only created in those cases).
+    if (phase === "run" || phase === "all") {
+      const updated = this.queue.get(task.id);
+      if (updated) void onTaskComplete(updated, { status, endedAt: finishedAtDate });
+    }
     this.queue.appendLog(task.id, {
       t: durationMs,
       timestamp: finishedAt,
@@ -474,8 +1027,20 @@ export class TaskRunner {
     if (eventMatch) {
       try {
         const data = JSON.parse(eventMatch[2]!);
-        if (eventMatch[1] === "spin" && data.kind === "spin") {
-          this.queue.appendSpinEvent(taskId, { ...data, taskId } as TaskSpinEvent);
+        if (eventMatch[1] === "test_mode" && typeof data.mode === "string") {
+          // Surface effective test mode (hybrid vs vision) to UI via log line
+          this.queue.appendLog(taskId, {
+            t: Date.now() - t0,
+            timestamp: new Date().toISOString(),
+            stream: "system",
+            text: `[mode=${data.mode}] ${data.mode === "hybrid" ? `${data.scenarios} scenarios available — using deterministic spin` : "no scenarios — using vision-driven flow ($$$)"}`,
+          });
+        } else if (eventMatch[1] === "spin" && data.kind === "spin") {
+          const ev = { ...data, taskId } as TaskSpinEvent;
+          this.queue.appendSpinEvent(taskId, ev);
+          // DB write-through (fire-and-forget; no-op when DB disabled)
+          const t = this.queue.get(taskId);
+          if (t) void onSpinEvent(taskId, t.gameSlug, ev);
         } else if (eventMatch[1] === "catalog_ready" && Array.isArray(data.caseIds)) {
           this.queue.initCaseCatalog(taskId, data.caseIds);
           this.queue.appendLog(taskId, {
@@ -493,6 +1058,12 @@ export class TaskRunner {
             stream: "system",
             text: `Phase ${data.phase} done → stage=${data.stage}`,
           });
+          // Sau Collect: auto-extract scenarios cho deterministic test layer.
+          // Best-effort — không fail task nếu extract lỗi (recording có thể chưa
+          // có spin response valid, vd game crashed trước khi spin).
+          if (data.phase === "collect") {
+            this.maybeExtractScenarios(taskId, t0);
+          }
         } else if (eventMatch[1] === "case_end" && typeof data.caseId === "string") {
           // LIVE update khi 1 test xong — đầy đủ error + stack + attachments,
           // không đợi cả run kết thúc.
@@ -500,7 +1071,8 @@ export class TaskRunner {
             data.status === "failed" || data.status === "skipped"
               ? categorizeError(data.error, data.errorStack)
               : null;
-          this.queue.updateCaseResult(taskId, data.caseId, {
+          const caseResult = {
+            id: data.caseId,
             status: data.status,
             durationMs: typeof data.durationMs === "number" ? data.durationMs : undefined,
             error: data.error ?? undefined,
@@ -512,7 +1084,10 @@ export class TaskRunner {
             errorSummary: cat?.summary,
             errorSuggestion: cat?.suggestion,
             errorLocation: cat?.location,
-          });
+          };
+          this.queue.updateCaseResult(taskId, data.caseId, caseResult);
+          // DB write-through (fire-and-forget; only writes when status=failed)
+          void onCaseEnd(taskId, data.caseId, caseResult);
           this.queue.appendLog(taskId, {
             t: Date.now() - t0,
             timestamp: new Date().toISOString(),

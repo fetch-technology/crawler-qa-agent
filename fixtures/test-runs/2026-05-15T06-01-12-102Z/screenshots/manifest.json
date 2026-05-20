@@ -1,0 +1,34 @@
+[
+  {
+    "n": 1,
+    "filename": "001-hybrid-pregame-00.png",
+    "label": "hybrid-pregame-00",
+    "scope": null,
+    "caseScope": null,
+    "timestamp": "2026-05-15T06:01:12.176Z"
+  },
+  {
+    "n": 2,
+    "filename": "002-hybrid-pregame-01.png",
+    "label": "hybrid-pregame-01",
+    "scope": null,
+    "caseScope": null,
+    "timestamp": "2026-05-15T06:01:20.714Z"
+  },
+  {
+    "n": 3,
+    "filename": "003-hybrid-pregame-02.png",
+    "label": "hybrid-pregame-02",
+    "scope": null,
+    "caseScope": null,
+    "timestamp": "2026-05-15T06:01:28.344Z"
+  },
+  {
+    "n": 4,
+    "filename": "004-hybrid-pregame-03.png",
+    "label": "hybrid-pregame-03",
+    "scope": null,
+    "caseScope": null,
+    "timestamp": "2026-05-15T06:01:35.561Z"
+  }
+]

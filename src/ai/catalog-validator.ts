@@ -355,6 +355,37 @@ function validateAssertions(c: TestCase): ValidationIssue[] {
         message: `assertion "${a.id}": ${w}`,
       });
     }
+
+    // RNG-independence guard: assertion must not require a rare event to occur
+    // inside finite spins (except deterministic buy_feature flows).
+    if (c.category !== "buy_feature") {
+      const code = a.check_code;
+      const requireFsObserved =
+        /collector\.spins\.some\(\s*s\s*=>\s*s\.isFreeSpin\s*===\s*true\s*\)/.test(code) ||
+        /collector\.spins\.filter\([^)]*isFreeSpin[^)]*\)\.length\s*>\s*0/.test(code);
+      if (requireFsObserved) {
+        issues.push({
+          severity: "error",
+          rule: "assertion-rng-dependent",
+          case_id: c.id,
+          message:
+            `assertion "${a.id}": requires free-spin event to occur. Use implication/shape invariant instead (e.g. filter(...).every(...)).`,
+        });
+      }
+
+      const requireWinObserved =
+        /collector\.spins\.some\([^)]*winAmount[^)]*>\s*0/.test(code) ||
+        /collector\.spins\.filter\([^)]*winAmount[^)]*>\s*0[^)]*\)\.length\s*>\s*0/.test(code);
+      if (requireWinObserved) {
+        issues.push({
+          severity: "error",
+          rule: "assertion-rng-dependent",
+          case_id: c.id,
+          message:
+            `assertion "${a.id}": requires winning event to occur. Replace with non-RNG invariant (types/ranges/conservation/implication).`,
+        });
+      }
+    }
   }
   return issues;
 }

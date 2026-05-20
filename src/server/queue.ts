@@ -235,6 +235,62 @@ export class TaskQueue {
     this.broadcast(id, { type: "task_updated", task: t });
   }
 
+  /**
+   * Reconcile caseResults với catalog IDs hiện tại. Khi catalog regen ngoài
+   * Phase B (vd direct edit, AI rename), caseResults có thể có stale IDs.
+   * Smart sync:
+   *   - Giữ entries có ID match catalog → preserve status
+   *   - Drop entries có ID không trong catalog (stale)
+   *   - Add entries cho catalog IDs mới (status=pending)
+   *   - Recompute caseStats
+   *
+   * Trả về: số lượng entry stale đã drop + added.
+   */
+  reconcileCaseCatalog(id: string, catalogIds: string[]): {
+    kept: number;
+    dropped: number;
+    added: number;
+  } {
+    const t = this.tasks.get(id);
+    if (!t) return { kept: 0, dropped: 0, added: 0 };
+    const current = t.caseResults ?? {};
+    const catalogSet = new Set(catalogIds);
+    const next: Record<string, CaseResult> = {};
+    let kept = 0;
+    let dropped = 0;
+    let added = 0;
+    // Preserve match
+    for (const cid of catalogIds) {
+      if (current[cid]) {
+        next[cid] = current[cid]!;
+        kept++;
+      } else {
+        next[cid] = { id: cid, status: "pending" };
+        added++;
+      }
+    }
+    // Count drops (entries in current but not in catalog)
+    for (const cid of Object.keys(current)) {
+      if (!catalogSet.has(cid)) dropped++;
+    }
+    if (dropped === 0 && added === 0) {
+      return { kept, dropped, added }; // no-op
+    }
+    t.caseResults = next;
+    // Recompute caseStats
+    const stats = { total: catalogIds.length, passed: 0, failed: 0, skipped: 0, pending: 0 };
+    for (const r of Object.values(next)) {
+      if (r.status === "passed") stats.passed++;
+      else if (r.status === "failed") stats.failed++;
+      else if (r.status === "skipped") stats.skipped++;
+      else stats.pending++;
+    }
+    t.caseStats = stats;
+    this.persist();
+    this.broadcast(id, { type: "task_updated", task: t });
+    return { kept, dropped, added };
+  }
+
   updateCaseResult(id: string, caseId: string, patch: Partial<CaseResult>) {
     const t = this.tasks.get(id);
     if (!t) return;

@@ -1,0 +1,32 @@
+{
+  "slug": "vswayscyhecity",
+  "case_id": "bet-variation-max",
+  "recorded_at": "2026-05-20T01:52:09.967Z",
+  "instructions": [
+    "Step 1: Locate the bet display.",
+    "Step 2: Click the 'Bet +' button repeatedly until the bet display stops increasing.",
+    "Step 3: Verify the bet display reads '200.00' (the maximum value per spec.bet_mechanics.bet_sizes[last]=200; tolerance ±1 ladder step)."
+  ],
+  "clicks": [
+    {
+      "x": 1267,
+      "y": 820,
+      "delay_ms": 10019,
+      "reason": "Bet plus button",
+      "step": 1
+    },
+    {
+      "x": 1056,
+      "y": 668,
+      "delay_ms": 6224,
+      "reason": "Click $200.00 bet option",
+      "step": 2
+    }
+  ],
+  "baseline_png": "fixtures/case-actions/vswayscyhecity/bet-variation-max/baseline.png",
+  "max_diff_ratio": 0.05,
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  }
+}

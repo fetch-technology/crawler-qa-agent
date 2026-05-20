@@ -71,6 +71,62 @@
         </table>
       </section>
 
+      <section class="card" id="testRunsCard">
+        <div class="section-title" style="cursor:pointer" id="testRunsToggle" title="Click to expand/collapse">
+          <h2><span id="testRunsCaret">▶</span> Test Runs (DB) <span class="muted" id="testRunsCount" style="font-weight:normal;font-size:14px"></span></h2>
+          <div style="display:flex;gap:8px;align-items:center" onclick="event.stopPropagation()">
+            <span class="muted" id="testRunsStatus">—</span>
+            <button class="btn small danger" id="testRunsClearAll" title="Reset stats: wipe test_runs (cascade) + fixtures/statistical/*.json files">🗑 Reset stats</button>
+          </div>
+        </div>
+        <div id="testRunsContent" class="hidden">
+          <p class="muted" style="margin-top:-8px;margin-bottom:12px">
+            Persistent run history from PostgreSQL. Requires <code>DATABASE_URL</code> in <code>.env</code>.
+            Populated by <code>npm run stats</code> and future runner write-through.
+          </p>
+          <table class="tasks-table">
+            <thead>
+              <tr>
+                <th>Game</th>
+                <th>Status</th>
+                <th>Spins</th>
+                <th>RTP</th>
+                <th>Hit rate</th>
+                <th>Volatility</th>
+                <th>Errors</th>
+                <th>Created</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="testRunsBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card hidden" id="testRunDetail">
+        <div class="section-title">
+          <h2 id="testRunDetailTitle">Test Run detail</h2>
+          <div style="display:flex;gap:8px">
+            <button class="btn ghost small" id="testRunSummaryBtn">Generate Bug Summary</button>
+            <button class="btn ghost small" id="testRunAnalyzerBtn">Analyzer Report</button>
+            <button class="btn ghost" id="testRunDetailClose">Close</button>
+          </div>
+        </div>
+        <div class="detail-meta" id="testRunMeta"></div>
+        <div class="detail-tabs">
+          <button class="tab active" data-runtab="spins">Spins</button>
+          <button class="tab" data-runtab="errors">Validation Errors</button>
+          <button class="tab" data-runtab="stats">Stat Report</button>
+          <button class="tab" data-runtab="summary">Bug Summary</button>
+          <button class="tab" data-runtab="analyzer">Analyzer</button>
+        </div>
+        <div class="detail-pane" id="runpane-spins"></div>
+        <div class="detail-pane hidden" id="runpane-errors"></div>
+        <div class="detail-pane hidden" id="runpane-stats"></div>
+        <div class="detail-pane hidden" id="runpane-summary"></div>
+        <div class="detail-pane hidden" id="runpane-analyzer"></div>
+      </section>
+
       <section class="card hidden" id="detailPanel">
         <div class="section-title">
           <h2 id="detailTitle">Task detail</h2>

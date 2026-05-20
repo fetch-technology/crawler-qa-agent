@@ -1,0 +1,26 @@
+[
+  {
+    "n": 1,
+    "filename": "001-game-ready.png",
+    "label": "game-ready",
+    "scope": null,
+    "caseScope": "base-default-bet-single-spin",
+    "timestamp": "2026-05-19T19:35:13.270Z"
+  },
+  {
+    "n": 2,
+    "filename": "002-spin-01-before.png",
+    "label": "spin-01-before",
+    "scope": null,
+    "caseScope": "base-default-bet-single-spin",
+    "timestamp": "2026-05-19T19:35:13.369Z"
+  },
+  {
+    "n": 3,
+    "filename": "003-spin-01-after.png",
+    "label": "spin-01-after",
+    "scope": null,
+    "caseScope": "base-default-bet-single-spin",
+    "timestamp": "2026-05-19T19:35:20.424Z"
+  }
+]

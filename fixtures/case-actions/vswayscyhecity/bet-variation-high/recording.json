@@ -1,0 +1,32 @@
+{
+  "slug": "vswayscyhecity",
+  "case_id": "bet-variation-high",
+  "recorded_at": "2026-05-20T01:51:48.705Z",
+  "instructions": [
+    "Step 1: Locate the bet display.",
+    "Step 2: Use the 'Bet +' button to increase the bet until the display reads '100.00'.",
+    "Step 3: Verify the bet display shows '100.00' (spec.bet_mechanics.bet_sizes contains 100; tolerance ±1 ladder step)."
+  ],
+  "clicks": [
+    {
+      "x": 1268,
+      "y": 820,
+      "delay_ms": 7901,
+      "reason": "Bet + button to increase bet",
+      "step": 1
+    },
+    {
+      "x": 1230,
+      "y": 589,
+      "delay_ms": 5299,
+      "reason": "Click $100.00 bet option",
+      "step": 2
+    }
+  ],
+  "baseline_png": "fixtures/case-actions/vswayscyhecity/bet-variation-high/baseline.png",
+  "max_diff_ratio": 0.05,
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  }
+}

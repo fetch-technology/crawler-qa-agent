@@ -1,0 +1,31 @@
+{
+  "slug": "vs5triple8gold",
+  "case_id": "history-normal-bet-rows",
+  "recorded_at": "2026-05-20T02:19:52.528Z",
+  "instructions": [
+    "open history/rounds panel",
+    "verify entries are visible, then close history/rounds panel"
+  ],
+  "clicks": [
+    {
+      "x": 92,
+      "y": 796,
+      "delay_ms": 6480,
+      "reason": "menu icon for history panel",
+      "step": 0
+    },
+    {
+      "x": 140,
+      "y": 828,
+      "delay_ms": 7521,
+      "reason": "Click info icon to close panel",
+      "step": 1
+    }
+  ],
+  "baseline_png": "fixtures/case-actions/vs5triple8gold/history-normal-bet-rows/baseline.png",
+  "max_diff_ratio": 0.05,
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  }
+}

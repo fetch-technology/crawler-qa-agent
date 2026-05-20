@@ -1,0 +1,23 @@
+{
+  "slug": "vswayscyhecity",
+  "case_id": "turbo-spin-toggle",
+  "recorded_at": "2026-05-20T01:57:32.699Z",
+  "instructions": [
+    "open options/settings panel if needed and toggle Turbo/Quick Spin once"
+  ],
+  "clicks": [
+    {
+      "x": 1076,
+      "y": 338,
+      "delay_ms": 4722,
+      "reason": "Toggle Battery Saver (turbo/quick spin equivalent)",
+      "step": 0
+    }
+  ],
+  "baseline_png": "fixtures/case-actions/vswayscyhecity/turbo-spin-toggle/baseline.png",
+  "max_diff_ratio": 0.05,
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  }
+}

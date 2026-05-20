@@ -1,0 +1,138 @@
+{
+  "slug": "vs20olympgate",
+  "spinsRequested": 1000,
+  "spinsSuccessful": 1000,
+  "spinsFailed": 0,
+  "totalBet": 399.9999999999944,
+  "totalWin": 1313.9800000000007,
+  "observedRTP": 3.2849500000000478,
+  "hitFrequency": 0.646,
+  "maxWin": 11.88,
+  "maxWinMultiplier": 29.7,
+  "averageWin": 2.0340247678018586,
+  "volatility": 5.176085186253738,
+  "volatilityBand": "high",
+  "rtpConfidence95": 0.3208170836117261,
+  "featureFrequency": {
+    "freeSpinTrigger": 0,
+    "bonusTrigger": 0,
+    "freeSpinRuns": 0,
+    "retrigger": 0
+  },
+  "symbolDistribution": {
+    "0": 4259,
+    "1": 14284,
+    "2": 203,
+    "3": 1660,
+    "4": 2371,
+    "5": 2588,
+    "6": 2790,
+    "7": 3432,
+    "8": 3497,
+    "9": 4023,
+    ",": 29000
+  },
+  "winDistribution": {
+    "buckets": [
+      {
+        "min": 0,
+        "max": 0,
+        "count": 354,
+        "pctOfSpins": 0.354
+      },
+      {
+        "min": 0.0001,
+        "max": 1,
+        "count": 196,
+        "pctOfSpins": 0.196
+      },
+      {
+        "min": 1,
+        "max": 2,
+        "count": 56,
+        "pctOfSpins": 0.056
+      },
+      {
+        "min": 2,
+        "max": 5,
+        "count": 164,
+        "pctOfSpins": 0.164
+      },
+      {
+        "min": 5,
+        "max": 10,
+        "count": 117,
+        "pctOfSpins": 0.117
+      },
+      {
+        "min": 10,
+        "max": 50,
+        "count": 113,
+        "pctOfSpins": 0.113
+      },
+      {
+        "min": 50,
+        "max": 200,
+        "count": 0,
+        "pctOfSpins": 0
+      },
+      {
+        "min": 200,
+        "max": 1000,
+        "count": 0,
+        "pctOfSpins": 0
+      },
+      {
+        "min": 1000,
+        "max": null,
+        "count": 0,
+        "pctOfSpins": 0
+      }
+    ]
+  },
+  "consistency": {
+    "spinsChecked": 1000,
+    "payoutMismatches": 0,
+    "inconclusive": 1000,
+    "mismatchRate": 0,
+    "examples": []
+  },
+  "debugDump": null,
+  "cascadeStats": {
+    "enabled": true,
+    "totalFrames": 140,
+    "avgFramesPerSpin": 0.14
+  },
+  "audits": {
+    "symbolMismatches": 1000,
+    "unknownSymbolsSeen": [
+      "1",
+      ",",
+      "5",
+      "0",
+      "9",
+      "7",
+      "6",
+      "8",
+      "4",
+      "3",
+      "2"
+    ],
+    "winlinesInvalid": 0
+  },
+  "historyAudit": null,
+  "performance": {
+    "minMs": 183,
+    "maxMs": 1652,
+    "meanMs": 514,
+    "medianMs": 471,
+    "p95Ms": 881,
+    "p99Ms": 1536,
+    "thresholdMs": 500,
+    "slowSpins": 405,
+    "slowRate": 0.405
+  },
+  "extractedScenarios": null,
+  "durationMs": 135164,
+  "errors": []
+}

@@ -1,0 +1,81 @@
+{
+  "slug": "vswayscyhecity",
+  "label": "normal_win",
+  "description": "Extracted from fixtures/recordings/vswayscyhecity__auto-2026-05-20T00-25-03-461Z (response t=24255ms)",
+  "source_recording": "fixtures/recordings/vswayscyhecity__auto-2026-05-20T00-25-03-461Z",
+  "spin_response": {
+    "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+    "url_pattern": "(?:\\/|[?&=])(?:do)?spin\\b|\\/gs2c\\/ge\\/|\\/gs2c\\/.*gameservice|\\/gs2c\\/.*playgame|\\/gs2c\\/.*dogame|\\/round\\b|\\/dogame\\b",
+    "method": "POST",
+    "status": 200,
+    "headers": {
+      "x-envoy-upstream-service-time": "169",
+      "access-control-allow-methods": "OPTIONS,HEAD,GET,POST",
+      "access-control-allow-origin": "*",
+      "content-length": "300",
+      "date": "Wed, 20 May 2026 00:25:28 GMT",
+      "content-type": "text/plain; charset=utf-8",
+      "vary": "Origin",
+      "server": "envoy"
+    },
+    "body": "tw=1.00&rs_iw=1.00&wlc_v=g~1.00~2~3~5,6,7,10~l&reel_set=0&s_mark=tmb~g:5,g:6,g:7,g:10&na=s&rs_p=0&bl=0&sa=ahfSe&sb=iegee&rs_c=1&rs_win=0.00&sh=3&rs_m=1&st=rect&c=0.10&sw=5&sver=6&ntp=0&l=25&s=fbhhigggifghSaa&w=1.00&trail=&balance=99998706.28&index=1&balance_cash=99998706.28&balance_bonus=0&counter=1",
+    "parsed": {
+      "tw": "1.00",
+      "rs_iw": "1.00",
+      "wlc_v": "g~1.00~2~3~5,6,7,10~l",
+      "reel_set": "0",
+      "s_mark": "tmb~g:5,g:6,g:7,g:10",
+      "na": "s",
+      "rs_p": "0",
+      "bl": "0",
+      "sa": "ahfSe",
+      "sb": "iegee",
+      "rs_c": "1",
+      "rs_win": "0.00",
+      "sh": "3",
+      "rs_m": "1",
+      "st": "rect",
+      "c": "0.10",
+      "sw": "5",
+      "sver": "6",
+      "ntp": "0",
+      "l": "25",
+      "s": "fbhhigggifghSaa",
+      "w": "1.00",
+      "trail": "",
+      "balance": "99998706.28",
+      "index": "1",
+      "balance_cash": "99998706.28",
+      "balance_bonus": "0",
+      "counter": "1"
+    }
+  },
+  "prelude": {
+    "config": {
+      "url": "https://pp.dev.revenge-games.com/gs2c/saveSettings.do",
+      "url_pattern": "\\/config\\b|\\/gs2c\\/.*Settings|\\/init\\b",
+      "method": "POST",
+      "status": 200,
+      "headers": {
+        "x-envoy-upstream-service-time": "0",
+        "access-control-allow-methods": "OPTIONS,HEAD,GET,POST",
+        "access-control-allow-origin": "*",
+        "content-length": "7",
+        "date": "Wed, 20 May 2026 00:25:09 GMT",
+        "content-type": "text/plain; charset=utf-8",
+        "vary": "Origin",
+        "server": "envoy"
+      },
+      "body": ";Coins="
+    }
+  },
+  "expected": {
+    "bet": 2.5,
+    "win": 1,
+    "ending_balance": 99998706.28,
+    "has_bonus": false,
+    "is_free_spin": false
+  },
+  "frozen_time_ms": 1735689600000,
+  "random_seed": 42
+}

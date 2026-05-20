@@ -5,7 +5,7 @@ import { config as loadEnv } from "dotenv";
 import { parseGameUrl, redactUrl } from "./utils/url.js";
 import { resolveGameUrl } from "./utils/resolve-game-url.js";
 import { cleanGame } from "./utils/cleanup.js";
-import { understandGameRules, generatePlaywrightTest, type GameSpec } from "./ai/authoring.js";
+import { understandGameRules, generatePlaywrightTest, generateHybridTestCode, type GameSpec } from "./ai/authoring.js";
 import { runExecutionPreflight, formatPreflightResult } from "./ai/execution-preflight.js";
 import { generateTestCaseCatalog, type TestCaseCatalog } from "./ai/test-catalog.js";
 import { catalogToMarkdown } from "./ai/catalog-markdown.js";
@@ -393,7 +393,14 @@ function gatherSpinSamples(recordingDir: string, limit = 3): {
       reasons.push("method:POST");
     }
 
-    if (score >= 7) {
+    // Require BOTH combined score AND body-only score. Stops URL-heavy false
+    // positives (PP /gs2c/v3/gameService heartbeat with only balance — URL=7,
+    // body=3, total=11 would pass old gate; new gate rejects vì body<5).
+    //
+    // Real spin sample của PP có body=13+ (bet+win+matrix+balance+pp-sig),
+    // RG JSON spin có body=11+ (bet+win+balance+matrix+id), nên threshold 5
+    // an toàn.
+    if (score >= 7 && bodyScore.score >= 5) {
       candidates.push({ entry: e, parsed, score, reasons });
     }
   }
@@ -1018,7 +1025,62 @@ async function main() {
       caseIds: catalog.cases.map((c) => c.id),
     })}`,
   );
+
+  // Auto-gen catalog-driven hybrid spec ngay sau catalog ready. Codegen $0, đọc
+  // recording iterations.json để detect spin button coord đúng cho slug này.
+  // Nếu skip bước này, smart routing ở Phase C sẽ rơi vào handwritten hybrid
+  // (deterministic-hybrid.spec.ts hardcode coord của fiesta-magenta) → click sai.
+  try {
+    const hybridCode = generateHybridTestCode({
+      gameSlug: info.gameSlug,
+      harnessImportPath: "unused",
+      envVarUrl: "GAME_URL",
+      catalog,
+    });
+    if (hybridCode) {
+      const hybridPath = resolve(join("tests", "generated", `${info.gameSlug}.hybrid.spec.ts`));
+      writeFileSync(hybridPath, hybridCode);
+      console.log(`    ✔ Hybrid spec: ${hybridPath} (${hybridCode.length} chars, catalog-driven)`);
+    } else {
+      console.log(`    ⓘ Hybrid spec skipped — no scenarios extracted (Collect didn't capture spin response)`);
+    }
+  } catch (err) {
+    console.warn(`    ⚠ Hybrid codegen failed (non-fatal): ${(err as Error).message}`);
+  }
+
   console.log(`EVENT:phase_done ${JSON.stringify({ phase: "generate", stage: "catalog_ready" })}`);
+
+  // ===== Phase B.5: Record UI Flows =====
+  // Catalog có replay_or_vision cases (buy_feature, special_bet, ...) → LLM-record
+  // click sequence ngay sau Generate. Sau đó test run dùng deterministic replay.
+  // Skip qua env QA_SKIP_UI_RECORDING=1 (debug hoặc không cần). Mặc định bật khi
+  // catalog có replay_or_vision case.
+  if (process.env.QA_SKIP_UI_RECORDING !== "1") {
+    try {
+      const { recordUiFlows } = await import("./runner/record-ui-flows.js");
+      console.log("\n========== [PHASE B.5] RECORD UI FLOWS ==========");
+      console.log(`EVENT:phase_start ${JSON.stringify({ phase: "record_ui_flows" })}`);
+      const result = await recordUiFlows({
+        slug: info.gameSlug,
+        gameUrl,
+        overwrite: process.env.QA_RECORD_UI_OVERWRITE === "1",
+        headless: process.env.QA_HEADLESS === "1",
+      });
+      if (result.totalCases === 0) {
+        console.log(`[B.5] No replay_or_vision cases — phase trivial complete.`);
+      } else {
+        console.log(
+          `[B.5] Done — ${result.recorded.length} recorded / ${result.skipped.length} skipped / ${result.failed.length} failed (${(result.durationMs / 1000).toFixed(1)}s)`,
+        );
+      }
+      console.log(`EVENT:phase_done ${JSON.stringify({ phase: "record_ui_flows", recorded: result.recorded.length, skipped: result.skipped.length, failed: result.failed.length })}`);
+    } catch (err) {
+      console.warn(`[B.5] Record UI flows failed (non-fatal): ${(err as Error).message}`);
+      console.warn(`[B.5] Tests dùng replay_or_vision strategy sẽ fallback LLM execution mid-test.`);
+    }
+  } else {
+    console.log(`[B.5] QA_SKIP_UI_RECORDING=1 → skipping UI flow recording`);
+  }
 
   } else {
     // KHÔNG runGenerate — load catalog + verify test spec đã có (cho phase=run)
@@ -1051,7 +1113,39 @@ async function main() {
 
   // ===== Phase C: Execute =====
   console.log("\n========== [PHASE C] EXECUTE PLAYWRIGHT TEST ==========");
-  console.log("[C] Chạy Playwright test...");
+
+  // Smart routing: if scenarios are available, prefer the hybrid spec
+  // (LLM pre-game + deterministic spin) over the AI-generated vision-driven
+  // spec. ~50-100× cheaper per run.
+  //
+  // Override: `QA_FORCE_VISION=1` to keep the vision-driven path even when
+  // scenarios exist (vd debug or re-validate AI catalog).
+  const { listScenarios } = await import("./runner/scenario.js");
+  const availableScenarios = listScenarios(info.gameSlug);
+  const forceVision = process.env.QA_FORCE_VISION === "1";
+  // Hybrid mode chỉ kích hoạt khi generated/{slug}.hybrid.spec.ts đã có (Phase B
+  // auto-emit). KHÔNG fallback sang tests/deterministic-hybrid.spec.ts vì file
+  // đó hardcode SPIN_BUTTON=(720,810) của fiesta-magenta — sai cho mọi slug khác.
+  const generatedHybridPath = resolve(join("tests", "generated", `${info.gameSlug}.hybrid.spec.ts`));
+  const hybridReady = existsSync(generatedHybridPath);
+  const useHybrid = !forceVision && availableScenarios.length > 0 && hybridReady;
+  const effectiveTestPath = useHybrid ? generatedHybridPath : testPath;
+  const mode = useHybrid ? "hybrid" : "vision";
+  const reason = forceVision
+    ? "QA_FORCE_VISION=1"
+    : availableScenarios.length === 0
+      ? "no scenarios extracted"
+      : !hybridReady
+        ? "hybrid spec chưa generate (Phase B chưa chạy hoặc thất bại)"
+        : "ok";
+  console.log(
+    useHybrid
+      ? `[C] Mode: HYBRID (${availableScenarios.length} scenarios + ${generatedHybridPath})`
+      : `[C] Mode: VISION-DRIVEN (${reason})`,
+  );
+  console.log(`EVENT:test_mode ${JSON.stringify({ mode, scenarios: availableScenarios.length, hybridReady, reason })}`);
+  console.log(`[C] Chạy Playwright test: ${effectiveTestPath}`);
+
   const hintsAbsPath = resolve(join("fixtures/specs", info.gameSlug, "network-hints.json"));
   // JSON reporter luôn bật để in status table sau khi chạy xong.
   const jsonPath =
@@ -1072,10 +1166,12 @@ async function main() {
     // Harness dùng biến này để chỉ giữ browser sau TEST CUỐI (nếu QA_KEEP_BROWSER_OPEN=1).
     // Các test trước đó sẽ đóng bình thường để pipeline chạy liên tục.
     QA_TOTAL_TESTS: String(testBlockCount),
+    // Hybrid spec reads QA_SLUG to select scenarios.
+    QA_SLUG: info.gameSlug,
   };
   const exitCode = await runCmd(
     "npx",
-    ["playwright", "test", testPath, `--reporter=${reporter}`],
+    ["playwright", "test", effectiveTestPath, `--reporter=${reporter}`],
     pwEnv,
   );
 
@@ -1089,7 +1185,7 @@ async function main() {
     console.log(`✗ Some tests failed/skipped (exit ${exitCode})`);
   }
   console.log(`  GameSpec    : ${join(specOutDirShared, `${info.gameSlug}.spec.json`)}`);
-  console.log(`  Test file   : ${testPath}`);
+  console.log(`  Test file   : ${effectiveTestPath}`);
   console.log(`  JSON report : ${jsonPath}`);
   console.log(`EVENT:phase_done ${JSON.stringify({ phase: "run", stage: "tests_done", exitCode })}`);
   console.log(`  HTML report : npx playwright show-report reports/html`);

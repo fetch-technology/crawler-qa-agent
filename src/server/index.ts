@@ -96,6 +96,118 @@ const server = createServer(async (req, res) => {
     }
   }
 
+  // --- Game Analyzer report ---
+  const analyzerMatch = url.match(/^\/api\/analyzer\/([^/?]+)(?:\?.*)?$/);
+  if (analyzerMatch && method === "GET") {
+    try {
+      const slug = decodeURIComponent(analyzerMatch[1]!);
+      const path = join("fixtures", "analyzers", `${slug}.json`);
+      if (!existsSync(path)) {
+        return sendJson(res, 404, { error: `No analyzer report for ${slug}` });
+      }
+      const data = JSON.parse(readFileSync(path, "utf8"));
+      return sendJson(res, 200, data);
+    } catch (err) {
+      return sendJson(res, 500, { error: (err as Error).message });
+    }
+  }
+
+  // --- DB-backed test-run history (env-gated by DATABASE_URL) ---
+  if (url === "/api/test-runs" && method === "GET") {
+    try {
+      const { listTestRuns, isDbEnabled } = await import("../db/index.js");
+      if (!isDbEnabled()) return sendJson(res, 200, { enabled: false, runs: [] });
+      const runs = await listTestRuns({ limit: 100 });
+      return sendJson(res, 200, { enabled: true, runs });
+    } catch (err) {
+      return sendJson(res, 500, { error: (err as Error).message });
+    }
+  }
+
+  // DELETE /api/test-runs?gameCode=X (wipe by slug) hoặc ?all=1 (nuke all)
+  // Also wipes fixtures/statistical/{slug}-*.json filesystem reports by default.
+  // Pass ?keepFiles=1 to preserve filesystem artifacts.
+  if (url.startsWith("/api/test-runs?") && method === "DELETE") {
+    try {
+      const { deleteTestRunsByGame, deleteAllTestRuns, isDbEnabled } = await import("../db/index.js");
+      if (!isDbEnabled()) return sendJson(res, 503, { error: "DB not enabled" });
+      const u = new URL(req.url ?? "/", "http://x");
+      const gameCode = u.searchParams.get("gameCode");
+      const all = u.searchParams.get("all") === "1";
+      const keepFiles = u.searchParams.get("keepFiles") === "1";
+
+      // Wipe filesystem stats reports (matching scope)
+      let filesDeleted = 0;
+      if (!keepFiles) {
+        const { existsSync, readdirSync, unlinkSync } = await import("node:fs");
+        const dir = "fixtures/statistical";
+        if (existsSync(dir)) {
+          for (const f of readdirSync(dir)) {
+            if (!f.endsWith(".json")) continue;
+            if (all || (gameCode && f.startsWith(`${gameCode}-`))) {
+              try {
+                unlinkSync(join(dir, f));
+                filesDeleted++;
+              } catch {}
+            }
+          }
+        }
+      }
+
+      if (all) {
+        const n = await deleteAllTestRuns();
+        return sendJson(res, 200, { ok: true, dbDeleted: n, filesDeleted, scope: "all" });
+      }
+      if (gameCode) {
+        const n = await deleteTestRunsByGame(gameCode);
+        return sendJson(res, 200, { ok: true, dbDeleted: n, filesDeleted, scope: `gameCode=${gameCode}` });
+      }
+      return sendJson(res, 400, { error: "Specify ?all=1 or ?gameCode=X" });
+    } catch (err) {
+      return sendJson(res, 500, { error: (err as Error).message });
+    }
+  }
+
+  const matchTestRunPath = url.match(/^\/api\/test-runs\/([^/?]+)(\/[^?]*)?(\?.*)?$/);
+  if (matchTestRunPath) {
+    try {
+      const { getTestRun, listSpinResults, listValidationErrors, isDbEnabled } =
+        await import("../db/index.js");
+      if (!isDbEnabled()) return sendJson(res, 503, { error: "DB not enabled (set DATABASE_URL)" });
+      const id = matchTestRunPath[1]!;
+      const sub = matchTestRunPath[2] ?? "";
+      if (sub === "" && method === "GET") {
+        const run = await getTestRun(id);
+        if (!run) return sendJson(res, 404, { error: "test-run not found" });
+        return sendJson(res, 200, run);
+      }
+      if (sub === "/spins" && method === "GET") {
+        const u = new URL(req.url ?? "/", "http://x");
+        const limit = Number(u.searchParams.get("limit") ?? 200);
+        const offset = Number(u.searchParams.get("offset") ?? 0);
+        return sendJson(res, 200, await listSpinResults(id, { limit, offset }));
+      }
+      if (sub === "/errors" && method === "GET") {
+        const u = new URL(req.url ?? "/", "http://x");
+        const errorType = u.searchParams.get("type") ?? undefined;
+        return sendJson(res, 200, await listValidationErrors(id, { errorType }));
+      }
+      if (sub === "/summary" && method === "POST") {
+        const { summarizeBugs } = await import("../ai/bug-summarizer.js");
+        const summary = await summarizeBugs({ testRunId: id });
+        return sendJson(res, 200, summary);
+      }
+      if (sub === "" && method === "DELETE") {
+        const { deleteTestRun } = await import("../db/index.js");
+        const r = await deleteTestRun(id);
+        if (!r.ok) return sendJson(res, 404, { error: "TestRun not found" });
+        return sendJson(res, 200, { ok: true, deletedId: r.deletedId });
+      }
+    } catch (err) {
+      return sendJson(res, 500, { error: (err as Error).message });
+    }
+  }
+
   const matchTaskPath = url.match(/^\/api\/tasks\/([^/?]+)(\/[^?]*)?(\?.*)?$/);
   if (matchTaskPath) {
     const taskId = matchTaskPath[1]!;
@@ -181,6 +293,61 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 202, { ok: true, taskId, caseId, started: true });
     }
 
+    // POST /api/tasks/:id/run-stats { spins?: number, concurrency?: number }
+    // Fire-and-forget statistical simulation. Output streamed via task SSE.
+    if (sub === "/run-stats" && method === "POST") {
+      try {
+        const body = JSON.parse((await readBody(req)) || "{}");
+        const spins = Number(body?.spins ?? 1000);
+        const concurrency = Number(body?.concurrency ?? 4);
+        const historyAudit = body?.historyAudit !== false;
+        if (!Number.isFinite(spins) || spins < 1 || spins > 1_000_000) {
+          return sendJson(res, 400, { error: "spins must be 1..1,000,000" });
+        }
+        // Kick off in background — caller polls via SSE / Test Runs (DB)
+        void runner.runStatsSim(taskId, { spins, concurrency, historyAudit });
+        return sendJson(res, 202, { ok: true, taskId, spins, concurrency, historyAudit });
+      } catch (err) {
+        return sendJson(res, 400, { error: (err as Error).message });
+      }
+    }
+
+    // POST /api/tasks/:id/record-pregame
+    // Kicks off `auto-play.ts` with QA_CAPTURE_PREGAME=1 → writes
+    // fixtures/pre-game/{slug}.json + baseline. Same worker-busy guard as
+    // hybrid spec.
+    if (sub === "/record-pregame" && method === "POST") {
+      const r = runner.runPreGameRecording(taskId);
+      if (!r.ok) return sendJson(res, 409, { error: r.error });
+      return sendJson(res, 202, { ok: true, taskId });
+    }
+
+    // POST /api/tasks/:id/record-ui-flows
+    // Phase 2.5 — LLM-record click sequence cho replay_or_vision cases (buy_feature,
+    // special_bet, ...). Yêu cầu catalog đã generated. Output:
+    // fixtures/case-actions/{slug}/{caseId}/{recording.json, baseline.png}.
+    if (sub === "/record-ui-flows" && method === "POST") {
+      const r = runner.runUiFlowRecording(taskId);
+      if (!r.ok) return sendJson(res, 409, { error: r.error });
+      return sendJson(res, 202, { ok: true, taskId });
+    }
+
+    // POST /api/tasks/:id/capture-fs-buy
+    // Phase 2.6 — click Buy Feature qua LLM → capture FS chain → save
+    // fixtures/scenarios/{slug}/free_spin_chain.json. Cần Buy Feature có sẵn.
+    if (sub === "/capture-fs-buy" && method === "POST") {
+      const r = runner.runCaptureFsViaBuy(taskId);
+      if (!r.ok) return sendJson(res, 409, { error: r.error });
+      return sendJson(res, 202, { ok: true, taskId });
+    }
+
+    // GET /api/tasks/:id/pregame-stats → aggregated replay/vision stats for slug
+    if (sub === "/pregame-stats" && method === "GET") {
+      const { aggregatePreGameStats } = await import("../runner/pre-game-stats.js");
+      const aggs = aggregatePreGameStats(task.gameSlug);
+      return sendJson(res, 200, { slug: task.gameSlug, stats: aggs[0] ?? null });
+    }
+
     // GET /api/tasks/:id/attachment?path=... → serve Playwright attachment (screenshot/video/trace).
     // Path phải nằm trong test-results/, reports/, playwright-report/, hoặc fixtures/tasks/ để chống path traversal.
     if (sub === "/attachment" && method === "GET") {
@@ -193,6 +360,7 @@ const server = createServer(async (req, res) => {
         join(cwd, "reports"),
         join(cwd, "playwright-report"),
         join(cwd, "fixtures", "tasks"),
+        join(cwd, "fixtures", "statistical"),
       ];
       const isAllowed = allowed.some((root) => abs.startsWith(root + "/") || abs === root);
       if (!isAllowed || !existsSync(abs) || !statSync(abs).isFile()) {
@@ -223,9 +391,170 @@ const server = createServer(async (req, res) => {
       if (!existsSync(path)) return sendJson(res, 200, { catalog: null });
       try {
         const data = JSON.parse(readFileSync(path, "utf8"));
+        // Auto-reconcile: if catalog IDs drift from caseResults (eg AI rename),
+        // drop stale entries + add new ones as pending. Stats stay accurate.
+        if (Array.isArray(data.cases)) {
+          const catalogIds: string[] = data.cases
+            .map((c: { id?: string }) => c.id)
+            .filter((x: unknown): x is string => typeof x === "string");
+          const sync = queue.reconcileCaseCatalog(taskId, catalogIds);
+          if (sync.dropped > 0 || sync.added > 0) {
+            console.log(`[task ${taskId.slice(0, 8)}] catalog sync: kept=${sync.kept} dropped=${sync.dropped} added=${sync.added}`);
+          }
+        }
         return sendJson(res, 200, { catalog: data });
       } catch (err) {
         return sendJson(res, 500, { error: (err as Error).message });
+      }
+    }
+
+    // ===== Deterministic / Hybrid endpoints =====
+    if (sub === "/scenarios" && method === "GET") {
+      const { listScenarios, loadScenario } = await import("../runner/scenario.js");
+      const names = listScenarios(task.gameSlug);
+      const details = names.map((name) => {
+        try {
+          const s = loadScenario(task.gameSlug, name);
+          return { name, expected: s.expected, label: s.label };
+        } catch {
+          return { name, expected: null, label: null };
+        }
+      });
+      return sendJson(res, 200, { scenarios: details });
+    }
+
+    if (sub === "/gen-hybrid" && method === "POST") {
+      try {
+        const { generateHybridTestCode } = await import("../ai/authoring.js");
+        const { writeFileSync, mkdirSync } = await import("node:fs");
+        // Pass catalog nếu có → catalog-driven mode (1 test per case, ~60-80% coverage).
+        // Nếu chưa có catalog (Generate phase chưa chạy) → scenario-only mode (N test = N scenario).
+        const catalogPath = join("fixtures/specs", task.gameSlug, `${task.gameSlug}.test-cases.json`);
+        const catalog = existsSync(catalogPath)
+          ? JSON.parse(readFileSync(catalogPath, "utf8"))
+          : null;
+        const code = generateHybridTestCode({
+          gameSlug: task.gameSlug,
+          harnessImportPath: "unused",
+          envVarUrl: "GAME_URL",
+          catalog,
+        });
+        if (!code) {
+          return sendJson(res, 409, {
+            error: `No scenarios for ${task.gameSlug}. Run Collect phase first.`,
+          });
+        }
+        const outDir = join("tests", "generated");
+        mkdirSync(outDir, { recursive: true });
+        const outPath = join(outDir, `${task.gameSlug}.hybrid.spec.ts`);
+        writeFileSync(outPath, code);
+        return sendJson(res, 200, {
+          ok: true,
+          path: outPath,
+          sizeChars: code.length,
+          mode: catalog ? "catalog-driven" : "scenario-only",
+          caseCount: catalog?.cases?.length ?? 0,
+        });
+      } catch (err) {
+        return sendJson(res, 500, { error: (err as Error).message });
+      }
+    }
+
+    if (sub === "/run-hybrid" && method === "POST") {
+      const specPath = join("tests", "generated", `${task.gameSlug}.hybrid.spec.ts`);
+      if (!existsSync(specPath)) {
+        return sendJson(res, 409, {
+          error: `Hybrid spec không tồn tại. POST /gen-hybrid trước.`,
+        });
+      }
+      const r = runner.runHybridSpec(taskId, specPath);
+      if (!r.ok) return sendJson(res, 409, { error: r.error });
+      return sendJson(res, 202, { ok: true, taskId, specPath });
+    }
+
+    if (sub === "/run-all" && method === "POST") {
+      // Unified mode: auto-gen spec với mixed strategy (mock + LLM), rồi spawn
+      // Playwright. Coverage 100% cases, cost optimized.
+      try {
+        const catalogPath = join("fixtures/specs", task.gameSlug, `${task.gameSlug}.test-cases.json`);
+        if (!existsSync(catalogPath)) {
+          return sendJson(res, 409, {
+            error: `Chưa có catalog. Chạy "2. Generate Tests" trước.`,
+          });
+        }
+        const catalog = JSON.parse(readFileSync(catalogPath, "utf8"));
+        const { generateUnifiedTestCode } = await import("../ai/authoring.js");
+        const { writeFileSync, mkdirSync } = await import("node:fs");
+        const code = generateUnifiedTestCode({
+          gameSlug: task.gameSlug,
+          envVarUrl: "GAME_URL",
+          catalog,
+        });
+        if (!code) {
+          return sendJson(res, 409, { error: "Catalog empty hoặc invalid" });
+        }
+        const outDir = join("tests", "generated");
+        mkdirSync(outDir, { recursive: true });
+        const specPath = join(outDir, `${task.gameSlug}.unified.spec.ts`);
+        writeFileSync(specPath, code);
+        const r = runner.runHybridSpec(taskId, specPath);
+        if (!r.ok) return sendJson(res, 409, { error: r.error });
+        return sendJson(res, 202, { ok: true, taskId, specPath, mode: "unified" });
+      } catch (err) {
+        return sendJson(res, 500, { error: (err as Error).message });
+      }
+    }
+
+    if (sub === "/run-stats" && method === "POST") {
+      try {
+        const body = JSON.parse(await readBody(req));
+        const spins = Math.max(1, Math.min(1_000_000, Number(body?.spins) || 100));
+        const concurrency = body?.concurrency ? Math.max(1, Math.min(32, Number(body.concurrency))) : undefined;
+        const throttleMs = body?.throttleMs != null ? Math.max(0, Number(body.throttleMs)) : undefined;
+        const historyAudit = body?.historyAudit !== false;
+        // Fire-and-forget, response trả ngay. Caller poll qua /stream để biết khi xong.
+        void runner.runStatsSim(taskId, { spins, concurrency, throttleMs, historyAudit });
+        return sendJson(res, 202, { ok: true, taskId, spins, concurrency, throttleMs, historyAudit });
+      } catch (err) {
+        return sendJson(res, 400, { error: (err as Error).message });
+      }
+    }
+
+    if (sub === "/stats-report" && method === "GET") {
+      // Trả về report mới nhất cho slug (nếu có).
+      const { readdirSync, statSync } = await import("node:fs");
+      const slug = task.gameSlug;
+      const dir = "fixtures/statistical";
+      if (!existsSync(dir)) return sendJson(res, 200, { report: null });
+      const files = readdirSync(dir)
+        .filter((n) => n.startsWith(`${slug}-`) && n.endsWith(".json"))
+        .map((n) => ({ name: n, full: join(dir, n) }))
+        .sort((a, b) => statSync(b.full).mtimeMs - statSync(a.full).mtimeMs);
+      if (files.length === 0) return sendJson(res, 200, { report: null });
+      const latest = files[0]!;
+      const content = JSON.parse(readFileSync(latest.full, "utf8"));
+      return sendJson(res, 200, { report: content, path: latest.full });
+    }
+
+    if (sub === "/update-baselines" && method === "POST") {
+      try {
+        const body = JSON.parse(await readBody(req));
+        const type = body?.type ?? "both";
+        if (!["region", "json", "both"].includes(type)) {
+          return sendJson(res, 400, { error: "type must be region|json|both" });
+        }
+        const specPath = join("tests", "generated", `${task.gameSlug}.hybrid.spec.ts`);
+        if (!existsSync(specPath)) {
+          return sendJson(res, 409, { error: "Hybrid spec không tồn tại. POST /gen-hybrid trước." });
+        }
+        const env: Record<string, string> = {};
+        if (type === "region" || type === "both") env.REGION_SNAPSHOT_UPDATE = "1";
+        if (type === "json" || type === "both") env.JSON_SNAPSHOT_UPDATE = "1";
+        const r = runner.runHybridSpec(taskId, specPath, env);
+        if (!r.ok) return sendJson(res, 409, { error: r.error });
+        return sendJson(res, 202, { ok: true, taskId, type });
+      } catch (err) {
+        return sendJson(res, 400, { error: (err as Error).message });
       }
     }
 
@@ -487,6 +816,34 @@ const server = createServer(async (req, res) => {
   // Alias /dashboard → /index.html
   const pathOnly = (url.split("?")[0] ?? "/");
   const aliased = pathOnly === "/dashboard" || pathOnly === "/dashboard/" ? "/" : pathOnly;
+
+  // Playwright HTML report — serve từ reports/html/. Cho phép browse toàn bộ
+  // report (CSS/JS/screenshot relative paths) → cần static route riêng thay vì
+  // /api/attachment one-file.
+  if (method === "GET" && pathOnly.startsWith("/playwright-report")) {
+    const sub = pathOnly.replace(/^\/playwright-report\/?/, "") || "index.html";
+    if (sub.includes("..")) {
+      res.writeHead(403);
+      res.end("forbidden");
+      return;
+    }
+    const full = join("reports/html", sub);
+    if (!existsSync(full) || !statSync(full).isFile()) {
+      res.writeHead(404, { "content-type": "text/plain" });
+      res.end("playwright report not generated yet — run `npm run test` first");
+      return;
+    }
+    const mime = MIME[extname(full).toLowerCase()] ?? "application/octet-stream";
+    const data = readFileSync(full);
+    res.writeHead(200, {
+      "content-type": mime,
+      "content-length": data.length,
+      "cache-control": "no-store",
+    });
+    res.end(data);
+    return;
+  }
+
   if (method === "GET" && serveStatic(aliased, res)) return;
 
   res.writeHead(404, { "content-type": "text/plain" });

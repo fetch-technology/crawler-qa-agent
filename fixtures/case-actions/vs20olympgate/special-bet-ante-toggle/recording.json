@@ -1,0 +1,23 @@
+{
+  "slug": "vs20olympgate",
+  "case_id": "special-bet-ante-toggle",
+  "recorded_at": "2026-05-19T18:33:23.571Z",
+  "instructions": [
+    "locate and click the special bet toggle (Ante/Double Chance/Special Bet)"
+  ],
+  "clicks": [
+    {
+      "x": 720,
+      "y": 450,
+      "delay_ms": 4309,
+      "reason": "Dismiss congratulations overlay first",
+      "step": 0
+    }
+  ],
+  "baseline_png": "fixtures/case-actions/vs20olympgate/special-bet-ante-toggle/baseline.png",
+  "max_diff_ratio": 0.05,
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  }
+}

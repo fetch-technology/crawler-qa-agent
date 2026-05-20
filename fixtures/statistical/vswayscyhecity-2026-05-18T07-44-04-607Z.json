@@ -1,0 +1,270 @@
+{
+  "slug": "vswayscyhecity",
+  "spinsRequested": 1000,
+  "spinsSuccessful": 1000,
+  "spinsFailed": 0,
+  "totalBet": 2500,
+  "totalWin": 4468.899999999994,
+  "observedRTP": 1.7875599999999976,
+  "hitFrequency": 0.571,
+  "maxWin": 72.7,
+  "maxWinMultiplier": 29.080000000000002,
+  "averageWin": 7.826444833625208,
+  "volatility": 4.381639420400815,
+  "volatilityBand": "medium",
+  "rtpConfidence95": 0.27157682489931384,
+  "featureFrequency": {
+    "freeSpinTrigger": 0,
+    "bonusTrigger": 0,
+    "freeSpinRuns": 0,
+    "retrigger": 0
+  },
+  "symbolDistribution": {
+    "i": 1965,
+    "h": 1928,
+    "g": 1868,
+    "f": 1798,
+    "e": 1710,
+    "d": 1434,
+    "c": 1382,
+    "b": 1354,
+    "a": 1126,
+    "S": 328,
+    "W": 88,
+    "X": 19
+  },
+  "winDistribution": {
+    "buckets": [
+      {
+        "min": 0,
+        "max": 0,
+        "count": 429,
+        "pctOfSpins": 0.429
+      },
+      {
+        "min": 0.0001,
+        "max": 1,
+        "count": 349,
+        "pctOfSpins": 0.349
+      },
+      {
+        "min": 1,
+        "max": 2,
+        "count": 44,
+        "pctOfSpins": 0.044
+      },
+      {
+        "min": 2,
+        "max": 5,
+        "count": 68,
+        "pctOfSpins": 0.068
+      },
+      {
+        "min": 5,
+        "max": 10,
+        "count": 62,
+        "pctOfSpins": 0.062
+      },
+      {
+        "min": 10,
+        "max": 50,
+        "count": 48,
+        "pctOfSpins": 0.048
+      },
+      {
+        "min": 50,
+        "max": 200,
+        "count": 0,
+        "pctOfSpins": 0
+      },
+      {
+        "min": 200,
+        "max": 1000,
+        "count": 0,
+        "pctOfSpins": 0
+      },
+      {
+        "min": 1000,
+        "max": null,
+        "count": 0,
+        "pctOfSpins": 0
+      }
+    ]
+  },
+  "consistency": {
+    "spinsChecked": 1000,
+    "payoutMismatches": 147,
+    "inconclusive": 492,
+    "mismatchRate": 0.147,
+    "examples": [
+      {
+        "spinIndex": 0,
+        "expected": 1.2000000000000002,
+        "actual": 2,
+        "delta": 0.7999999999999998,
+        "reels": "eeihiecdefibbhe",
+        "detail": "PAYOUT_MISMATCH: server trả 2, rule engine tính 1.2000 (delta=0.8000 > tol=0.01)\nBase total: 1.2000\nWild multiplier: 0 (effective 1×)\nCombos:\n  • 3× e (2 ways × 6× × 0.1) = 1.2000"
+      },
+      {
+        "spinIndex": 15,
+        "expected": 0.4,
+        "actual": 1.5,
+        "delta": 1.1,
+        "reels": "bhbfihhiabcegii",
+        "detail": "PAYOUT_MISMATCH: server trả 1.5, rule engine tính 0.4000 (delta=1.1000 > tol=0.01)\nBase total: 0.4000\nWild multiplier: 0 (effective 1×)\nCombos:\n  • 3× h (1 ways × 4× × 0.1) = 0.4000"
+      },
+      {
+        "spinIndex": 24,
+        "expected": 0.4,
+        "actual": 13.2,
+        "delta": 12.799999999999999,
+        "reels": "bchffhghiiedefg",
+        "detail": "PAYOUT_MISMATCH: server trả 13.2, rule engine tính 0.4000 (delta=12.8000 > tol=0.01)\nBase total: 0.4000\nWild multiplier: 0 (effective 1×)\nCombos:\n  • 3× h (1 ways × 4× × 0.1) = 0.4000"
+      },
+      {
+        "spinIndex": 28,
+        "expected": 0.6000000000000001,
+        "actual": 1,
+        "delta": 0.3999999999999999,
+        "reels": "gechdeiaeihgggg",
+        "detail": "PAYOUT_MISMATCH: server trả 1, rule engine tính 0.6000 (delta=0.4000 > tol=0.01)\nBase total: 0.6000\nWild multiplier: 1 (effective 1×)\nCombos:\n  • 3× e (1 ways × 6× × 0.1) = 0.6000"
+      },
+      {
+        "spinIndex": 35,
+        "expected": 7.5,
+        "actual": 21,
+        "delta": 13.5,
+        "reels": "beWgibbdhdabgie",
+        "detail": "PAYOUT_MISMATCH: server trả 21, rule engine tính 7.5000 (delta=13.5000 > tol=0.01)\nBase total: 2.5000\nWild multiplier: 3 (effective 3×)\nCombos:\n  • 4× b (1 ways × 25× × 0.1) = 2.5000"
+      },
+      {
+        "spinIndex": 47,
+        "expected": 4.800000000000001,
+        "actual": 1.4,
+        "delta": 3.400000000000001,
+        "reels": "ihiaigiihihSaac",
+        "detail": "PAYOUT_MISMATCH: server trả 1.4, rule engine tính 4.8000 (delta=3.4000 > tol=0.01)\nBase total: 2.4000\nWild multiplier: 2 (effective 2×)\nCombos:\n  • 4× i (4 ways × 6× × 0.1) = 2.4000"
+      },
+      {
+        "spinIndex": 49,
+        "expected": 6.4,
+        "actual": 5.4,
+        "delta": 1,
+        "reels": "SeggiggfaigSaac",
+        "detail": "PAYOUT_MISMATCH: server trả 5.4, rule engine tính 6.4000 (delta=1.0000 > tol=0.01)\nBase total: 1.6000\nWild multiplier: 4 (effective 4×)\nCombos:\n  • 4× g (2 ways × 8× × 0.1) = 1.6000"
+      },
+      {
+        "spinIndex": 58,
+        "expected": 0.4,
+        "actual": 1.5,
+        "delta": 1.1,
+        "reels": "bhbfihhiabcegii",
+        "detail": "PAYOUT_MISMATCH: server trả 1.5, rule engine tính 0.4000 (delta=1.1000 > tol=0.01)\nBase total: 0.4000\nWild multiplier: 0 (effective 1×)\nCombos:\n  • 3× h (1 ways × 4× × 0.1) = 0.4000"
+      },
+      {
+        "spinIndex": 60,
+        "expected": 0.6000000000000001,
+        "actual": 1,
+        "delta": 0.3999999999999999,
+        "reels": "ihfegfigfaheecc",
+        "detail": "PAYOUT_MISMATCH: server trả 1, rule engine tính 0.6000 (delta=0.4000 > tol=0.01)\nBase total: 0.6000\nWild multiplier: 0 (effective 1×)\nCombos:\n  • 3× f (1 ways × 6× × 0.1) = 0.6000"
+      },
+      {
+        "spinIndex": 63,
+        "expected": 0.6000000000000001,
+        "actual": 2,
+        "delta": 1.4,
+        "reels": "eibifeShiifeSfg",
+        "detail": "PAYOUT_MISMATCH: server trả 2, rule engine tính 0.6000 (delta=1.4000 > tol=0.01)\nBase total: 0.6000\nWild multiplier: 0 (effective 1×)\nCombos:\n  • 4× i (1 ways × 6× × 0.1) = 0.6000"
+      },
+      {
+        "spinIndex": 71,
+        "expected": 2,
+        "actual": 1.6,
+        "delta": 0.3999999999999999,
+        "reels": "ihhhibhieeheigh",
+        "detail": "PAYOUT_MISMATCH: server trả 1.6, rule engine tính 2.0000 (delta=0.4000 > tol=0.01)\nBase total: 2.0000\nWild multiplier: 1 (effective 1×)\nCombos:\n  • 5× h (2 ways × 8× × 0.1) = 1.6000\n  • 3× i (1 ways × 4× × 0.1) = 0.4000"
+      },
+      {
+        "spinIndex": 72,
+        "expected": 2.4000000000000004,
+        "actual": 1.6,
+        "delta": 0.8000000000000003,
+        "reels": "ecceeibieibeige",
+        "detail": "PAYOUT_MISMATCH: server trả 1.6, rule engine tính 2.4000 (delta=0.8000 > tol=0.01)\nBase total: 2.4000\nWild multiplier: 0 (effective 1×)\nCombos:\n  • 5× e (2 ways × 12× × 0.1) = 2.4000"
+      },
+      {
+        "spinIndex": 80,
+        "expected": 2.4000000000000004,
+        "actual": 1.4,
+        "delta": 1.0000000000000004,
+        "reels": "chchgcecbghaabf",
+        "detail": "PAYOUT_MISMATCH: server trả 1.4, rule engine tính 2.4000 (delta=1.0000 > tol=0.01)\nBase total: 2.4000\nWild multiplier: 0 (effective 1×)\nCombos:\n  • 3× c (2 ways × 12× × 0.1) = 2.4000"
+      },
+      {
+        "spinIndex": 90,
+        "expected": 1,
+        "actual": 2.4,
+        "delta": 1.4,
+        "reels": "fehebdffeeffdic",
+        "detail": "PAYOUT_MISMATCH: server trả 2.4, rule engine tính 1.0000 (delta=1.4000 > tol=0.01)\nBase total: 1.0000\nWild multiplier: 1 (effective 1×)\nCombos:\n  • 4× e (1 ways × 10× × 0.1) = 1.0000"
+      },
+      {
+        "spinIndex": 91,
+        "expected": 2,
+        "actual": 2.4,
+        "delta": 0.3999999999999999,
+        "reels": "efdebfbheededic",
+        "detail": "PAYOUT_MISMATCH: server trả 2.4, rule engine tính 2.0000 (delta=0.4000 > tol=0.01)\nBase total: 2.0000\nWild multiplier: 0 (effective 1×)\nCombos:\n  • 4× e (2 ways × 10× × 0.1) = 2.0000"
+      },
+      {
+        "spinIndex": 93,
+        "expected": 2.4000000000000004,
+        "actual": 36,
+        "delta": 33.6,
+        "reels": "ehihcieihcgiihg",
+        "detail": "PAYOUT_MISMATCH: server trả 36, rule engine tính 2.4000 (delta=33.6000 > tol=0.01)\nBase total: 1.2000\nWild multiplier: 2 (effective 2×)\nCombos:\n  • 3× h (1 ways × 4× × 0.1) = 0.4000\n  • 5× i (1 ways × 8× × 0.1) = 0.8000"
+      },
+      {
+        "spinIndex": 97,
+        "expected": 0.4,
+        "actual": 0.8,
+        "delta": 0.4,
+        "reels": "gWhhafaehebahhi",
+        "detail": "PAYOUT_MISMATCH: server trả 0.8, rule engine tính 0.4000 (delta=0.4000 > tol=0.01)\nBase total: 0.4000\nWild multiplier: 0 (effective 1×)\nCombos:\n  • 3× h (1 ways × 4× × 0.1) = 0.4000"
+      },
+      {
+        "spinIndex": 98,
+        "expected": 0.4,
+        "actual": 0.8,
+        "delta": 0.4,
+        "reels": "hgeehgddheicigg",
+        "detail": "PAYOUT_MISMATCH: server trả 0.8, rule engine tính 0.4000 (delta=0.4000 > tol=0.01)\nBase total: 0.4000\nWild multiplier: 0 (effective 1×)\nCombos:\n  • 3× h (1 ways × 4× × 0.1) = 0.4000"
+      },
+      {
+        "spinIndex": 104,
+        "expected": 2,
+        "actual": 8.4,
+        "delta": 6.4,
+        "reels": "dfafahffifihdea",
+        "detail": "PAYOUT_MISMATCH: server trả 8.4, rule engine tính 2.0000 (delta=6.4000 > tol=0.01)\nBase total: 2.0000\nWild multiplier: 0 (effective 1×)\nCombos:\n  • 4× f (2 ways × 10× × 0.1) = 2.0000"
+      },
+      {
+        "spinIndex": 107,
+        "expected": 1,
+        "actual": 37.2,
+        "delta": 36.2,
+        "reels": "agSggcfgiedacee",
+        "detail": "PAYOUT_MISMATCH: server trả 37.2, rule engine tính 1.0000 (delta=36.2000 > tol=0.01)\nBase total: 1.0000\nWild multiplier: 0 (effective 1×)\nCombos:\n  • 3× g (2 ways × 5× × 0.1) = 1.0000"
+      }
+    ]
+  },
+  "debugDump": null,
+  "cascadeStats": {
+    "enabled": true,
+    "totalFrames": 309,
+    "avgFramesPerSpin": 0.309
+  },
+  "durationMs": 142418,
+  "errors": []
+}

@@ -1,6 +1,17 @@
 import { query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import type Anthropic from "@anthropic-ai/sdk";
 
+const USAGE_EXHAUSTED_PATTERNS = [
+  /you'?re out of extra usage/i,
+  /usage limit/i,
+  /rate limit/i,
+  /quota exceeded/i,
+];
+
+function isUsageExhaustedMessage(text: string): boolean {
+  return USAGE_EXHAUSTED_PATTERNS.some((p) => p.test(text));
+}
+
 async function* yieldOnce(
   content: Anthropic.Messages.MessageParam["content"],
 ): AsyncIterable<SDKUserMessage> {
@@ -42,6 +53,8 @@ export async function askClaude(args: {
   maxTurns?: number;
   /** Optional label for diagnostic logs (e.g. "catalog/PLAN", "catalog/EXPAND") */
   label?: string;
+  /** Optional per-call timeout override (ms). */
+  timeoutMs?: number;
 }): Promise<string> {
   if (!process.env.CLAUDE_CODE_OAUTH_TOKEN && !process.env.ANTHROPIC_API_KEY) {
     throw new Error("Thiếu CLAUDE_CODE_OAUTH_TOKEN (hoặc ANTHROPIC_API_KEY) trong .env");
@@ -58,6 +71,8 @@ export async function askClaude(args: {
   // SDK's "Claude Code process exited with code 1" alone is unhelpful.
   const stderrBuf: string[] = [];
   const debugMode = process.env.QA_CLAUDE_DEBUG === "1";
+  const envTimeoutMs = Number(process.env.QA_CLAUDE_TIMEOUT_MS ?? 90_000);
+  const timeoutMs = Math.max(1_000, Number.isFinite(args.timeoutMs) ? Number(args.timeoutMs) : envTimeoutMs);
 
   const q = query({
     prompt: yieldOnce(args.content),
@@ -77,6 +92,11 @@ export async function askClaude(args: {
 
   let text = "";
   let caught: unknown = null;
+  let timedOut = false;
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    void q.interrupt().catch(() => {});
+  }, timeoutMs);
   try {
     for await (const msg of q) {
       if (msg.type === "assistant") {
@@ -90,13 +110,25 @@ export async function askClaude(args: {
   } catch (err) {
     caught = err;
   } finally {
+    clearTimeout(timeoutId);
     await q.interrupt().catch(() => {});
+  }
+
+  if (timedOut && !caught) {
+    throw new Error(
+      `[${label}] Claude request timeout after ${timeoutMs}ms. Set QA_CLAUDE_TIMEOUT_MS or pass askClaude({ timeoutMs }) to adjust.`,
+    );
   }
 
   if (caught) {
     const stderrText = stderrBuf.join("").trim();
     const tail = stderrText.length > 2000 ? "…" + stderrText.slice(-2000) : stderrText;
     const baseMsg = (caught as Error).message ?? String(caught);
+    if (isUsageExhaustedMessage(baseMsg) || isUsageExhaustedMessage(stderrText)) {
+      throw new Error(
+        `[${label}] Claude usage exhausted. Refill quota/token or switch model before rerun.`,
+      );
+    }
     const enriched = stderrText
       ? `${baseMsg}\n--- captured Claude CLI stderr (${stderrText.length} chars) ---\n${tail}`
       : `${baseMsg}\n(no stderr captured — re-run with QA_CLAUDE_DEBUG=1 for SDK debug logs)`;
@@ -109,6 +141,12 @@ export async function askClaude(args: {
   if (!text.trim() && stderrBuf.length > 0) {
     const stderrText = stderrBuf.join("").trim();
     console.warn(`[${label}] empty response. stderr tail:\n${stderrText.slice(-1000)}`);
+  }
+
+  if (isUsageExhaustedMessage(text)) {
+    throw new Error(
+      `[${label}] Claude usage exhausted. Refill quota/token or switch model before rerun.`,
+    );
   }
 
   return text;

@@ -19,6 +19,7 @@ type IterationLog = {
   decision: AIDecision;
   postClickWaitMs?: number;
   sawApiResponse?: boolean;
+  usedSpinFallbackClick?: boolean;
 };
 
 const VIEWPORT = { width: 1440, height: 900 };
@@ -41,6 +42,88 @@ async function waitForSpinResponse(page: Page, timeoutMs = 8_000): Promise<boole
     return true;
   } catch {
     return false;
+  }
+}
+
+function isSpinIntent(reason: string): boolean {
+  return /\bspin\b|start spin|start the next spin|reels?.*spin|single spin|press spin/i.test(reason);
+}
+
+function isPragmaticPlayHost(gameUrl: string): boolean {
+  try {
+    const host = new URL(gameUrl).hostname.toLowerCase();
+    return host.startsWith("pp.") || host.includes("pragmatic");
+  } catch {
+    return false;
+  }
+}
+
+function resolvePpForceSpinCenter(args: {
+  viewport: { width: number; height: number };
+  fallbackCenter: { x: number; y: number } | null;
+}): { x: number; y: number } {
+  const { viewport, fallbackCenter } = args;
+  // PP layout (1440x900): spin is typically near bottom-right but left of +/- controls.
+  const hardAnchor = {
+    x: Math.round(viewport.width - 320),
+    y: Math.round(viewport.height - 80),
+  };
+  if (!fallbackCenter) return hardAnchor;
+
+  // If AI bbox drifts too far right, it's often the '+' button, not spin.
+  if (fallbackCenter.x > viewport.width - 220) {
+    return {
+      x: Math.max(1, Math.min(viewport.width - 1, fallbackCenter.x - 170)),
+      y: fallbackCenter.y,
+    };
+  }
+  return fallbackCenter;
+}
+
+function buildHistoryCandidates(gameUrl: string, slug: string): string[] {
+  try {
+    const u = new URL(gameUrl);
+    const t = u.searchParams.get("t") ?? "";
+    const tokenVariants = [t, t ? `demo@${t}` : ""].filter(Boolean);
+    const out: string[] = [];
+
+    // Legacy landing history URL seen in init payload.
+    out.push(`${u.origin}/history/?symbol=${encodeURIComponent(slug)}`);
+
+    // Modern history API variants.
+    for (const tok of tokenVariants) {
+      const qp = new URLSearchParams({ token: tok, symbol: slug });
+      out.push(`${u.origin}/history/api/history/v2/play-session/last-items?${qp.toString()}`);
+    }
+    return [...new Set(out)];
+  } catch {
+    return [];
+  }
+}
+
+async function captureHistoryEndpointTraffic(page: Page, gameUrl: string, slug: string): Promise<void> {
+  const candidates = buildHistoryCandidates(gameUrl, slug);
+  if (candidates.length === 0) return;
+  console.log(`[auto-play] probing history endpoint(s): ${candidates.length} candidate(s)`);
+  for (const url of candidates) {
+    try {
+      const status = await page.evaluate(async (u) => {
+        const r = await fetch(u, {
+          method: "GET",
+          credentials: "include",
+          headers: { accept: "application/json, text/plain, */*" },
+        });
+        await r.text().catch(() => "");
+        return r.status;
+      }, url);
+      console.log(`[auto-play] history probe ${url} -> HTTP ${status}`);
+      // Give recorder a short window to persist request/response pair.
+      await page.waitForTimeout(250);
+      // 2xx/4xx both useful for capturing template URL in recording.
+      if (status >= 200 && status < 500) break;
+    } catch (err) {
+      console.log(`[auto-play] history probe failed: ${(err as Error).message}`);
+    }
   }
 }
 
@@ -90,7 +173,36 @@ async function main() {
       viewport: VIEWPORT,
       label: "pre-game",
       maxIterations: Number(process.env.PRE_GAME_MAX_ITERATIONS ?? 25),
+      // Pass slug so QA_CAPTURE_PREGAME=1 actually captures.
+      // Auto-play always knows the slug — there's no reason not to thread it.
+      captureSlug: info.gameSlug,
     });
+    const fallbackSpinCenter = preGameRes.spinButtonBbox
+      ? {
+          x: Math.round(preGameRes.spinButtonBbox.x + preGameRes.spinButtonBbox.w / 2),
+          y: Math.round(preGameRes.spinButtonBbox.y + preGameRes.spinButtonBbox.h / 2),
+        }
+      : null;
+    const ppHost = isPragmaticPlayHost(gameUrl);
+    const forceSpinEnabled = ppHost && (process.env.AUTO_FORCE_SPIN ?? "1") !== "0";
+    const forceSpinWindowMs = Number(process.env.AUTO_FORCE_SPIN_WINDOW_MS ?? 15_000);
+    const forceSpinCenter = forceSpinEnabled
+      ? resolvePpForceSpinCenter({ viewport: VIEWPORT, fallbackCenter: fallbackSpinCenter })
+      : fallbackSpinCenter;
+    const forceSpinOffsets = [
+      { dx: 0, dy: 0 },
+      { dx: -22, dy: 0 },
+      { dx: 22, dy: 0 },
+      { dx: 0, dy: -22 },
+      { dx: 0, dy: 22 },
+      { dx: -34, dy: -12 },
+      { dx: 34, dy: -12 },
+      { dx: -34, dy: 12 },
+      { dx: 34, dy: 12 },
+    ];
+    let forceSpinProbeIndex = 0;
+    const playReadyAt = Date.now();
+
     if (!preGameRes.ready) {
       console.warn(
         `[auto-play] play screen chưa ready sau ${preGameRes.iterations} iter (${preGameRes.reason}). Tiếp tục dù sao.`,
@@ -99,6 +211,16 @@ async function main() {
       console.log(
         `[auto-play] ✔ play screen ready sau ${preGameRes.iterations} iter, dismissed ${preGameRes.dismissed} blockers`,
       );
+      if (fallbackSpinCenter) {
+        console.log(
+          `[auto-play] fallback spin center from pre-game: (${fallbackSpinCenter.x}, ${fallbackSpinCenter.y})`,
+        );
+      }
+      if (forceSpinEnabled && forceSpinCenter) {
+        console.log(
+          `[auto-play] force-spin enabled for PP: window=${forceSpinWindowMs}ms, center=(${forceSpinCenter.x}, ${forceSpinCenter.y})`,
+        );
+      }
     }
 
     let lastAction: { action: string; reason: string } | null = null;
@@ -112,6 +234,52 @@ async function main() {
     const maxSameBalance = Number(process.env.AUTO_MAX_SAME_BALANCE ?? 4);
 
     for (let i = 0; i < maxIterations && spinsCompleted < spinsTarget; i++) {
+      const inForceWindow =
+        forceSpinEnabled &&
+        forceSpinCenter &&
+        Date.now() - playReadyAt < forceSpinWindowMs;
+
+      if (inForceWindow) {
+        const off = forceSpinOffsets[forceSpinProbeIndex % forceSpinOffsets.length]!;
+        forceSpinProbeIndex++;
+        const fx = Math.max(1, Math.min(VIEWPORT.width - 1, forceSpinCenter.x + off.dx));
+        const fy = Math.max(1, Math.min(VIEWPORT.height - 1, forceSpinCenter.y + off.dy));
+        console.log(`\n[iter ${i}] force-spin probe (${fx}, ${fy})`);
+
+        await page.mouse.move(fx, fy);
+        await page.waitForTimeout(90);
+        await page.mouse.click(fx, fy);
+        const saw = await waitForSpinResponse(page, 1_500);
+        console.log(`[iter ${i}] force-spin API response: ${saw}`);
+
+        const syntheticDecision: AIDecision = {
+          action: "click",
+          x: fx,
+          y: fy,
+          reason: "Force-spin probe in startup window",
+          confidence: 1,
+          observed_balance: null,
+          observed_win: null,
+          spin_state: "idle",
+        };
+        iterations.push({
+          iter: i,
+          t: Date.now() - recorder.t0,
+          screenshot: "",
+          decision: syntheticDecision,
+          sawApiResponse: saw,
+        });
+
+        if (saw) {
+          spinsCompleted++;
+          console.log(`[iter ${i}] ✔ spin ${spinsCompleted}/${spinsTarget} (force-spin)`);
+          await page.waitForTimeout(2_500);
+        } else {
+          await page.waitForTimeout(350);
+        }
+        continue;
+      }
+
       const t = Date.now() - recorder.t0;
       const screenshot = join(runDir, "screenshots", `iter-${i.toString().padStart(3, "0")}.png`);
       await page.screenshot({ path: screenshot });
@@ -143,7 +311,8 @@ async function main() {
       const logEntry: IterationLog = { iter: i, t, screenshot, decision };
 
       if (decision.action === "click") {
-        const spinPromise = /spin|play|bet/i.test(decision.reason) ? waitForSpinResponse(page) : null;
+        const spinIntent = isSpinIntent(decision.reason);
+        const spinPromise = spinIntent ? waitForSpinResponse(page) : null;
 
         await page.mouse.move(decision.x, decision.y);
         await page.waitForTimeout(150);
@@ -153,6 +322,41 @@ async function main() {
         if (spinPromise) {
           logEntry.sawApiResponse = await spinPromise;
           console.log(`[iter ${i}] spin API response: ${logEntry.sawApiResponse}`);
+          if (!logEntry.sawApiResponse && spinIntent && fallbackSpinCenter) {
+            console.log(
+              `[iter ${i}] no API response from AI click, retry at pre-game spin center (${fallbackSpinCenter.x}, ${fallbackSpinCenter.y})`,
+            );
+            await page.mouse.move(fallbackSpinCenter.x, fallbackSpinCenter.y);
+            await page.waitForTimeout(120);
+            await page.mouse.click(fallbackSpinCenter.x, fallbackSpinCenter.y);
+            logEntry.usedSpinFallbackClick = true;
+            let fallbackSawResponse = await waitForSpinResponse(page, 5_000);
+            // Probe nearby points when vision coordinates drift from actual canvas hitbox.
+            if (!fallbackSawResponse) {
+              const probeOffsets = [
+                { dx: -40, dy: 0 },
+                { dx: 40, dy: 0 },
+                { dx: 0, dy: -40 },
+                { dx: 0, dy: 40 },
+                { dx: -30, dy: -30 },
+                { dx: 30, dy: -30 },
+                { dx: -30, dy: 30 },
+                { dx: 30, dy: 30 },
+              ];
+              for (const p of probeOffsets) {
+                const px = Math.max(1, Math.min(VIEWPORT.width - 1, fallbackSpinCenter.x + p.dx));
+                const py = Math.max(1, Math.min(VIEWPORT.height - 1, fallbackSpinCenter.y + p.dy));
+                console.log(`[iter ${i}] probing spin hitbox at (${px}, ${py})`);
+                await page.mouse.move(px, py);
+                await page.waitForTimeout(100);
+                await page.mouse.click(px, py);
+                fallbackSawResponse = await waitForSpinResponse(page, 1_500);
+                if (fallbackSawResponse) break;
+              }
+            }
+            logEntry.sawApiResponse = fallbackSawResponse;
+            console.log(`[iter ${i}] spin API response after fallback: ${fallbackSawResponse}`);
+          }
         } else {
           await page.waitForTimeout(1_500);
         }
@@ -186,13 +390,13 @@ async function main() {
 
       const spinsBeforePostHook = spinsCompleted;
       // Hậu kiểm: nếu AI nói click spin và đã có API response, đếm là 1 spin
-      if (decision.action === "click" && /spin|play/i.test(decision.reason) && logEntry.sawApiResponse) {
+      if (decision.action === "click" && isSpinIntent(decision.reason) && logEntry.sawApiResponse) {
         spinsCompleted++;
         console.log(`[iter ${i}] ✔ spin ${spinsCompleted}/${spinsTarget} (detected via API)`);
       }
 
       // Stuck detection: track spin clicks không tăng progress + balance frozen.
-      const wasSpinClick = decision.action === "click" && /spin|play|bet/i.test(decision.reason);
+      const wasSpinClick = decision.action === "click" && isSpinIntent(decision.reason);
       if (wasSpinClick) {
         if (spinsCompleted === spinsBeforePostHook && decision.action !== "spin_done") {
           consecutiveSpinClicksWithoutProgress++;
@@ -220,6 +424,10 @@ async function main() {
     if (spinsCompleted >= spinsTarget) {
       stopReason = "target-reached";
     }
+
+    // Record at least one history endpoint request/response pair for later
+    // statistical history audit template extraction.
+    await captureHistoryEndpointTraffic(page, gameUrl, info.gameSlug);
   } catch (err) {
     console.error("Fatal:", err);
     stopReason = "exception";

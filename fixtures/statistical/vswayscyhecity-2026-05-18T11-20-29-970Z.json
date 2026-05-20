@@ -1,0 +1,175 @@
+{
+  "slug": "vswayscyhecity",
+  "spinsRequested": 100,
+  "spinsSuccessful": 100,
+  "spinsFailed": 0,
+  "totalBet": 250,
+  "totalWin": 200.89999999999998,
+  "observedRTP": 0.8035999999999999,
+  "hitFrequency": 0.55,
+  "maxWin": 43.7,
+  "maxWinMultiplier": 17.48,
+  "averageWin": 3.6527272727272724,
+  "volatility": 2.474200419766297,
+  "volatilityBand": "medium",
+  "rtpConfidence95": 0.48494328227419425,
+  "featureFrequency": {
+    "freeSpinTrigger": 0,
+    "bonusTrigger": 0,
+    "freeSpinRuns": 0,
+    "retrigger": 0
+  },
+  "symbolDistribution": {
+    "g": 201,
+    "i": 198,
+    "h": 196,
+    "f": 180,
+    "e": 169,
+    "b": 147,
+    "c": 132,
+    "d": 116,
+    "a": 110,
+    "S": 36,
+    "W": 9,
+    "X": 6
+  },
+  "winDistribution": {
+    "buckets": [
+      {
+        "min": 0,
+        "max": 0,
+        "count": 45,
+        "pctOfSpins": 0.45
+      },
+      {
+        "min": 0.0001,
+        "max": 1,
+        "count": 35,
+        "pctOfSpins": 0.35
+      },
+      {
+        "min": 1,
+        "max": 2,
+        "count": 15,
+        "pctOfSpins": 0.15
+      },
+      {
+        "min": 2,
+        "max": 5,
+        "count": 3,
+        "pctOfSpins": 0.03
+      },
+      {
+        "min": 5,
+        "max": 10,
+        "count": 0,
+        "pctOfSpins": 0
+      },
+      {
+        "min": 10,
+        "max": 50,
+        "count": 2,
+        "pctOfSpins": 0.02
+      },
+      {
+        "min": 50,
+        "max": 200,
+        "count": 0,
+        "pctOfSpins": 0
+      },
+      {
+        "min": 200,
+        "max": 1000,
+        "count": 0,
+        "pctOfSpins": 0
+      },
+      {
+        "min": 1000,
+        "max": null,
+        "count": 0,
+        "pctOfSpins": 0
+      }
+    ]
+  },
+  "consistency": {
+    "spinsChecked": 100,
+    "payoutMismatches": 8,
+    "inconclusive": 31,
+    "mismatchRate": 0.08,
+    "examples": [
+      {
+        "spinIndex": 12,
+        "expected": 0.5,
+        "actual": 0.4,
+        "delta": 0.09999999999999998,
+        "reels": "heghgdibgcifici",
+        "detail": "PAYOUT_MISMATCH (cascade chain): server=0.4, engine=0.5000 (delta=0.1000 > tol=0.01)\nScatter pay: 0.0000\nFrames (1):\n  frame#0: ways=0.5000 (mul=1× × baseWays=0.5000)"
+      },
+      {
+        "spinIndex": 18,
+        "expected": 0.5,
+        "actual": 3.2,
+        "delta": 2.7,
+        "reels": "ScggfeegWWbeieb",
+        "detail": "PAYOUT_MISMATCH (cascade chain): server=3.2, engine=0.5000 (delta=2.7000 > tol=0.01)\nScatter pay: 0.0000\nFrames (1):\n  frame#0: ways=0.5000 (mul=1× × baseWays=0.5000)"
+      },
+      {
+        "spinIndex": 26,
+        "expected": 1.2000000000000002,
+        "actual": 6,
+        "delta": 4.8,
+        "reels": "ggchdcciggegech",
+        "detail": "PAYOUT_MISMATCH (cascade chain): server=6, engine=1.2000 (delta=4.8000 > tol=0.01)\nScatter pay: 0.0000\nFrames (1):\n  frame#0: ways=1.2000 (mul=1× × baseWays=1.2000)"
+      },
+      {
+        "spinIndex": 27,
+        "expected": 2,
+        "actual": 6,
+        "delta": 4,
+        "reels": "dgefdggihgegegh",
+        "detail": "PAYOUT_MISMATCH (cascade chain): server=6, engine=2.0000 (delta=4.0000 > tol=0.01)\nScatter pay: 0.0000\nFrames (1):\n  frame#0: ways=2.0000 (mul=1× × baseWays=2.0000)"
+      },
+      {
+        "spinIndex": 29,
+        "expected": 0.4,
+        "actual": 43.7,
+        "delta": 43.300000000000004,
+        "reels": "iWhchabWhigfhhg",
+        "detail": "PAYOUT_MISMATCH (cascade chain): server=43.7, engine=0.4000 (delta=43.3000 > tol=0.01)\nScatter pay: 0.0000\nFrames (1):\n  frame#0: ways=0.4000 (mul=1× × baseWays=0.4000)"
+      },
+      {
+        "spinIndex": 32,
+        "expected": 0.5,
+        "actual": 1,
+        "delta": 0.5,
+        "reels": "fbgeeggbXbhhghi",
+        "detail": "PAYOUT_MISMATCH (cascade chain): server=1, engine=0.5000 (delta=0.5000 > tol=0.01)\nScatter pay: 0.0000\nFrames (1):\n  frame#0: ways=0.5000 (mul=1× × baseWays=0.5000)"
+      },
+      {
+        "spinIndex": 55,
+        "expected": 1,
+        "actual": 0.5,
+        "delta": 0.5,
+        "reels": "dgihggdgiccbiai",
+        "detail": "PAYOUT_MISMATCH (cascade chain): server=0.5, engine=1.0000 (delta=0.5000 > tol=0.01)\nScatter pay: 0.0000\nFrames (1):\n  frame#0: ways=1.0000 (mul=1× × baseWays=1.0000)"
+      },
+      {
+        "spinIndex": 79,
+        "expected": 1.2000000000000002,
+        "actual": 2.4,
+        "delta": 1.1999999999999997,
+        "reels": "fehbhffgfbgifbf",
+        "detail": "PAYOUT_MISMATCH (cascade chain): server=2.4, engine=1.2000 (delta=1.2000 > tol=0.01)\nScatter pay: 0.0000\nFrames (1):\n  frame#0: ways=1.2000 (mul=1× × baseWays=1.2000)"
+      }
+    ]
+  },
+  "debugDump": null,
+  "cascadeStats": {
+    "enabled": true,
+    "totalFrames": 25,
+    "avgFramesPerSpin": 0.25
+  },
+  "extractedScenarios": null,
+  "durationMs": 13174,
+  "errors": []
+}

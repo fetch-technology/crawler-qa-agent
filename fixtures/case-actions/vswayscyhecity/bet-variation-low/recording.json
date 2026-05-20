@@ -1,0 +1,26 @@
+{
+  "slug": "vswayscyhecity",
+  "case_id": "bet-variation-low",
+  "recorded_at": "2026-05-20T01:51:10.924Z",
+  "instructions": [
+    "Step 1: Locate the bet display next to the Spin button.",
+    "Step 2: Read the current bet value.",
+    "Step 3: Use the 'Bet +' or 'Bet -' button (per options.json positions) to step the bet until the display shows '1.00'.",
+    "Step 4: Verify the bet display reads exactly '1.00' (the bet_sizes value 1 per spec.bet_mechanics.bet_sizes; tolerance ±1 ladder step)."
+  ],
+  "clicks": [
+    {
+      "x": 1059,
+      "y": 822,
+      "delay_ms": 13215,
+      "reason": "Bet minus button",
+      "step": 2
+    }
+  ],
+  "baseline_png": "fixtures/case-actions/vswayscyhecity/bet-variation-low/baseline.png",
+  "max_diff_ratio": 0.05,
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  }
+}

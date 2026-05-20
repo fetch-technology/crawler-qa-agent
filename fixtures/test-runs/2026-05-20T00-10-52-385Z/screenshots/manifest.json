@@ -1,0 +1,58 @@
+[
+  {
+    "n": 1,
+    "filename": "001-options-pre-game-00.png",
+    "label": "pre-game-00",
+    "scope": "options",
+    "caseScope": null,
+    "timestamp": "2026-05-20T00:10:52.514Z"
+  },
+  {
+    "n": 2,
+    "filename": "002-options-pre-game-01.png",
+    "label": "pre-game-01",
+    "scope": "options",
+    "caseScope": null,
+    "timestamp": "2026-05-20T00:11:05.035Z"
+  },
+  {
+    "n": 3,
+    "filename": "003-options-pre-game-02.png",
+    "label": "pre-game-02",
+    "scope": "options",
+    "caseScope": null,
+    "timestamp": "2026-05-20T00:11:17.356Z"
+  },
+  {
+    "n": 4,
+    "filename": "004-options-pre-game-03.png",
+    "label": "pre-game-03",
+    "scope": "options",
+    "caseScope": null,
+    "timestamp": "2026-05-20T00:11:28.530Z"
+  },
+  {
+    "n": 5,
+    "filename": "005-options-pre-game-04.png",
+    "label": "pre-game-04",
+    "scope": "options",
+    "caseScope": null,
+    "timestamp": "2026-05-20T00:11:41.466Z"
+  },
+  {
+    "n": 6,
+    "filename": "006-options-pre-game-05.png",
+    "label": "pre-game-05",
+    "scope": "options",
+    "caseScope": null,
+    "timestamp": "2026-05-20T00:11:49.616Z"
+  },
+  {
+    "n": 7,
+    "filename": "007-options-pre-game-06.png",
+    "label": "pre-game-06",
+    "scope": "options",
+    "caseScope": null,
+    "timestamp": "2026-05-20T00:11:57.789Z"
+  }
+]

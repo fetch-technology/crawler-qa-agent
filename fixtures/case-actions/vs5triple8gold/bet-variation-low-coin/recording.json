@@ -1,0 +1,33 @@
+{
+  "slug": "vs5triple8gold",
+  "case_id": "bet-variation-low-coin",
+  "recorded_at": "2026-05-20T02:25:18.239Z",
+  "instructions": [
+    "Step 1: Locate the bet display in the bottom-right area.",
+    "Step 2: Read current bet value — record as starting_bet.",
+    "Step 3: Click the '+' button labeled 'Bet Increase' or '-' button labeled 'Bet Decrease' as needed to reach a total bet of '1.00' (coin 0.20 × 5 paylines).",
+    "Step 4: Verify the bet display reads exactly '1.00' (within ±1 ladder step tolerance)."
+  ],
+  "clicks": [
+    {
+      "x": 1278,
+      "y": 814,
+      "delay_ms": 10666,
+      "reason": "Bet Increase + button",
+      "step": 2
+    },
+    {
+      "x": 1231,
+      "y": 276,
+      "delay_ms": 5508,
+      "reason": "Click $1.00 bet option",
+      "step": 3
+    }
+  ],
+  "baseline_png": "fixtures/case-actions/vs5triple8gold/bet-variation-low-coin/baseline.png",
+  "max_diff_ratio": 0.05,
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  }
+}

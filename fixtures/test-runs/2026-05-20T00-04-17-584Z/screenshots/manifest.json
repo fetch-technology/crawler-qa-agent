@@ -1,0 +1,98 @@
+[
+  {
+    "n": 1,
+    "filename": "001-pregame-autoplay-small-batch-00.png",
+    "label": "pregame-autoplay-small-batch-00",
+    "scope": null,
+    "caseScope": null,
+    "timestamp": "2026-05-20T00:04:17.655Z"
+  },
+  {
+    "n": 2,
+    "filename": "002-pregame-autoplay-small-batch-01.png",
+    "label": "pregame-autoplay-small-batch-01",
+    "scope": null,
+    "caseScope": null,
+    "timestamp": "2026-05-20T00:04:27.201Z"
+  },
+  {
+    "n": 3,
+    "filename": "003-pregame-autoplay-small-batch-02.png",
+    "label": "pregame-autoplay-small-batch-02",
+    "scope": null,
+    "caseScope": null,
+    "timestamp": "2026-05-20T00:04:34.880Z"
+  },
+  {
+    "n": 4,
+    "filename": "004-pregame-autoplay-small-batch-03.png",
+    "label": "pregame-autoplay-small-batch-03",
+    "scope": null,
+    "caseScope": null,
+    "timestamp": "2026-05-20T00:04:42.499Z"
+  },
+  {
+    "n": 5,
+    "filename": "005-pregame-autoplay-small-batch-04.png",
+    "label": "pregame-autoplay-small-batch-04",
+    "scope": null,
+    "caseScope": null,
+    "timestamp": "2026-05-20T00:04:50.054Z"
+  },
+  {
+    "n": 6,
+    "filename": "006-pregame-autoplay-small-batch-05.png",
+    "label": "pregame-autoplay-small-batch-05",
+    "scope": null,
+    "caseScope": null,
+    "timestamp": "2026-05-20T00:04:58.299Z"
+  },
+  {
+    "n": 7,
+    "filename": "007-pregame-autoplay-small-batch-06.png",
+    "label": "pregame-autoplay-small-batch-06",
+    "scope": null,
+    "caseScope": null,
+    "timestamp": "2026-05-20T00:05:05.126Z"
+  },
+  {
+    "n": 8,
+    "filename": "008-pregame-autoplay-small-batch-07.png",
+    "label": "pregame-autoplay-small-batch-07",
+    "scope": null,
+    "caseScope": null,
+    "timestamp": "2026-05-20T00:05:12.483Z"
+  },
+  {
+    "n": 9,
+    "filename": "009-pregame-autoplay-small-batch-08.png",
+    "label": "pregame-autoplay-small-batch-08",
+    "scope": null,
+    "caseScope": null,
+    "timestamp": "2026-05-20T00:05:20.807Z"
+  },
+  {
+    "n": 10,
+    "filename": "010-pregame-autoplay-small-batch-09.png",
+    "label": "pregame-autoplay-small-batch-09",
+    "scope": null,
+    "caseScope": null,
+    "timestamp": "2026-05-20T00:05:28.037Z"
+  },
+  {
+    "n": 11,
+    "filename": "011-pregame-autoplay-small-batch-10.png",
+    "label": "pregame-autoplay-small-batch-10",
+    "scope": null,
+    "caseScope": null,
+    "timestamp": "2026-05-20T00:05:37.186Z"
+  },
+  {
+    "n": 12,
+    "filename": "012-pregame-autoplay-small-batch-11.png",
+    "label": "pregame-autoplay-small-batch-11",
+    "scope": null,
+    "caseScope": null,
+    "timestamp": "2026-05-20T00:05:44.481Z"
+  }
+]

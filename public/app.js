@@ -164,12 +164,25 @@ function renderRow(task) {
     <td>${formatDuration(task)}</td>
     <td class="muted">${formatRelative(task.finishedAt || task.startedAt || task.createdAt)}</td>
     <td class="action-row">
-      <button class="btn small phase-btn" data-action="phase" data-phase="collect" data-id="${task.id}" ${canCollect ? "" : "disabled"} title="Run extract-options + auto-play + understand → context bundle">1. Collect</button>
-      <button class="btn small phase-btn" data-action="phase" data-phase="generate" data-id="${task.id}" ${canGenerate ? "" : "disabled"} title="Run Phase A.5 + B → test catalog + .spec.ts">2. Generate</button>
-      <button class="btn small phase-btn" data-action="phase" data-phase="run" data-id="${task.id}" ${canRun ? "" : "disabled"} title="Run Phase C → Playwright execute">3. Run</button>
-      ${task.status === "queued" || task.status === "running" ? `<button class="btn small" data-action="cancel" data-id="${task.id}">${task.status === "running" ? "Stop" : "Cancel"}</button>` : ""}
-      ${shouldShowRetry(task) ? `<button class="btn small ghost" data-action="retry" data-id="${task.id}" title="Reset everything and re-run from scratch">Retry all</button>` : ""}
-      ${task.status !== "queued" && task.status !== "running" ? `<button class="btn small danger" data-action="delete" data-id="${task.id}" data-slug="${escape(task.gameSlug || "")}" title="Xóa task + toàn bộ artifact của game (rules, options, recordings, specs, generated test)">🗑 Delete</button>` : ""}
+      ${(() => {
+        // Single "next phase" button — chỉ show phase tiếp theo player cần click
+        // Full phase buttons (Collect/Generate/Run/Stats/Re-record) đều có trong detail panel
+        if (task.status === "queued" || task.status === "running") {
+          return `<button class="btn small" data-action="cancel" data-id="${task.id}">${task.status === "running" ? "Stop" : "Cancel"}</button>`;
+        }
+        if (canCollect && stage === "init") {
+          return `<button class="btn small primary phase-btn" data-action="phase" data-phase="collect" data-id="${task.id}" title="Next phase">▶ Collect</button>`;
+        }
+        if (canGenerate && (stage === "context_ready")) {
+          return `<button class="btn small primary phase-btn" data-action="phase" data-phase="generate" data-id="${task.id}" title="Next phase">▶ Generate</button>`;
+        }
+        if (canRun && (stage === "catalog_ready" || stage === "tests_done")) {
+          const label = stage === "tests_done" ? "▶ Re-run" : "▶ Run";
+          return `<button class="btn small primary phase-btn" data-action="phase" data-phase="run" data-id="${task.id}" title="Next phase">${label}</button>`;
+        }
+        return "";
+      })()}
+      ${task.status !== "queued" && task.status !== "running" ? `<button class="btn small danger" data-action="delete" data-id="${task.id}" data-slug="${escape(task.gameSlug || "")}" title="Xóa task + toàn bộ artifact của game">🗑</button>` : ""}
     </td>
   `;
   tr.addEventListener("click", (e) => {
@@ -439,7 +452,11 @@ function renderDetailMeta(task) {
       <div class="stage-toolbar-right">
         <button class="btn small primary phase-btn" data-action="detail-phase" data-phase="collect" data-id="${task.id}" ${canCollect ? "" : "disabled"}>1. Collect Context</button>
         <button class="btn small primary phase-btn" data-action="detail-phase" data-phase="generate" data-id="${task.id}" ${canGenerate ? "" : "disabled"}>2. Generate Tests</button>
-        <button class="btn small primary phase-btn" data-action="detail-phase" data-phase="run" data-id="${task.id}" ${canRun ? "" : "disabled"}>3. Run Tests</button>
+        <button class="btn small primary phase-btn" data-action="detail-phase" data-phase="run" data-id="${task.id}" ${canRun ? "" : "disabled"} title="Smart: auto uses hybrid (deterministic) when scenarios exist, else vision-driven">3. Run Tests</button>
+        ${!busy ? `<button class="btn small ghost phase-btn" data-action="run-stats" data-id="${task.id}" title="Statistical RTP/volatility sim (bypass UI)">📊 Run Stats</button>` : ""}
+        ${!busy ? `<button class="btn small ghost phase-btn" data-action="record-pregame" data-id="${task.id}" title="Re-record pre-game click sequence (Collect already auto-captures; use this only when game UI changed)">🎬 Re-record Pre-game</button>` : ""}
+        ${!busy ? `<button class="btn small ghost phase-btn" data-action="record-ui-flows" data-id="${task.id}" title="Phase 2.5 — LLM record click sequence cho buy_feature/special_bet cases. Test runs sau đó replay deterministic ($0).">🎬 Record UI Flows</button>` : ""}
+        ${!busy ? `<button class="btn small ghost phase-btn" data-action="capture-fs-buy" data-id="${task.id}" title="Phase 2.6 — Click Buy Feature (100x) → capture full FS chain (15+ frames). Unblock free_spins tests với real data. Cost ~$0.30 LLM + 100x bet demo credit.">🎰 Capture FS Chain</button>` : ""}
         ${busy ? `<button class="btn small" data-action="detail-cancel" data-id="${task.id}">${task.status === "running" ? "Stop" : "Cancel"}</button>` : ""}
         ${shouldShowRetry(task) ? `<button class="btn small ghost" data-action="detail-retry" data-id="${task.id}" title="Reset everything and re-run from scratch">↻ Retry all</button>` : ""}
         ${!busy ? `<button class="btn small danger" data-action="detail-delete" data-id="${task.id}" data-slug="${escape(task.gameSlug || "")}" title="Xóa task + toàn bộ artifact của game">🗑 Delete</button>` : ""}
@@ -493,6 +510,99 @@ function renderDetailMeta(task) {
         showToast(`Phase ${phase} failed: ${err.message}`, "err");
         btn.textContent = oldText;
         btn.disabled = false;
+      }
+      refreshTasks();
+    });
+  });
+  detailMeta.querySelectorAll('button[data-action="run-stats"]').forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const id = btn.dataset.id;
+      const spinsStr = prompt("Số spins để chạy statistical sim?", "1000");
+      if (!spinsStr) return;
+      const spins = Number(spinsStr);
+      if (!Number.isFinite(spins) || spins < 1) {
+        showToast("Spins không hợp lệ", "err");
+        return;
+      }
+      btn.disabled = true;
+      btn.textContent = "starting…";
+      try {
+        const r = await fetch(`/api/tasks/${id}/run-stats`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ spins, concurrency: 1, historyAudit: true }),
+        });
+        if (!r.ok) {
+          const body = await r.json().catch(() => ({}));
+          throw new Error(body.error || `HTTP ${r.status}`);
+        }
+        showToast(`Stats sim queued (${spins} spins)`, "ok");
+      } catch (err) {
+        showToast(`Stats failed: ${err.message}`, "err");
+        btn.disabled = false;
+        btn.textContent = "📊 Run Stats";
+      }
+      refreshTasks();
+      refreshTestRuns();
+    });
+  });
+  detailMeta.querySelectorAll('button[data-action="record-pregame"]').forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const id = btn.dataset.id;
+      if (!confirm("Re-record pre-game click sequence?\n\nCollect already auto-captures — use this ONLY when game UI changed and existing recording fails replay. ~$0.05-0.20 LLM cost.")) return;
+      btn.disabled = true;
+      btn.textContent = "recording…";
+      try {
+        const r = await fetch(`/api/tasks/${id}/record-pregame`, { method: "POST" });
+        if (!r.ok) {
+          const body = await r.json().catch(() => ({}));
+          throw new Error(body.error || `HTTP ${r.status}`);
+        }
+        showToast(`Pre-game recording started`, "ok");
+      } catch (err) {
+        showToast(`Record failed: ${err.message}`, "err");
+        btn.disabled = false;
+        btn.textContent = "🎬 Re-record Pre-game";
+      }
+      refreshTasks();
+    });
+  });
+  detailMeta.querySelectorAll('button[data-action="record-ui-flows"]').forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const id = btn.dataset.id;
+      btn.disabled = true;
+      btn.textContent = "recording…";
+      try {
+        const r = await fetch(`/api/tasks/${id}/record-ui-flows`, { method: "POST" });
+        if (!r.ok) {
+          const body = await r.json().catch(() => ({}));
+          throw new Error(body.error || `HTTP ${r.status}`);
+        }
+        showToast(`UI flows recording started — watch Full Log`, "ok");
+      } catch (err) {
+        showToast(`Record failed: ${err.message}`, "err");
+        btn.disabled = false;
+        btn.textContent = "🎬 Record UI Flows";
+      }
+      refreshTasks();
+    });
+  });
+  detailMeta.querySelectorAll('button[data-action="capture-fs-buy"]').forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const id = btn.dataset.id;
+      btn.disabled = true;
+      btn.textContent = "capturing…";
+      try {
+        const r = await fetch(`/api/tasks/${id}/capture-fs-buy`, { method: "POST" });
+        if (!r.ok) {
+          const body = await r.json().catch(() => ({}));
+          throw new Error(body.error || `HTTP ${r.status}`);
+        }
+        showToast(`FS chain capture started — watch Full Log`, "ok");
+      } catch (err) {
+        showToast(`Capture failed: ${err.message}`, "err");
+        btn.disabled = false;
+        btn.textContent = "🎰 Capture FS Chain";
       }
       refreshTasks();
     });
@@ -681,11 +791,275 @@ async function loadCases(taskId) {
          </div>`
       : `<div class="muted case-stats-empty">Status updates when tests run</div>`;
 
-    // Download links
+    // Toolbar — consolidated (primary actions moved to detail panel header):
+    //   - Generate / Run / Stats / Re-record live in detail toolbar (top)
+    //   - This row = reports + utilities only
     const downloadLinks = `<div class="case-downloads">
       <a class="btn-icon" href="/api/tasks/${taskId}/case-report.md" target="_blank" title="View Markdown report">📄 report.md</a>
       <a class="btn-icon" href="/api/tasks/${taskId}/case-report.json" title="Download JSON report" download>⬇ report.json</a>
-    </div>`;
+      <a class="btn-icon" href="/playwright-report/" target="_blank" title="Playwright HTML report — visual diff, trace viewer, attachments">📊 playwright report</a>
+      <button class="btn-icon" id="scenariosToggle-${taskId}" title="View scenario details (expected bet/win/balance)">📋 scenarios</button>
+      <button class="btn-icon" id="updateBaselines-${taskId}" title="Re-capture snapshot baselines (region pixel + JSON shape). Yêu cầu hybrid spec đã gen.">🔄 update baselines</button>
+      <span class="muted" id="hybridStatus-${taskId}"></span>
+    </div>
+    <div id="scenariosPanel-${taskId}" class="scenarios-panel" style="display:none;margin-top:8px;padding:8px;border:1px solid #ddd;border-radius:4px;background:#fafafa;font-size:12px;"></div>
+    <span class="muted hidden" id="statsStatus-${taskId}"></span>
+    <div id="statsReport-${taskId}" class="stats-report" style="margin-top:8px;"></div>`;
+
+    // Wire up handlers sau khi DOM render
+    setTimeout(() => {
+      const status = document.getElementById(`hybridStatus-${taskId}`);
+      const scenToggle = document.getElementById(`scenariosToggle-${taskId}`);
+      const scenPanel = document.getElementById(`scenariosPanel-${taskId}`);
+      const statsStatus = document.getElementById(`statsStatus-${taskId}`);
+      const updateBaselinesBtn = document.getElementById(`updateBaselines-${taskId}`);
+      if (!status) return;
+
+      // Initial scenario count + load detail vào panel
+      let scenariosCache = null;
+      const loadScenarios = () =>
+        fetch(`/api/tasks/${taskId}/scenarios`).then(r => r.json()).then(j => {
+          scenariosCache = j.scenarios || [];
+          status.textContent = scenariosCache.length
+            ? ` · ${scenariosCache.length} scenarios available`
+            : ` · no scenarios (run Collect first)`;
+        });
+      loadScenarios();
+
+      // Helper: set status với visible styling (red bold cho error, neutral cho info)
+      const setStatus = (text, kind = "info") => {
+        status.textContent = text;
+        status.className = kind === "error"
+          ? "error-status"
+          : kind === "success"
+            ? "success-status"
+            : "muted";
+        // Inline style fallback nếu chưa có CSS rule
+        if (kind === "error") {
+          status.style.color = "#ef4444";
+          status.style.fontWeight = "bold";
+          status.style.fontSize = "12px";
+        } else if (kind === "success") {
+          status.style.color = "#22c55e";
+          status.style.fontWeight = "bold";
+          status.style.fontSize = "12px";
+        } else {
+          status.style.color = "";
+          status.style.fontWeight = "";
+          status.style.fontSize = "";
+        }
+      };
+
+      // Scenarios viewer
+      scenToggle.onclick = async () => {
+        if (scenPanel.style.display !== "none") {
+          scenPanel.style.display = "none";
+          return;
+        }
+        if (!scenariosCache) await loadScenarios();
+        const arr = scenariosCache || [];
+        if (arr.length === 0) {
+          scenPanel.innerHTML = `<em class="muted">No scenarios. Run Collect phase, hoặc <code>npm run extract-scenarios -- &lt;slug&gt;</code></em>`;
+        } else {
+          scenPanel.innerHTML = arr.map((s) => {
+            const exp = s.expected || {};
+            const fields = Object.entries(exp)
+              .filter(([_, v]) => v !== null && v !== undefined)
+              .map(([k, v]) => `<code style="background:#fff;padding:1px 4px;border-radius:2px;border:1px solid #ddd;">${escape(k)}=${escape(JSON.stringify(v))}</code>`)
+              .join(" ");
+            return `<div style="padding:4px 0;border-bottom:1px dashed #ccc;">
+              <strong>${escape(s.name)}</strong> <span class="muted">[${escape(s.label || "?")}]</span><br>
+              <span style="line-height:1.8;">${fields || '<em class="muted">no expected fields</em>'}</span>
+            </div>`;
+          }).join("");
+        }
+        scenPanel.style.display = "block";
+      };
+
+      // Stats report panel — auto-fetch latest + render histogram
+      const statsReportPanel = document.getElementById(`statsReport-${taskId}`);
+      let lastReportPath = null;
+      let statsPollHandle = null;
+
+      const renderStatsReport = (report, reportPath) => {
+        if (!report || !statsReportPanel) return;
+        const totalSpins = report.spinsSuccessful;
+        const failed = report.spinsFailed;
+        const rtp = report.observedRTP != null ? (report.observedRTP * 100).toFixed(2) + "%" : "—";
+        const hf = report.hitFrequency != null ? (report.hitFrequency * 100).toFixed(2) + "%" : "—";
+        const maxWin = report.maxWin;
+        const maxMul = report.maxWinMultiplier != null ? report.maxWinMultiplier.toFixed(1) + "×" : "—";
+        const dur = (report.durationMs / 1000).toFixed(1);
+        const rate = (totalSpins / Math.max(1, report.durationMs / 1000)).toFixed(1);
+
+        // Distribution histogram — ASCII bar
+        const buckets = report.winDistribution?.buckets || [];
+        const maxPct = Math.max(0.01, ...buckets.map(b => b.pctOfSpins));
+        const barWidth = 30;
+        const rows = buckets.map(b => {
+          const label =
+            b.min === 0 && b.max === 0 ? "no win"
+            : b.max === null || !isFinite(b.max) ? `${b.min}+ ×`
+            : `${b.min}-${b.max} ×`;
+          const pct = (b.pctOfSpins * 100).toFixed(2);
+          const filled = Math.round((b.pctOfSpins / maxPct) * barWidth);
+          const bar = "█".repeat(filled) + "░".repeat(barWidth - filled);
+          return `<tr>
+            <td style="padding:2px 8px;color:#6b7280;font-size:11px;text-align:right;">${escape(label)}</td>
+            <td style="padding:2px 8px;font-family:monospace;color:#3b82f6;">${bar}</td>
+            <td style="padding:2px 8px;text-align:right;font-size:11px;">${pct}% <span class="muted">(${b.count})</span></td>
+          </tr>`;
+        }).join("");
+
+        const errors = report.errors || [];
+        const errorRows = errors.length > 0
+          ? `<div style="margin-top:6px;font-size:11px;color:#ef4444;">
+              Errors: ${errors.slice(0, 3).map(e => `<code>×${e.count} ${escape((e.message || "").slice(0, 60))}</code>`).join(" ")}
+            </div>`
+          : "";
+
+        const consistency = report.consistency || null;
+        const consistencySummary = consistency
+          ? (() => {
+              const mismatch = Number(consistency.payoutMismatches || 0);
+              const checked = Number(consistency.spinsChecked || 0);
+              const inconclusive = Number(consistency.inconclusive || 0);
+              const rate = consistency.mismatchRate != null ? (consistency.mismatchRate * 100).toFixed(3) + "%" : "—";
+              const color = mismatch > 0 ? "#ef4444" : "#22c55e";
+              return `<div style="margin-top:10px;padding:8px;border:1px solid #e5e7eb;border-radius:6px;background:#fff;">
+                <div style="font-size:11px;color:#6b7280;margin-bottom:4px;">Payout consistency (rule-engine vs server)</div>
+                <div style="display:flex;gap:14px;flex-wrap:wrap;">
+                  <div><span class="muted" style="font-size:11px;">Checked</span> <strong>${checked}</strong></div>
+                  <div><span class="muted" style="font-size:11px;">Mismatches</span> <strong style="color:${color};">${mismatch}</strong></div>
+                  <div><span class="muted" style="font-size:11px;">Mismatch rate</span> <strong>${rate}</strong></div>
+                  <div><span class="muted" style="font-size:11px;">Inconclusive</span> <strong>${inconclusive}</strong></div>
+                </div>
+              </div>`;
+            })()
+          : `<div style="margin-top:10px;padding:8px;border:1px solid #e5e7eb;border-radius:6px;background:#fff;font-size:11px;color:#6b7280;">Payout consistency: not available (spec missing or check disabled).</div>`;
+
+        const mismatchSamples = consistency?.examples || [];
+        const mismatchRows = mismatchSamples.length > 0
+          ? `<div style="margin-top:8px;padding:8px;border:1px solid #fee2e2;border-radius:6px;background:#fff7f7;">
+              <div style="font-size:11px;color:#991b1b;margin-bottom:6px;">First ${Math.min(10, mismatchSamples.length)} mismatch samples</div>
+              <div style="display:grid;gap:4px;">
+                ${mismatchSamples.slice(0, 10).map((ex) => `<div style="font-size:11px;color:#7f1d1d;font-family:ui-monospace, SFMono-Regular, Menlo, monospace;">spin#${escape(String(ex.spinIndex))} expected=${escape(Number(ex.expected).toFixed(4))} actual=${escape(Number(ex.actual).toFixed(4))} Δ=${escape(Number(ex.delta).toFixed(4))}</div>`).join("")}
+              </div>
+            </div>`
+          : "";
+
+        const history = report.historyAudit || null;
+        const historyBadge = history?.enabled
+          ? history.fetched
+            ? history.fieldMismatches > 0 || history.missing > 0
+              ? `<div style="margin-top:8px;font-size:11px;color:#b45309;">History audit: mismatches=${history.fieldMismatches}, missing=${history.missing}</div>`
+              : `<div style="margin-top:8px;font-size:11px;color:#15803d;">History audit: all matched</div>`
+            : `<div style="margin-top:8px;font-size:11px;color:#6b7280;">History audit skipped: ${escape(history.reason || "unknown")}</div>`
+          : "";
+        const historySamples = history?.examples || [];
+        const historyMismatchRows = historySamples.length > 0
+          ? `<div style="margin-top:8px;padding:8px;border:1px solid #fde68a;border-radius:6px;background:#fffbeb;">
+              <div style="font-size:11px;color:#92400e;margin-bottom:6px;">First ${Math.min(10, historySamples.length)} history mismatch samples</div>
+              <div style="display:grid;gap:4px;">
+                ${historySamples.slice(0, 10).map((ex) => `<div style="font-size:11px;color:#78350f;font-family:ui-monospace, SFMono-Regular, Menlo, monospace;">spin#${escape(String(ex.spinIndex))} field=${escape(String(ex.field))} expected=${escape(Number(ex.expected).toFixed(4))} actual=${escape(Number(ex.actual).toFixed(4))}</div>`).join("")}
+              </div>
+            </div>`
+          : "";
+
+        const downloadUrl = `/api/tasks/${taskId}/attachment?path=${encodeURIComponent(reportPath)}`;
+
+        statsReportPanel.innerHTML = `
+          <div style="border:1px solid #ddd;border-radius:6px;padding:10px;background:#fafafa;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+              <div>
+                <strong>Latest stats report</strong>
+                <span class="muted" style="font-size:11px;margin-left:8px;">${totalSpins}/${totalSpins + failed} spins · ${dur}s · ${rate} spins/s</span>
+              </div>
+              <div>
+                <button class="btn-icon" id="statsRefresh-${taskId}" title="Re-fetch latest report">🔄 refresh</button>
+                <a class="btn-icon" href="${downloadUrl}" download title="Download report JSON">⬇ json</a>
+              </div>
+            </div>
+            <div style="display:flex;gap:16px;margin-bottom:8px;padding:6px 8px;background:#fff;border-radius:4px;border:1px solid #eee;">
+              <div><span class="muted" style="font-size:11px;">RTP</span> <strong style="font-size:14px;color:${report.observedRTP > 1.05 || report.observedRTP < 0.85 ? "#f59e0b" : "#22c55e"};">${rtp}</strong></div>
+              <div><span class="muted" style="font-size:11px;">Hit freq</span> <strong style="font-size:14px;">${hf}</strong></div>
+              <div><span class="muted" style="font-size:11px;">Max win</span> <strong style="font-size:14px;">${maxWin} <span class="muted" style="font-size:11px;">(${maxMul} bet)</span></strong></div>
+              <div><span class="muted" style="font-size:11px;">Total bet</span> <strong style="font-size:14px;">${report.totalBet.toFixed(2)}</strong></div>
+              <div><span class="muted" style="font-size:11px;">Total win</span> <strong style="font-size:14px;">${report.totalWin.toFixed(2)}</strong></div>
+            </div>
+            <div style="font-size:11px;color:#6b7280;margin-bottom:4px;">Win distribution (multiplier of bet):</div>
+            <table style="width:100%;font-family:system-ui;">${rows}</table>
+            ${consistencySummary}
+            ${mismatchRows}
+            ${historyBadge}
+            ${historyMismatchRows}
+            ${errorRows}
+            <div class="muted" style="font-size:10px;margin-top:6px;">Source: <code>${escape(reportPath || "(unknown)")}</code></div>
+          </div>
+        `;
+        document.getElementById(`statsRefresh-${taskId}`)?.addEventListener("click", () => loadStatsReport(true));
+      };
+
+      const loadStatsReport = async (force = false) => {
+        try {
+          const r = await fetch(`/api/tasks/${taskId}/stats-report`);
+          const j = await r.json();
+          if (!j.report) {
+            if (force || !lastReportPath) {
+              statsReportPanel.innerHTML = `<div class="muted" style="font-size:11px;padding:8px;border:1px dashed #ddd;border-radius:4px;">Chưa có stats report. Click <strong>📊 Run Stats</strong> (toolbar trên) để tạo.</div>`;
+            }
+            return;
+          }
+          // Skip render nếu cùng report (tránh flash mỗi 3s)
+          if (!force && j.path === lastReportPath) return;
+          lastReportPath = j.path;
+          renderStatsReport(j.report, j.path);
+        } catch {}
+      };
+
+      // Load lần đầu khi mở tab
+      loadStatsReport(true);
+
+      // Helper set status cho stats row (cùng style với hybrid)
+      const setStatsStatus = (text, kind = "info") => {
+        statsStatus.textContent = text;
+        if (kind === "error") {
+          statsStatus.style.color = "#ef4444";
+          statsStatus.style.fontWeight = "bold";
+          statsStatus.style.fontSize = "12px";
+        } else if (kind === "success") {
+          statsStatus.style.color = "#22c55e";
+          statsStatus.style.fontWeight = "bold";
+          statsStatus.style.fontSize = "12px";
+        } else {
+          statsStatus.style.color = "";
+          statsStatus.style.fontWeight = "";
+          statsStatus.style.fontSize = "";
+        }
+      };
+
+      // Update baselines — combined region + JSON (prompt user for type)
+      if (updateBaselinesBtn) {
+        updateBaselinesBtn.onclick = async () => {
+          const choice = prompt(
+            "Update baselines:\n  1 = region snapshot only (pixel UI)\n  2 = JSON snapshot only (response shape)\n  3 = both (default)\n\nNhập 1, 2 hoặc 3:",
+            "3",
+          );
+          if (choice === null) return;
+          const map = { "1": "region", "2": "json", "3": "both" };
+          const type = map[choice.trim()] || "both";
+          setStatsStatus(` · updating baselines (${type})...`);
+          const r = await fetch(`/api/tasks/${taskId}/update-baselines`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ type }),
+          });
+          const j = await r.json();
+          if (j.ok) setStatsStatus(` · re-running hybrid with ${type === "both" ? "REGION + JSON" : type.toUpperCase()} update (watch Full Log)`, "success");
+          else setStatsStatus(` · failed: ${j.error}`, "error");
+        };
+      }
+    }, 0);
 
     const html = [
       `<div class="cases-header">
@@ -1482,6 +1856,61 @@ function updateErrorsBadge(n) {
   errorsBadge.classList.toggle("badge-error", n > 0);
 }
 
+/**
+ * Detect + render snapshot mismatch visualization inline trong error row.
+ * 2 pattern:
+ *   - Region snapshot: parse baseline/actual/diff PNG paths → render 3 ảnh side-by-side
+ *   - JSON snapshot: parse [changed]/[added]/[removed] diff lines → colorize
+ */
+function renderSnapshotDiff(text, taskId) {
+  if (!taskId) return "";
+  // Region snapshot mismatch
+  if (text.startsWith("Region snapshot mismatch:")) {
+    const baseline = (text.match(/baseline:\s*(\S+)/) || [])[1];
+    const actual = (text.match(/actual:\s*(\S+)/) || [])[1];
+    const diff = (text.match(/diff:\s*(\S+\.png)/) || [])[1];
+    if (!baseline && !actual) return "";
+    const attUrl = (p) => `/api/tasks/${taskId}/attachment?path=${encodeURIComponent(p)}`;
+    const cells = [];
+    if (baseline) cells.push({ label: "baseline (expected)", url: attUrl(baseline), border: "#9ca3af" });
+    if (actual) cells.push({ label: "actual (got)", url: attUrl(actual), border: "#f59e0b" });
+    if (diff) cells.push({ label: "diff (red = mismatch)", url: attUrl(diff), border: "#ef4444" });
+    return `<div class="snapshot-viz" style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;">
+      ${cells.map((c) => `
+        <div style="text-align:center;">
+          <div style="font-size:11px;color:#6b7280;margin-bottom:2px;">${escape(c.label)}</div>
+          <a href="${c.url}" target="_blank">
+            <img src="${c.url}" style="max-width:200px;max-height:200px;border:2px solid ${c.border};border-radius:4px;background:#fff;" loading="lazy" />
+          </a>
+        </div>`).join("")}
+    </div>`;
+  }
+  // JSON snapshot mismatch
+  if (text.startsWith("JSON snapshot mismatch:")) {
+    const diffLines = [];
+    const re = /^\s*\[(changed|added|removed|type_changed)\]\s*(.+)$/gm;
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      diffLines.push({ kind: m[1], detail: m[2] });
+    }
+    if (diffLines.length === 0) return "";
+    const colorMap = {
+      added: "#22c55e",       // green
+      removed: "#ef4444",     // red
+      changed: "#f59e0b",     // amber
+      type_changed: "#a855f7", // purple
+    };
+    return `<div class="snapshot-viz" style="margin-top:6px;background:#1f2937;color:#e5e7eb;padding:8px;border-radius:4px;font-family:monospace;font-size:12px;line-height:1.5;">
+      ${diffLines.map((d) => `
+        <div style="border-left:3px solid ${colorMap[d.kind]};padding-left:8px;margin-bottom:2px;">
+          <span style="color:${colorMap[d.kind]};font-weight:bold;">[${d.kind}]</span>
+          <span style="color:#e5e7eb;">${escape(d.detail)}</span>
+        </div>`).join("")}
+    </div>`;
+  }
+  return "";
+}
+
 function renderErrors(entries) {
   const matches = [];
   let errorCount = 0;
@@ -1531,10 +1960,13 @@ function renderErrors(entries) {
       <div class="err-rows">`);
     for (const { entry, sev } of ms) {
       const ts = (entry.timestamp || "").slice(11, 19);
+      const text = entry.text || "";
+      const snapshotViz = renderSnapshotDiff(text, activeTaskId);
       parts.push(`<div class="err-row err-row-${sev}" data-sev="${sev}">
         <span class="err-time">${escape(ts)}</span>
         <span class="err-sev err-sev-${sev}">${sev === "error" ? "ERROR" : "WARN"}</span>
-        <span class="err-text">${escape(entry.text || "")}</span>
+        <span class="err-text">${escape(text)}</span>
+        ${snapshotViz}
       </div>`);
     }
     parts.push(`</div></details>`);
@@ -1578,3 +2010,451 @@ function appendErrorEntry(entry, sev) {
 
 // Refresh relative timestamps every 10s
 setInterval(renderTasks, 10_000);
+
+// =============================================================================
+// Test Runs (DB) — read-only history backed by Postgres via /api/test-runs/*
+// =============================================================================
+
+const testRunsBody = document.getElementById("testRunsBody");
+const testRunsStatus = document.getElementById("testRunsStatus");
+const testRunsToggle = document.getElementById("testRunsToggle");
+const testRunsContent = document.getElementById("testRunsContent");
+const testRunsCaret = document.getElementById("testRunsCaret");
+const testRunsCount = document.getElementById("testRunsCount");
+
+// Collapsible section — persist state in localStorage. Default: collapsed
+// (bảng dài, ít người cần xem mỗi lần mở dashboard).
+function setTestRunsCollapsed(collapsed) {
+  if (collapsed) {
+    testRunsContent.classList.add("hidden");
+    testRunsCaret.textContent = "▶";
+  } else {
+    testRunsContent.classList.remove("hidden");
+    testRunsCaret.textContent = "▼";
+  }
+  try { localStorage.setItem("testRunsCollapsed", collapsed ? "1" : "0"); } catch {}
+}
+testRunsToggle?.addEventListener("click", () => {
+  const isCollapsed = testRunsContent.classList.contains("hidden");
+  setTestRunsCollapsed(!isCollapsed);
+});
+// Apply persisted state on load (default collapsed)
+setTestRunsCollapsed(localStorage.getItem("testRunsCollapsed") !== "0");
+const testRunDetail = document.getElementById("testRunDetail");
+const testRunDetailTitle = document.getElementById("testRunDetailTitle");
+const testRunMeta = document.getElementById("testRunMeta");
+const testRunDetailClose = document.getElementById("testRunDetailClose");
+const testRunSummaryBtn = document.getElementById("testRunSummaryBtn");
+const testRunAnalyzerBtn = document.getElementById("testRunAnalyzerBtn");
+const runpaneSpins = document.getElementById("runpane-spins");
+const runpaneErrors = document.getElementById("runpane-errors");
+const runpaneStats = document.getElementById("runpane-stats");
+const runpaneSummary = document.getElementById("runpane-summary");
+const runpaneAnalyzer = document.getElementById("runpane-analyzer");
+const runTabs = document.querySelectorAll("[data-runtab]");
+
+let activeRunId = null;
+let activeRunTab = "spins";
+
+function fmtPct(v, digits = 2) {
+  if (v == null || !Number.isFinite(v)) return "—";
+  return (v * 100).toFixed(digits) + "%";
+}
+function fmtNum(v, digits = 2) {
+  if (v == null || !Number.isFinite(v)) return "—";
+  return Number(v).toFixed(digits);
+}
+function fmtAgo(iso) {
+  if (!iso) return "—";
+  const t = new Date(iso).getTime();
+  const diff = Date.now() - t;
+  if (diff < 60_000) return `${Math.floor(diff / 1000)}s ago`;
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+  return new Date(iso).toLocaleDateString();
+}
+function escHtml(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c],
+  );
+}
+
+async function refreshTestRuns() {
+  try {
+    const r = await fetch("/api/test-runs");
+    const body = await r.json();
+    if (!body.enabled) {
+      testRunsStatus.textContent = "DB disabled (set DATABASE_URL)";
+      if (testRunsCount) testRunsCount.textContent = "(DB disabled)";
+      testRunsBody.innerHTML = `<tr><td colspan="9" class="muted" style="text-align:center;padding:24px">
+        DATABASE_URL not set. Run <code>npm run db:up && npm run db:migrate</code> then restart server.
+      </td></tr>`;
+      return;
+    }
+    const runs = body.runs ?? [];
+    testRunsStatus.textContent = `${runs.length} run(s)`;
+    if (testRunsCount) testRunsCount.textContent = runs.length > 0 ? `(${runs.length})` : "(empty)";
+    if (runs.length === 0) {
+      testRunsBody.innerHTML = `<tr><td colspan="9" class="muted" style="text-align:center;padding:24px">
+        No test runs yet. Run <code>npm run stats -- &lt;slug&gt; --spins 1000</code> to populate.
+      </td></tr>`;
+      return;
+    }
+    testRunsBody.innerHTML = runs
+      .map((r) => {
+        const sr = r.statReport;
+        const errCount = r._count?.validationErrors ?? 0;
+        const errCell = errCount > 0
+          ? `<span style="color:var(--err)">${errCount}</span>`
+          : `<span class="muted">0</span>`;
+        return `
+        <tr data-runid="${r.id}" class="run-row" style="cursor:pointer">
+          <td><strong>${escHtml(r.gameCode)}</strong></td>
+          <td><span class="pill ${escHtml(r.status)}">${escHtml(r.status)}</span></td>
+          <td>${r.completedSpins ?? 0}/${r.totalSpins ?? 0}</td>
+          <td>${sr ? fmtPct(sr.rtp) : "—"}</td>
+          <td>${sr ? fmtPct(sr.hitRate) : "—"}</td>
+          <td>${sr ? `${fmtNum(sr.volatility)}${sr.volatilityBand ? ` <span class="muted">[${sr.volatilityBand}]</span>` : ""}` : "—"}</td>
+          <td>${errCell}</td>
+          <td class="muted">${fmtAgo(r.createdAt)}</td>
+          <td style="white-space:nowrap">
+            <button class="btn small ghost run-open" data-runid="${r.id}">View</button>
+            <button class="btn small danger run-delete" data-runid="${r.id}" data-game="${escHtml(r.gameCode)}" title="Delete this run + spins + errors + stat report">🗑</button>
+          </td>
+        </tr>`;
+      })
+      .join("");
+  } catch (err) {
+    testRunsStatus.textContent = `Error: ${err.message}`;
+  }
+}
+
+testRunsBody.addEventListener("click", async (e) => {
+  // Per-row delete (handle first — must take precedence over row-click=view)
+  const delBtn = e.target.closest("button.run-delete");
+  if (delBtn) {
+    e.stopPropagation();
+    const runId = delBtn.dataset.runid;
+    const game = delBtn.dataset.game || "(unknown)";
+    if (!confirm(`Xóa TestRun ${runId.slice(0, 8)}… (${game})?\n\nCascade: spin_results + validation_errors + stat_report sẽ bị xóa.`)) return;
+    delBtn.disabled = true;
+    try {
+      const r = await fetch(`/api/test-runs/${runId}`, { method: "DELETE" });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body.error || `HTTP ${r.status}`);
+      }
+      showToast("TestRun deleted", "ok");
+      // If detail panel is open on this run, close it
+      if (activeRunId === runId) {
+        testRunDetail.classList.add("hidden");
+        activeRunId = null;
+      }
+      refreshTestRuns();
+    } catch (err) {
+      showToast(`Delete failed: ${err.message}`, "err");
+      delBtn.disabled = false;
+    }
+    return;
+  }
+  // Per-row view
+  const tr = e.target.closest("tr.run-row");
+  if (!tr) return;
+  const runId = tr.dataset.runid;
+  if (runId) openTestRun(runId);
+});
+
+// Section-level "Clear all"
+const testRunsClearAllBtn = document.getElementById("testRunsClearAll");
+if (testRunsClearAllBtn) {
+  testRunsClearAllBtn.addEventListener("click", async () => {
+    const filterSlug = prompt(
+      "Xóa stats history:\n\n• Để trống → xóa TẤT CẢ\n• Nhập slug → chỉ xóa stats của slug đó\n\nSẽ xóa:\n  - test_runs + cascade (spin_results, validation_errors, stat_reports)\n  - fixtures/statistical/*.json filesystem reports\n\nSlug (rỗng = all):",
+      "",
+    );
+    if (filterSlug === null) return; // user cancelled
+    const slug = filterSlug.trim();
+    const scope = slug ? `slug "${slug}"` : "TẤT CẢ runs";
+    if (!confirm(`Xác nhận xóa ${scope}?\n\nKhông thể hoàn tác.`)) return;
+    testRunsClearAllBtn.disabled = true;
+    testRunsClearAllBtn.textContent = "Deleting…";
+    try {
+      const qs = slug ? `?gameCode=${encodeURIComponent(slug)}` : "?all=1";
+      const r = await fetch(`/api/test-runs${qs}`, { method: "DELETE" });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body.error || `HTTP ${r.status}`);
+      }
+      const body = await r.json();
+      showToast(`Deleted ${body.dbDeleted ?? 0} DB run(s) + ${body.filesDeleted ?? 0} report file(s)`, "ok");
+      testRunDetail.classList.add("hidden");
+      activeRunId = null;
+      refreshTestRuns();
+    } catch (err) {
+      showToast(`Clear failed: ${err.message}`, "err");
+    } finally {
+      testRunsClearAllBtn.disabled = false;
+      testRunsClearAllBtn.textContent = "🗑 Reset stats";
+    }
+  });
+}
+
+testRunDetailClose.addEventListener("click", () => {
+  testRunDetail.classList.add("hidden");
+  activeRunId = null;
+});
+
+runTabs.forEach((t) => {
+  t.addEventListener("click", () => {
+    runTabs.forEach((x) => x.classList.remove("active"));
+    t.classList.add("active");
+    activeRunTab = t.dataset.runtab;
+    [runpaneSpins, runpaneErrors, runpaneStats, runpaneSummary, runpaneAnalyzer].forEach((p) =>
+      p.classList.add("hidden"),
+    );
+    document.getElementById(`runpane-${activeRunTab}`).classList.remove("hidden");
+    if (activeRunId) loadRunTab(activeRunId, activeRunTab);
+  });
+});
+
+async function openTestRun(runId) {
+  activeRunId = runId;
+  testRunDetail.classList.remove("hidden");
+  testRunDetailTitle.textContent = `Test Run ${runId.slice(0, 8)}…`;
+  testRunMeta.innerHTML = `<div class="muted">Loading…</div>`;
+  testRunDetail.scrollIntoView({ behavior: "smooth", block: "start" });
+
+  try {
+    const r = await fetch(`/api/test-runs/${runId}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const run = await r.json();
+    renderRunMeta(run);
+    loadRunTab(runId, activeRunTab);
+  } catch (err) {
+    testRunMeta.innerHTML = `<div style="color:var(--err)">Failed to load: ${escHtml(err.message)}</div>`;
+  }
+}
+
+function renderRunMeta(run) {
+  const sr = run.statReport;
+  const cells = [
+    ["Game", escHtml(run.gameCode)],
+    ["Status", `<span class="pill ${escHtml(run.status)}">${escHtml(run.status)}</span>`],
+    ["Spins", `${run.completedSpins ?? 0} / ${run.totalSpins ?? 0}`],
+    ["RTP", sr ? fmtPct(sr.rtp) + (sr.rtpConfidence95 != null ? ` <span class="muted">±${fmtPct(sr.rtpConfidence95)}</span>` : "") : "—"],
+    ["Hit rate", sr ? fmtPct(sr.hitRate) : "—"],
+    ["Volatility", sr ? `${fmtNum(sr.volatility)} ${sr.volatilityBand ? `[${sr.volatilityBand}]` : ""}` : "—"],
+    ["Avg win", sr?.averageWin != null ? fmtNum(sr.averageWin) : "—"],
+    ["Max win", sr?.maxWin != null ? fmtNum(sr.maxWin) : "—"],
+    ["Started", run.startedAt ? new Date(run.startedAt).toLocaleString() : "—"],
+    ["Ended", run.endedAt ? new Date(run.endedAt).toLocaleString() : "—"],
+  ];
+  testRunMeta.innerHTML = cells.map(([k, v]) => `<div><strong>${v}</strong>${escHtml(k)}</div>`).join("");
+}
+
+async function loadRunTab(runId, tab) {
+  const pane = document.getElementById(`runpane-${tab}`);
+  pane.innerHTML = `<div class="muted">Loading…</div>`;
+  try {
+    if (tab === "spins") {
+      const rows = await fetch(`/api/test-runs/${runId}/spins?limit=200`).then((r) => r.json());
+      if (rows.length === 0) {
+        pane.innerHTML = `<div class="muted">No spin results recorded.</div>`;
+        return;
+      }
+      pane.innerHTML =
+        `<div class="spin-header"><span>#</span><span>Bet</span><span>Win</span><span>Bal Before</span><span>Bal After</span><span>Symbols</span><span>Flags</span></div>` +
+        `<div class="spin-list">` +
+        rows
+          .map(
+            (s) => `
+          <div class="spin-row">
+            <span class="spin-num">${s.roundIndex}</span>
+            <span class="money">${fmtNum(s.totalBet)}</span>
+            <span class="money net ${s.totalWin > 0 ? "win" : "loss"}">${fmtNum(s.totalWin)}</span>
+            <span class="money">${s.balanceBefore != null ? fmtNum(s.balanceBefore) : "—"}</span>
+            <span class="money">${fmtNum(s.balanceAfter)}</span>
+            <span style="font-family:var(--mono);font-size:11px">${escHtml((s.symbols ?? "").slice(0, 24))}</span>
+            <span class="tag">${s.isFreeSpin ? "FS " : ""}${s.hasBonus ? "BONUS" : ""}</span>
+          </div>`,
+          )
+          .join("") +
+        `</div>`;
+      return;
+    }
+    if (tab === "errors") {
+      const rows = await fetch(`/api/test-runs/${runId}/errors`).then((r) => r.json());
+      if (rows.length === 0) {
+        pane.innerHTML = `<div style="color:var(--ok)">✓ No validation errors.</div>`;
+        return;
+      }
+      const byType = {};
+      for (const e of rows) (byType[e.errorType] ??= []).push(e);
+      pane.innerHTML = Object.entries(byType)
+        .map(
+          ([type, errs]) => `
+        <div style="margin-bottom:16px">
+          <h3 style="margin:0 0 8px;font-size:14px">${escHtml(type)} <span class="muted">(${errs.length})</span></h3>
+          ${errs
+            .slice(0, 30)
+            .map(
+              (e) => `
+            <div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 12px;margin-bottom:6px;font-size:13px">
+              <div><strong style="color:${e.severity === "error" ? "var(--err)" : e.severity === "warn" ? "var(--warn)" : "var(--muted)"}">[${escHtml(e.severity)}]</strong> ${escHtml(e.message)}</div>
+              ${e.expectedValue || e.actualValue ? `<div class="muted" style="font-family:var(--mono);font-size:11px;margin-top:4px">expected: ${escHtml(e.expectedValue ?? "—")}  •  actual: ${escHtml(e.actualValue ?? "—")}</div>` : ""}
+            </div>`,
+            )
+            .join("")}
+          ${errs.length > 30 ? `<div class="muted">(${errs.length - 30} more truncated)</div>` : ""}
+        </div>`,
+        )
+        .join("");
+      return;
+    }
+    if (tab === "stats") {
+      const run = await fetch(`/api/test-runs/${runId}`).then((r) => r.json());
+      const sr = run.statReport;
+      if (!sr) {
+        pane.innerHTML = `<div class="muted">No stat report attached.</div>`;
+        return;
+      }
+      let metrics = {};
+      try { metrics = JSON.parse(sr.metricsJson || "{}"); } catch {}
+      const cons = metrics.consistency;
+      const consBlock = cons
+        ? `<h3 style="margin-top:16px;font-size:14px">Payout consistency vs paytable ${cons.payoutMismatches > 0 ? '<span style="color:var(--err)">— ❌ SERVER BUG</span>' : '<span style="color:var(--ok)">— ✓ OK</span>'}</h3>
+           <div class="detail-meta" style="grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));padding:0">
+             <div><strong>${cons.spinsChecked}</strong>Spins checked</div>
+             <div><strong style="${cons.payoutMismatches > 0 ? "color:var(--err)" : ""}">${cons.payoutMismatches}</strong>Mismatches</div>
+             <div><strong>${cons.inconclusive}</strong>Inconclusive</div>
+             <div><strong>${cons.mismatchRate != null ? fmtPct(cons.mismatchRate, 3) : "—"}</strong>Mismatch rate</div>
+           </div>
+           ${cons.examples && cons.examples.length > 0 ? `
+           <div style="margin-top:8px"><strong>Sample mismatches (first ${Math.min(5, cons.examples.length)}):</strong></div>
+           <table style="width:100%;font-size:12px;font-family:var(--mono)">
+             <tr class="muted"><th align="left">spin#</th><th align="right">expected</th><th align="right">actual</th><th align="right">Δ</th><th align="left">reels</th></tr>
+             ${cons.examples.slice(0, 5).map((ex) => `
+               <tr><td>${ex.spinIndex}</td><td align="right">${fmtNum(ex.expected, 4)}</td><td align="right" style="color:var(--err)">${fmtNum(ex.actual, 4)}</td><td align="right">${fmtNum(ex.delta, 4)}</td><td>${escHtml((ex.reels || "").slice(0, 20))}</td></tr>
+             `).join("")}
+           </table>
+           <div class="muted" style="margin-top:6px">Full list → tab <strong>Validation Errors</strong> (filtered by PAYOUT_MISMATCH).</div>
+           ` : ""}`
+        : "";
+      pane.innerHTML = `
+        <div class="detail-meta" style="grid-template-columns:repeat(auto-fit, minmax(160px, 1fr));padding:0">
+          <div><strong>${fmtNum(sr.totalBet)}</strong>Total bet</div>
+          <div><strong>${fmtNum(sr.totalWin)}</strong>Total win</div>
+          <div><strong>${fmtPct(sr.rtp)}</strong>RTP</div>
+          <div><strong>${fmtPct(sr.hitRate)}</strong>Hit rate</div>
+          <div><strong>${fmtNum(sr.averageWin)}</strong>Avg winning</div>
+          <div><strong>${fmtNum(sr.maxWin)}</strong>Max win</div>
+          <div><strong>${fmtNum(sr.volatility)} ${sr.volatilityBand ? `[${sr.volatilityBand}]` : ""}</strong>Volatility</div>
+          <div><strong>±${fmtPct(sr.rtpConfidence95)}</strong>RTP CI (95%)</div>
+        </div>
+        ${consBlock}
+        ${
+          metrics.featureFrequency
+            ? `<h3 style="margin-top:16px;font-size:14px">Feature frequency</h3>
+               <table style="width:100%;font-size:13px">
+                 ${Object.entries(metrics.featureFrequency)
+                   .map(([k, v]) => `<tr><td class="muted">${escHtml(k)}</td><td>${fmtPct(v, 3)}</td></tr>`)
+                   .join("")}
+               </table>`
+            : ""
+        }
+        ${
+          metrics.symbolDistribution && Object.keys(metrics.symbolDistribution).length
+            ? `<h3 style="margin-top:16px;font-size:14px">Symbol distribution (top 12)</h3>
+               <table style="width:100%;font-size:13px">
+                 ${Object.entries(metrics.symbolDistribution)
+                   .slice(0, 12)
+                   .map(([k, v]) => `<tr><td class="muted" style="font-family:var(--mono)">${escHtml(k)}</td><td>${v}</td></tr>`)
+                   .join("")}
+               </table>`
+            : ""
+        }
+        ${
+          metrics.winDistribution
+            ? `<h3 style="margin-top:16px;font-size:14px">Win distribution (× bet)</h3>
+               <table style="width:100%;font-size:13px">
+                 <tr class="muted"><th style="text-align:left">Range</th><th style="text-align:right">Count</th><th style="text-align:right">%</th></tr>
+                 ${metrics.winDistribution.buckets
+                   .map(
+                     (b) =>
+                       `<tr><td>${b.min === 0 && b.max === 0 ? "= 0 (no win)" : `${fmtNum(b.min)} – ${b.max === null || !Number.isFinite(b.max) ? "∞" : fmtNum(b.max)}`}</td><td style="text-align:right">${b.count}</td><td style="text-align:right">${fmtPct(b.pctOfSpins)}</td></tr>`,
+                   )
+                   .join("")}
+               </table>`
+            : ""
+        }
+      `;
+      return;
+    }
+    if (tab === "summary") {
+      const run = await fetch(`/api/test-runs/${runId}`).then((r) => r.json());
+      const md = run.summaryMd;
+      if (md) {
+        pane.innerHTML = `<pre style="white-space:pre-wrap;margin:0;font-family:var(--font);font-size:13px">${escHtml(md)}</pre>`;
+      } else {
+        pane.innerHTML = `<div class="muted">No bug summary yet. Click <strong>Generate Bug Summary</strong> above.</div>`;
+      }
+      return;
+    }
+    if (tab === "analyzer") {
+      const run = await fetch(`/api/test-runs/${runId}`).then((r) => r.json());
+      const slug = run.gameCode;
+      try {
+        const a = await fetch(`/api/analyzer/${encodeURIComponent(slug)}`).then((r) => r.json());
+        if (a.error) {
+          pane.innerHTML = `<div class="muted">${escHtml(a.error)} — run <code>npm run analyze:game -- ${escHtml(slug)}</code></div>`;
+          return;
+        }
+        pane.innerHTML = `<pre style="margin:0;font-family:var(--mono);font-size:11px;white-space:pre-wrap">${escHtml(JSON.stringify(a, null, 2))}</pre>`;
+      } catch (err) {
+        pane.innerHTML = `<div style="color:var(--err)">Failed: ${escHtml(err.message)}</div>`;
+      }
+      return;
+    }
+  } catch (err) {
+    pane.innerHTML = `<div style="color:var(--err)">Error: ${escHtml(err.message)}</div>`;
+  }
+}
+
+testRunSummaryBtn.addEventListener("click", async () => {
+  if (!activeRunId) return;
+  testRunSummaryBtn.disabled = true;
+  testRunSummaryBtn.textContent = "Generating…";
+  try {
+    const r = await fetch(`/api/test-runs/${activeRunId}/summary`, { method: "POST" });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const s = await r.json();
+    showToast(`Bug summary generated (${s.source}, ${s.groupCounts?.length ?? 0} groups)`, "ok");
+    activeRunTab = "summary";
+    runTabs.forEach((x) => x.classList.toggle("active", x.dataset.runtab === "summary"));
+    [runpaneSpins, runpaneErrors, runpaneStats, runpaneSummary, runpaneAnalyzer].forEach((p) =>
+      p.classList.add("hidden"),
+    );
+    runpaneSummary.classList.remove("hidden");
+    runpaneSummary.innerHTML = `<pre style="white-space:pre-wrap;margin:0;font-family:var(--font);font-size:13px">${escHtml(s.markdown)}</pre>`;
+  } catch (err) {
+    showToast(`Failed: ${err.message}`, "err");
+  } finally {
+    testRunSummaryBtn.disabled = false;
+    testRunSummaryBtn.textContent = "Generate Bug Summary";
+  }
+});
+
+testRunAnalyzerBtn.addEventListener("click", async () => {
+  if (!activeRunId) return;
+  activeRunTab = "analyzer";
+  runTabs.forEach((x) => x.classList.toggle("active", x.dataset.runtab === "analyzer"));
+  [runpaneSpins, runpaneErrors, runpaneStats, runpaneSummary, runpaneAnalyzer].forEach((p) =>
+    p.classList.add("hidden"),
+  );
+  runpaneAnalyzer.classList.remove("hidden");
+  loadRunTab(activeRunId, "analyzer");
+});
+
+// Initial load + periodic refresh
+refreshTestRuns();
+setInterval(refreshTestRuns, 15_000);

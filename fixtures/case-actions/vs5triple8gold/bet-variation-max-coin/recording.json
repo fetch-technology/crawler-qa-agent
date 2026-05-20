@@ -1,0 +1,32 @@
+{
+  "slug": "vs5triple8gold",
+  "case_id": "bet-variation-max-coin",
+  "recorded_at": "2026-05-20T02:26:17.350Z",
+  "instructions": [
+    "Step 1: Locate the bet display in the bottom-right area.",
+    "Step 2: Click the '+' button labeled 'Bet Increase' repeatedly until the bet display reaches its highest value, expected to be '400.00' (coin 80 × 5 paylines).",
+    "Step 3: Verify the bet display reads exactly '400.00' and clicking '+' further does not increase it."
+  ],
+  "clicks": [
+    {
+      "x": 1274,
+      "y": 815,
+      "delay_ms": 7064,
+      "reason": "Plus button to increase bet",
+      "step": 1
+    },
+    {
+      "x": 536,
+      "y": 667,
+      "delay_ms": 5837,
+      "reason": "Click $400.00 bet option",
+      "step": 2
+    }
+  ],
+  "baseline_png": "fixtures/case-actions/vs5triple8gold/bet-variation-max-coin/baseline.png",
+  "max_diff_ratio": 0.05,
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  }
+}

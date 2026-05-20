@@ -1,0 +1,74 @@
+{
+  "slug": "vs20rnriches",
+  "label": "no_win",
+  "description": "Extracted from fixtures/recordings/vs20rnriches__auto-2026-05-20T06-47-58-772Z (response t=30641ms)",
+  "source_recording": "fixtures/recordings/vs20rnriches__auto-2026-05-20T06-47-58-772Z",
+  "spin_response": {
+    "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+    "url_pattern": "(?:\\/|[?&=])(?:do)?spin\\b|\\/gs2c\\/ge\\/|\\/gs2c\\/.*gameservice|\\/gs2c\\/.*playgame|\\/gs2c\\/.*dogame|\\/round\\b|\\/dogame\\b",
+    "method": "POST",
+    "status": 200,
+    "headers": {
+      "x-envoy-upstream-service-time": "2252",
+      "access-control-allow-methods": "OPTIONS,HEAD,GET,POST",
+      "access-control-allow-origin": "*",
+      "content-length": "217",
+      "date": "Wed, 20 May 2026 06:48:32 GMT",
+      "content-type": "text/plain; charset=utf-8",
+      "vary": "Origin",
+      "server": "envoy"
+    },
+    "body": "tw=0.00&reel_set=0&na=s&bl=0&sa=cd2252&sb=db5315&sh=5&st=rect&c=0.20&sw=6&sver=6&ntp=0&l=20&s=b4c252b4c12412S124121543db5543&w=0.00&trail=&balance=99995127.12&index=1&balance_cash=99995127.12&balance_bonus=0&counter=1",
+    "parsed": {
+      "tw": "0.00",
+      "reel_set": "0",
+      "na": "s",
+      "bl": "0",
+      "sa": "cd2252",
+      "sb": "db5315",
+      "sh": "5",
+      "st": "rect",
+      "c": "0.20",
+      "sw": "6",
+      "sver": "6",
+      "ntp": "0",
+      "l": "20",
+      "s": "b4c252b4c12412S124121543db5543",
+      "w": "0.00",
+      "trail": "",
+      "balance": "99995127.12",
+      "index": "1",
+      "balance_cash": "99995127.12",
+      "balance_bonus": "0",
+      "counter": "1"
+    }
+  },
+  "prelude": {
+    "config": {
+      "url": "https://pp.dev.revenge-games.com/gs2c/saveSettings.do",
+      "url_pattern": "\\/config\\b|\\/gs2c\\/.*Settings|\\/init\\b",
+      "method": "POST",
+      "status": 200,
+      "headers": {
+        "x-envoy-upstream-service-time": "0",
+        "access-control-allow-methods": "OPTIONS,HEAD,GET,POST",
+        "access-control-allow-origin": "*",
+        "content-length": "7",
+        "date": "Wed, 20 May 2026 06:48:07 GMT",
+        "content-type": "text/plain; charset=utf-8",
+        "vary": "Origin",
+        "server": "envoy"
+      },
+      "body": ";Coins="
+    }
+  },
+  "expected": {
+    "bet": 4,
+    "win": 0,
+    "ending_balance": 99995127.12,
+    "has_bonus": false,
+    "is_free_spin": false
+  },
+  "frozen_time_ms": 1735689600000,
+  "random_seed": 42
+}

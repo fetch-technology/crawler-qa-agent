@@ -167,6 +167,15 @@ Stop when goal is VISUALLY CONFIRMED achieved (or within tolerance for numeric g
   return parsed;
 }
 
+export type SpinButtonBbox = {
+  /** Bounding box origin (top-left) trong viewport px. */
+  x: number;
+  y: number;
+  /** Width/height của bbox trong viewport px. */
+  w: number;
+  h: number;
+};
+
 export type PreGameDismissal = {
   action: "click" | "wait" | "done";
   x: number;
@@ -191,6 +200,15 @@ export type PreGameDismissal = {
   blocker_text: string | null;
   play_screen_ready: boolean;
   visible_elements: string[];
+  /**
+   * Tọa độ spin button live tại thời điểm vision call — chỉ set khi
+   * action="done" + play_screen_ready=true. Coord trong viewport px (cùng
+   * hệ với screenshot AI vừa nhìn). Caller dùng center của bbox để click,
+   * thay vì hardcode SPIN_BUTTON từ recording stale.
+   *
+   * null khi AI không locate được hoặc action != done.
+   */
+  spin_button_bbox: SpinButtonBbox | null;
 };
 
 /**
@@ -220,7 +238,17 @@ Return ONLY JSON:
   "blocker_type": "age_gate" | "terms_accept" | "cookies" | "welcome" | "tutorial" | "language_picker" | "currency_picker" | "sound_prompt" | "promo_popup" | "error_popup" | "loading" | "launcher" | "other" | "none",
   "blocker_text": string | null,      // short title/label text of the blocker, max 80 chars
   "play_screen_ready": boolean,       // TRUE ONLY when ALL "done" criteria below are met
-  "visible_elements": string[]        // list of what you see, e.g. ["reels","spin_button","balance","bet_amount","modal:age_gate","loading_spinner"]
+  "visible_elements": string[],       // list of what you see, e.g. ["reels","spin_button","balance","bet_amount","modal:age_gate","loading_spinner"]
+  "spin_button_bbox": { "x": number, "y": number, "w": number, "h": number } | null
+                                      // REQUIRED when action="done" AND play_screen_ready=true.
+                                      // Bounding box of the MAIN spin button (the big circular button
+                                      // used to start a single spin — NOT autoplay, NOT buy feature,
+                                      // NOT bet selector). Coordinates in viewport px (same coord
+                                      // system as the screenshot). x,y = top-left corner. w,h = size.
+                                      // Example: a 70x70 spin button centered at (1180, 815)
+                                      //   → {"x": 1145, "y": 780, "w": 70, "h": 70}.
+                                      // Set to null when action != "done" or when you cannot locate
+                                      // the spin button confidently.
 }
 
 ═══ ACTION = "done" ONLY WHEN ALL OF THESE ARE TRUE ═══
@@ -235,6 +263,26 @@ Set play_screen_ready=true and action="done" ONLY if you observe:
   ✓ NO browser-like top navbar ("Home / Products / News / Contact", provider logo + menu links) visible above the game
 
 If ANY of these is missing → action="click" or action="wait" (NEVER "done").
+
+═══ SPIN BUTTON BBOX (only when action="done") ═══
+When you set action="done" and play_screen_ready=true, you MUST also locate the MAIN spin button and return its bounding box in spin_button_bbox.
+
+Which button is the MAIN spin button:
+  ✓ The single large round/circular button that starts ONE manual spin
+  ✓ Usually decorated with a circular arrow / "SPIN" text / play-triangle icon
+  ✓ Typically positioned bottom-right or bottom-center
+  ✗ NOT the autoplay button (often smaller, beside spin, labeled "AUTO" or with stacked-arrow icon)
+  ✗ NOT the buy feature / buy free spins button (usually labeled "100x" or "BUY")
+  ✗ NOT the bet +/- selectors
+  ✗ NOT the turbo/quick-spin toggle (lightning icon)
+
+bbox format: tight rectangle around the visual button — exclude surrounding glow/halo/decoration.
+  - x, y = top-left corner of the button (viewport px)
+  - w, h = width and height of the button (viewport px)
+The center of the bbox (x + w/2, y + h/2) is what the automation will click.
+
+If two buttons look equally plausible (rare), pick the rightmost one — most slot games place spin bottom-right.
+If you genuinely cannot identify the spin button despite play_screen_ready=true, return spin_button_bbox: null (rare; should not happen if ready criteria above are met).
 
 ═══ CRITICAL: DEMO LANDING PAGE (Pragmatic Play, Evolution, etc.) ═══
 If you see a marketing/landing page with:
@@ -308,6 +356,7 @@ Output ONLY the JSON object.`;
       blocker_text: null,
       play_screen_ready: false,
       visible_elements: [],
+      spin_button_bbox: null,
     };
   }
   // Defensive: nếu AI thiếu field bất kỳ (vd response truncated, rate limit,
@@ -322,7 +371,42 @@ Output ONLY the JSON object.`;
   if (parsed.blocker_text === undefined) parsed.blocker_text = null;
   if (parsed.play_screen_ready === undefined) parsed.play_screen_ready = false;
   if (!Array.isArray(parsed.visible_elements)) parsed.visible_elements = [];
+  parsed.spin_button_bbox = normalizeSpinButtonBbox(
+    (parsed as Partial<PreGameDismissal>).spin_button_bbox,
+    viewport,
+  );
   return parsed;
+}
+
+/**
+ * Validate + sanitize bbox returned by AI:
+ * - Coerce to plain {x,y,w,h} number rect
+ * - Drop if fields missing/NaN
+ * - Drop if obviously bogus (origin negative > 50 px, size ≤ 0, exceeds viewport
+ *   by > 20%, or far above middle — spin button always in bottom half)
+ */
+function normalizeSpinButtonBbox(
+  raw: unknown,
+  viewport: { width: number; height: number },
+): SpinButtonBbox | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const x = Number(r.x);
+  const y = Number(r.y);
+  const w = Number(r.w);
+  const h = Number(r.h);
+  if (![x, y, w, h].every((n) => Number.isFinite(n))) return null;
+  if (w <= 0 || h <= 0) return null;
+  // Allow slight overshoot (AI may bbox decorative ring) but reject blatant nonsense
+  const maxX = viewport.width * 1.2;
+  const maxY = viewport.height * 1.2;
+  if (x < -50 || y < -50 || x > maxX || y > maxY) return null;
+  if (x + w > maxX + 50 || y + h > maxY + 50) return null;
+  // Spin button always in bottom half — center y must be ≥ 50% viewport.
+  // Catches AI bboxing autoplay icon in top toolbar etc.
+  const cy = y + h / 2;
+  if (cy < viewport.height * 0.5) return null;
+  return { x, y, w, h };
 }
 
 export type RulesFlowDecision = {

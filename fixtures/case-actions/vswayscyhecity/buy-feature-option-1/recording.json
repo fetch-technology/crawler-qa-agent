@@ -1,0 +1,32 @@
+{
+  "slug": "vswayscyhecity",
+  "case_id": "buy-feature-option-1",
+  "recorded_at": "2026-05-20T01:58:17.947Z",
+  "instructions": [
+    "click the Buy Feature button",
+    "select the intended buy option shown for this case",
+    "click confirm in the buy dialog"
+  ],
+  "clicks": [
+    {
+      "x": 105,
+      "y": 325,
+      "delay_ms": 4344,
+      "reason": "Buy Feature button left side",
+      "step": 0
+    },
+    {
+      "x": 100,
+      "y": 315,
+      "delay_ms": 7115,
+      "reason": "Buy Feature 2 Options button",
+      "step": 1
+    }
+  ],
+  "baseline_png": "fixtures/case-actions/vswayscyhecity/buy-feature-option-1/baseline.png",
+  "max_diff_ratio": 0.05,
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  }
+}

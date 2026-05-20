@@ -47,6 +47,10 @@ export type TestCaseCategory =
   | "rules_consistency"
   | "payout_correctness"
   | "wild_substitution"
+  /** Spin response time SLO check (default <500ms p95). Universal — emit always. */
+  | "performance"
+  /** Game logic/config version capture (cver/sver fields). Universal. */
+  | "meta"
   | "other";
 
 export type TestCase = {
@@ -113,6 +117,68 @@ type PlanResponse = {
   cases: CaseStub[];
   coverage_notes: string[];
 };
+
+function normalizeRngDependentAssertion(
+  category: TestCaseCategory,
+  expr: string,
+): { normalized: string; changed: boolean } {
+  const src = expr.trim();
+
+  // Buy feature flow deterministically triggers FS when purchase succeeds.
+  // Keep strong existence assertion for this category.
+  if (category === "buy_feature") {
+    return { normalized: src, changed: false };
+  }
+
+  // Anti-pattern: require rare event MUST happen in a finite organic watch.
+  // Replace by shape/type invariant that is RNG-independent.
+  const requireFsObserved =
+    /collector\.spins\.some\(\s*s\s*=>\s*s\.isFreeSpin\s*===\s*true\s*\)/.test(src) ||
+    /collector\.spins\.filter\([^)]*isFreeSpin[^)]*\)\.length\s*>\s*0/.test(src);
+  if (requireFsObserved) {
+    return {
+      normalized:
+        "collector.spins.filter(s => s.isFreeSpin === true).every(s => typeof s.id === 'string' && s.id.length > 0 && typeof s.winAmount === 'number' && s.winAmount >= 0)",
+      changed: true,
+    };
+  }
+
+  const requireAnyWinObserved =
+    /collector\.spins\.some\([^)]*winAmount[^)]*>\s*0/.test(src) ||
+    /collector\.spins\.filter\([^)]*winAmount[^)]*>\s*0[^)]*\)\.length\s*>\s*0/.test(src);
+  if (requireAnyWinObserved) {
+    return {
+      normalized:
+        "collector.spins.every(s => typeof s.winAmount === 'number' && s.winAmount >= 0 && typeof s.betAmount === 'number' && s.betAmount > 0)",
+      changed: true,
+    };
+  }
+
+  return { normalized: src, changed: false };
+}
+
+function normalizeAssertionsForRngIndependence(cases: TestCase[]): TestCase[] {
+  let changedCount = 0;
+  const out = cases.map((c) => {
+    const assertions = (c.custom_assertions ?? []).map((a) => {
+      const n = normalizeRngDependentAssertion(c.category, a.check_code);
+      if (!n.changed) return a;
+      changedCount++;
+      return {
+        ...a,
+        description: `${a.description} (normalized to RNG-independent invariant)`,
+        check_code: n.normalized,
+      };
+    });
+    return { ...c, custom_assertions: assertions };
+  });
+  if (changedCount > 0) {
+    console.warn(
+      `[catalog] normalized ${changedCount} custom_assertion(s) to RNG-independent form`,
+    );
+  }
+  return out;
+}
 
 const ASSERTION_VARS_DOC = `Variables available in check_code expressions:
 - spin (current SpinResponse): normalized fields ONLY: betAmount, winAmount, endingBalance, startingBalance, updatedBalance, status, id, round, currency, totalBet, isFreeSpin, isEndRound, matrix, result.
@@ -332,7 +398,7 @@ Return ONLY JSON:
     {
       "id": "kebab-case-unique",
       "name": "One-line display name",
-      "category": "base_game" | "bet_variation" | "bet_level" | "autoplay" | "buy_feature" | "special_bet" | "turbo_spin" | "free_spins" | "history" | "options" | "max_win_cap" | "other",
+      "category": "base_game" | "bet_variation" | "bet_level" | "autoplay" | "buy_feature" | "special_bet" | "turbo_spin" | "free_spins" | "history" | "options" | "max_win_cap" | "performance" | "meta" | "other",
       "severity": "critical" | "major" | "minor",
       "description": "1-2 sentences what this tests",
       "spin_count": number,
@@ -358,6 +424,13 @@ Rules:
   - rely on paytable.json for payout values (use spec.symbols)
   - hardcode currency from UI text (use spec.currency)
 
+**Required UNIVERSAL categories — emit for every game:**
+- \`performance\` — 1 case "spin-response-time-slo": assert per-spin response < 500ms p95.
+- \`meta\` — 1 case "logic-version-captured": assert response contains cver/sver/ver field for QA traceability.
+
+NOTE on multi-currency / multi-environment:
+Each task in this system represents ONE game URL = ONE currency = ONE environment. Do NOT plan per-currency or per-environment cases — multi-currency testing is done by creating multiple tasks (one per currency URL) or using \`npm run stats:currency-batch\`. Catalog stays single-environment.
+
 Output ONLY the JSON.`;
 
   const planRaw = await askClaude({
@@ -365,6 +438,8 @@ Output ONLY the JSON.`;
     system: SYSTEM_PLAN,
     maxTurns: 1,
     label: "catalog/PLAN",
+    // PLAN prompt can exceed 20k tokens in dashboard runs.
+    timeoutMs: Number(process.env.QA_CATALOG_PLAN_TIMEOUT_MS ?? process.env.QA_CLAUDE_TIMEOUT_MS ?? 240_000),
   });
   const plan = extractJsonFromText<PlanResponse>(planRaw);
   if (!plan || !Array.isArray(plan.cases) || plan.cases.length === 0) {
@@ -427,8 +502,16 @@ BAD setup_instructions:
 CRITICAL RULES for custom_assertions.check_code:
 - Standalone JS expression (no semicolons, no statements). Use typeof / Math.abs / array methods.
 ${ASSERTION_VARS_DOC}
+- RNG-INDEPENDENT ONLY: NEVER require a rare/organic event to MUST occur in fixed spins.
+  - FORBIDDEN: 
+    - \`collector.spins.some(s => s.isFreeSpin === true)\`
+    - \`collector.spins.some(s => s.winAmount > 0)\`
+    - any \`...length > 0\` assertion for bonus/free-spin/win events in organic watch cases.
+  - REQUIRED STYLE: implication/shape invariants, e.g. "if event observed then structure is valid".
+    - Example: \`collector.spins.filter(s => s.isFreeSpin === true).every(s => typeof s.id === 'string' && s.id.length > 0)\`
+    - Example: \`collector.spins.every(s => typeof s.winAmount === 'number' && s.winAmount >= 0)\`
 - For buy_feature deduction: use \`(() => { const d = detectBuyFeatureDeduction(collector.spins, 0, balanceBefore); return d != null && d.ratio >= 50; })()\` — NEVER \`spin.betAmount > base_bet\` (betAmount is base bet, not buy price).
-- For free spins triggered: \`collector.spins.some(s => s.isFreeSpin === true)\`
+- For free spins watch cases: \`collector.spins.filter(s => s.isFreeSpin === true).every(s => typeof s.id === 'string' && s.id.length > 0)\`
 - For round chain: \`getRoundEndSpins(collector.spins).length >= 1\`
 - **For numeric checks, ALWAYS guard against undefined/NaN first**: instead of \`spin.winAmount >= 0\`, write \`typeof spin.winAmount === 'number' && spin.winAmount >= 0\`. Same for betAmount, endingBalance, startingBalance. This makes failures debuggable when network mapping is wrong (otherwise you get useless "received: false" with no clue why).
 - **For ui_consistency cases**, custom_assertions can reference \`screen\` (vision-OCR'd values). Examples:
@@ -463,6 +546,7 @@ Output ONLY the JSON.`;
     system: SYSTEM_EXPAND,
     maxTurns: 1,
     label: "catalog/EXPAND",
+    timeoutMs: Number(process.env.QA_CATALOG_EXPAND_TIMEOUT_MS ?? process.env.QA_CLAUDE_TIMEOUT_MS ?? 300_000),
   });
   const expanded = extractJsonFromText<{ cases: TestCase[] }>(expandRaw);
   if (!expanded || !Array.isArray(expanded.cases)) {
@@ -478,7 +562,7 @@ Output ONLY the JSON.`;
   }
 
   // ===== STEP 3: VALIDATE (with 1 retry on errors) =====
-  let cases = expanded.cases;
+  let cases = normalizeAssertionsForRngIndependence(expanded.cases);
   let report = runFullValidation({
     cases,
     gameSpec,
@@ -502,10 +586,11 @@ Re-emit the FULL JSON with ALL cases, fixing the issues above. Same shape, same 
       system: SYSTEM_EXPAND,
       maxTurns: 1,
       label: "catalog/EXPAND-retry",
+      timeoutMs: Number(process.env.QA_CATALOG_FIX_TIMEOUT_MS ?? process.env.QA_CLAUDE_TIMEOUT_MS ?? 300_000),
     });
     const fixed = extractJsonFromText<{ cases: TestCase[] }>(fixRaw);
     if (fixed && Array.isArray(fixed.cases)) {
-      cases = fixed.cases;
+      cases = normalizeAssertionsForRngIndependence(fixed.cases);
       report = runFullValidation({
         cases,
         gameSpec,

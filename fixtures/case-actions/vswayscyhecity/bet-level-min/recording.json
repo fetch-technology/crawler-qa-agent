@@ -1,0 +1,40 @@
+{
+  "slug": "vswayscyhecity",
+  "case_id": "bet-level-min",
+  "recorded_at": "2026-05-20T01:52:43.658Z",
+  "instructions": [
+    "Step 1: Open the bet/menu panel (Menu button bottom-left) and locate the bet level selector.",
+    "Step 2: Select the bet level value '25' (the lowest level per spec.bet_mechanics.bet_levels[0]=25).",
+    "Step 3: Set the coin value to 0.01 USD.",
+    "Step 4: Verify the panel shows bet level=25 and the bet display reads '0.25' (= 0.01 × 25)."
+  ],
+  "clicks": [
+    {
+      "x": 99,
+      "y": 841,
+      "delay_ms": 3488,
+      "reason": "Menu button bottom-left",
+      "step": 0
+    },
+    {
+      "x": 105,
+      "y": 555,
+      "delay_ms": 6127,
+      "reason": "Open SPECIAL BETS menu",
+      "step": 1
+    },
+    {
+      "x": 1166,
+      "y": 280,
+      "delay_ms": 8154,
+      "reason": "Close special bet dialog",
+      "step": 2
+    }
+  ],
+  "baseline_png": "fixtures/case-actions/vswayscyhecity/bet-level-min/baseline.png",
+  "max_diff_ratio": 0.05,
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  }
+}

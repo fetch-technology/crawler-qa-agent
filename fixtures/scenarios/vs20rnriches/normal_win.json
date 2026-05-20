@@ -1,0 +1,81 @@
+{
+  "slug": "vs20rnriches",
+  "label": "normal_win",
+  "description": "Extracted from fixtures/recordings/vs20rnriches__auto-2026-05-20T06-47-58-772Z (response t=35556ms)",
+  "source_recording": "fixtures/recordings/vs20rnriches__auto-2026-05-20T06-47-58-772Z",
+  "spin_response": {
+    "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+    "url_pattern": "(?:\\/|[?&=])(?:do)?spin\\b|\\/gs2c\\/ge\\/|\\/gs2c\\/.*gameservice|\\/gs2c\\/.*playgame|\\/gs2c\\/.*dogame|\\/round\\b|\\/dogame\\b",
+    "method": "POST",
+    "status": 200,
+    "headers": {
+      "x-envoy-upstream-service-time": "2140",
+      "access-control-allow-methods": "OPTIONS,HEAD,GET,POST",
+      "access-control-allow-origin": "*",
+      "content-length": "340",
+      "date": "Wed, 20 May 2026 06:48:37 GMT",
+      "content-type": "text/plain; charset=utf-8",
+      "vary": "Origin",
+      "server": "envoy"
+    },
+    "body": "tw=2.00&rs_iw=2.00&reel_set=1&s_mark=tmb~2:0,2:4,2:6,2:10,2:17,2:20,2:23,2:26&na=s&l0=0~2.00~0~4~6~10~17~20~23~26&rs_p=0&bl=0&sa=4a41c3&sb=5dc541&rs_c=1&rs_win=0.00&sh=5&rs_m=1&st=rect&c=0.20&sw=6&sver=6&ntp=0&l=20&s=2a412425d424b5d4a2b12aa2512a41&w=2.00&trail=&balance=99995123.12&index=1&balance_cash=99995123.12&balance_bonus=0&counter=1",
+    "parsed": {
+      "tw": "2.00",
+      "rs_iw": "2.00",
+      "reel_set": "1",
+      "s_mark": "tmb~2:0,2:4,2:6,2:10,2:17,2:20,2:23,2:26",
+      "na": "s",
+      "l0": "0~2.00~0~4~6~10~17~20~23~26",
+      "rs_p": "0",
+      "bl": "0",
+      "sa": "4a41c3",
+      "sb": "5dc541",
+      "rs_c": "1",
+      "rs_win": "0.00",
+      "sh": "5",
+      "rs_m": "1",
+      "st": "rect",
+      "c": "0.20",
+      "sw": "6",
+      "sver": "6",
+      "ntp": "0",
+      "l": "20",
+      "s": "2a412425d424b5d4a2b12aa2512a41",
+      "w": "2.00",
+      "trail": "",
+      "balance": "99995123.12",
+      "index": "1",
+      "balance_cash": "99995123.12",
+      "balance_bonus": "0",
+      "counter": "1"
+    }
+  },
+  "prelude": {
+    "config": {
+      "url": "https://pp.dev.revenge-games.com/gs2c/saveSettings.do",
+      "url_pattern": "\\/config\\b|\\/gs2c\\/.*Settings|\\/init\\b",
+      "method": "POST",
+      "status": 200,
+      "headers": {
+        "x-envoy-upstream-service-time": "0",
+        "access-control-allow-methods": "OPTIONS,HEAD,GET,POST",
+        "access-control-allow-origin": "*",
+        "content-length": "7",
+        "date": "Wed, 20 May 2026 06:48:07 GMT",
+        "content-type": "text/plain; charset=utf-8",
+        "vary": "Origin",
+        "server": "envoy"
+      },
+      "body": ";Coins="
+    }
+  },
+  "expected": {
+    "bet": 4,
+    "win": 2,
+    "ending_balance": 99995123.12,
+    "has_bonus": false,
+    "is_free_spin": false
+  },
+  "frozen_time_ms": 1735689600000,
+  "random_seed": 42
+}

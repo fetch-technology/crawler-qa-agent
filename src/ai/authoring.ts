@@ -1,5 +1,86 @@
 import { askClaude, extractJsonFromText, extractCodeFromText } from "./claude.js";
-import type { TestCase } from "./test-catalog.js";
+import type { TestCase, TestCaseCatalog } from "./test-catalog.js";
+import { listScenarios, loadScenario } from "../runner/scenario.js";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
+import {
+  strategyFor,
+  emitTestBlock,
+  emitLLMTestBlock,
+  summarizeCoverage,
+  isStatelessTest,
+  type AvailableScenario,
+} from "./hybrid-case-mapper.js";
+
+/**
+ * Detect spin button coordinate từ recording's iterations.json mới nhất.
+ * Find click decision có reason match "spin button" → return median coord.
+ *
+ * Fallback (720, 810) nếu không tìm được — tương thích với fiesta-magenta.
+ *
+ * Coord khác nhau giữa game (PP cascade often có spin button bên phải ~1150,
+ * RG có ở giữa ~720). Hardcode fail cho cross-game.
+ */
+export function detectSpinButtonCoord(gameSlug: string): { x: number; y: number } {
+  const recDir = "fixtures/recordings";
+  const fallback = { x: 720, y: 810 };
+  if (!existsSync(recDir)) return fallback;
+
+  try {
+    // Pick latest recording for slug
+    const candidates = readdirSync(recDir)
+      .filter((n) => n.startsWith(`${gameSlug}__`))
+      .map((n) => ({ name: n, full: join(recDir, n) }))
+      .filter((d) => statSync(d.full).isDirectory())
+      .sort((a, b) => statSync(b.full).mtimeMs - statSync(a.full).mtimeMs);
+    if (candidates.length === 0) return fallback;
+
+    const iterPath = join(candidates[0]!.full, "iterations.json");
+    if (!existsSync(iterPath)) return fallback;
+
+    const data = JSON.parse(readFileSync(iterPath, "utf8")) as Array<{
+      decision?: { action?: string; x?: number; y?: number; reason?: string };
+    }>;
+
+    // Collect click coords có reason mention "spin button".
+    // CRITICAL filter: exclude clicks tới modal-close/dismiss/blocker even khi
+    // reason chứa "spin" (vd "Close the modal blocking the spin button" — đây
+    // là dismiss modal, KHÔNG phải spin click). Modal close thường y ≈ middle
+    // viewport (300-500), spin button luôn ở bottom (y > 600).
+    const spinClicks: Array<{ x: number; y: number }> = [];
+    for (const d of data) {
+      const dec = d.decision;
+      if (!dec || dec.action !== "click") continue;
+      if (typeof dec.x !== "number" || typeof dec.y !== "number") continue;
+      const reason = (dec.reason ?? "").toLowerCase();
+      // Negative filter: skip nếu reason indicates dismiss/close/modal action
+      const DISMISS_KEYWORDS = [
+        "close", "dismiss", "blocking", "blocker", "modal",
+        "popup", "overlay", "splash", "tutorial", "welcome",
+      ];
+      if (DISMISS_KEYWORDS.some((k) => reason.includes(k))) continue;
+      // Positive filter: spin-related reason
+      if (!(reason.includes("spin button") || reason.includes("spin to win") || /\bspin\b/.test(reason))) {
+        continue;
+      }
+      // Geometry filter: spin button luôn ở bottom half (y >= viewport_height * 0.6).
+      // Viewport 1440×900 → spin button thường y > 700. Loại click ở center/top.
+      if (dec.y < 540) continue;
+      spinClicks.push({ x: dec.x, y: dec.y });
+    }
+
+    if (spinClicks.length === 0) return fallback;
+
+    // Use median để robust với outlier
+    const xs = spinClicks.map((c) => c.x).sort((a, b) => a - b);
+    const ys = spinClicks.map((c) => c.y).sort((a, b) => a - b);
+    const midX = xs[Math.floor(xs.length / 2)]!;
+    const midY = ys[Math.floor(ys.length / 2)]!;
+    return { x: midX, y: midY };
+  } catch {
+    return fallback;
+  }
+}
 
 export type Invariant = {
   id: string;
@@ -92,6 +173,24 @@ export type GameSpec = {
   observed_caveats: string[]; // Things the AI noticed that may need human review
   /** Game-specific runtime data check strategy — preflight + harness dùng. */
   execution_strategy: ExecutionStrategy;
+  /**
+   * Math mechanic — drives which decoder + payout calculator the rule engine
+   * uses to verify spin responses against paytable.
+   *
+   * - "ways"     : left-to-right adjacent reels (vd 25/243/3125 ways) — fiesta-magenta
+   * - "paylines" : fixed line layout (vd 25-line, 30-line classic slots)
+   * - "cluster"  : connected groups of ≥N same symbol anywhere — Sweet Bonanza, vswayscyhecity
+   * - "megaways" : variable rows per reel (117649 ways) — Big Time Gaming
+   * - "lines"    : alias for paylines
+   * - "unknown"  : AI couldn't classify with confidence — rule engine falls back to ways
+   */
+  mechanic_type: "ways" | "paylines" | "cluster" | "megaways" | "lines" | "unknown";
+  /** True if game uses cascade/tumble (winning symbols disappear → new symbols drop → re-evaluate). */
+  cascade: boolean;
+  /** Cluster minimum size to pay (default 5 for Sweet Bonanza family). Only relevant for "cluster". */
+  cluster_min_size?: number;
+  /** Paylines layout if "paylines" mechanic. Each line = array of row indices, length = reel count. */
+  paylines?: number[][];
 };
 
 const UNDERSTAND_SYSTEM =
@@ -160,6 +259,10 @@ Produce a GameSpec with this exact shape:
   ],
   "sample_spin_response_shape": { "id": "string", "betAmount": "number", ... },
   "observed_caveats": [ "strings describing anything uncertain or needing human review" ],
+  "mechanic_type": "ways" | "paylines" | "cluster" | "megaways" | "lines" | "unknown",
+  "cascade": boolean,
+  "cluster_min_size": number | undefined,
+  "paylines": number[][] | undefined,
   "execution_strategy": {
     "channel": "http" | "websocket" | "hybrid",
     "spin_endpoint_evidence": {
@@ -207,6 +310,17 @@ Critical requirements for execution_strategy:
     - "tumble_chain_end" — only if you see multi-response per UI spin pattern.
     - "ws_message_kind" — WebSocket games; set ws_message_kind to the specific kind/type field you observed.
     - "balance_settled" — fallback when nothing else works.
+
+    **PP cascade detection (gs2c/v3/gameService endpoints)**: Check samples for these raw fields — if ANY exist, set \`tumble_aware: true\` and \`method: "tumble_chain_end"\`:
+      - \`rs_more\` (cascade continues flag)
+      - \`rs_c\` (cascade index/count)
+      - \`rs_iw\` (intermediate win amount)
+      - \`rs_p\` (cascade phase)
+      - \`rs_m\` (cascade multiplier)
+      - \`rs_win\` (cascade win)
+      - \`rs_t\` (cascade type)
+      - \`s_mark\` (symbol marks for cascade)
+    Cyberheist City, Sweet Bonanza, Sugar Rush family — all PP cascade games — emit ≥1 of these per cascade response. If you see them, the game IS cascade even if isEndRound is absent. \`free_spin_chains\` should also be \`true\` if you see free spin fields (\`rs_c\`, \`rs_m\` typically increase across free spin rounds).
 12. **field_validation — CRITICAL: only specify required:true for fields that ACTUALLY EXIST in the provided samples**. DO NOT add fields like "updatedBalance", "isEndRound", "isFreeSpin" as required UNLESS you see them in at least 1 sample. Walk through sample[0] keys and only require fields you can SEE. Adding a hallucinated required field will fail bootstrap. If a normalized field MIGHT be useful but isn't in samples, set required:false.
 13. **field_validation type values**: must be one of "number" | "string" | "boolean" | "array" | "object". Use "array" for matrix/reels/symbols fields. typeof [] is "object" but the preflight checks Array.isArray separately — pick "array" if the value is an array.
 14. **preflight_checks rule kinds available** (use these EXACT names, others will be skipped):
@@ -220,6 +334,24 @@ Critical requirements for execution_strategy:
     - "sample_count_min" args:{count}  — at least N samples
     Do NOT invent kinds like "field_matches", "regex_check" etc. — they will be skipped.
 15. **preflight_checks minimum required** for any spin endpoint: "all_samples_field_nonzero" for betAmount AND "field_type" for winAmount=number. Add others only if game has the structure (e.g. "field_array_nonempty" for matrix only if matrix exists in samples).
+
+Critical requirements for math mechanic classification (drives rule engine payout verification):
+16. **mechanic_type**: Classify the math model. Look at paytable structure + features + response shape:
+    - "cluster"  → paytable lists symbols with sizes like "5-7", "8-10", "11+" (not "3,4,5"); features mention "cluster"/"tumble"/"cascade"; response has rs_more/rs_iw/rs_t fields → Sweet Bonanza, Sugar Rush, Cyberheist City, vswayscyhecity
+    - "ways"     → paytable has fixed match counts {3,4,5} for adjacency-based wins; features say "ways" or "ALL WAYS"; 25/125/243/3125 ways advertised → fiesta-magenta, fortune-pig
+    - "paylines" → paytable has 3/4/5-of-a-kind per line; features mention "X paylines"; line patterns exist in config
+    - "megaways" → variable rows per reel (2-7 symbols/reel); features mention "Megaways" or "117649 ways" — Big Time Gaming family
+    - "lines"    → alias for paylines (rare, use "paylines" when uncertain)
+    - "unknown"  → use ONLY if you cannot determine from samples; rule engine will fall back to ways (likely incorrect verification)
+
+17. **cascade**: true if winning symbols disappear and new symbols drop in. Detect from:
+    - Response fields: rs_more, rs_iw, rs_t, sa, sb (cascade state)
+    - Features mention "Tumble", "Cascade", "Avalanche", "Re-spin"
+    - na="c" (next action = continue cascade) in any sample
+
+18. **cluster_min_size**: ONLY if mechanic_type="cluster". Default 5 (Sweet Bonanza family). Read from paytable — smallest match size listed.
+
+19. **paylines**: ONLY if mechanic_type="paylines" AND you can extract line layouts from config samples. Each line = array of row indices (0=top), length = reel count. Leave undefined if unclear — paylines mechanic will use default all-rows.
 
 Output ONLY the JSON.`;
 
@@ -321,6 +453,8 @@ Output a single .spec.ts file that:
     content: [{ type: "text", text: prompt }],
     system: GENERATE_SYSTEM,
     maxTurns: 1,
+    label: "authoring/GENERATE-legacy",
+    timeoutMs: Number(process.env.QA_AUTHORING_TIMEOUT_MS ?? process.env.QA_CLAUDE_TIMEOUT_MS ?? 3_000_000),
   });
   const code = extractCodeFromText(raw, "typescript");
   return code;
@@ -425,6 +559,395 @@ OUTPUT the .spec.ts code now.`;
     content: [{ type: "text", text: prompt }],
     system: GENERATE_SYSTEM,
     maxTurns: 1,
+    label: "authoring/GENERATE-cases",
+    timeoutMs: Number(process.env.QA_AUTHORING_TIMEOUT_MS ?? process.env.QA_CLAUDE_TIMEOUT_MS ?? 300_000),
   });
   return extractCodeFromText(raw, "typescript");
+}
+
+/**
+ * Hybrid test generator — template-based (KHÔNG dùng LLM).
+ *
+ * Có 2 chế độ:
+ *   - **Catalog-driven** (recommended): truyền `catalog` → sinh 1 test per case từ
+ *     `tests-cases.json`. Mỗi case map sang mock strategy:
+ *       - mockable → use_scenario / spin_sequence với mock data
+ *       - skip → test.skip với reason (cần LLM flow cho case này)
+ *     Cover được 60-80% catalog deterministically.
+ *
+ *   - **Scenario-only fallback**: không truyền catalog → 1 test per scenario.
+ *     Đơn giản nhưng narrow coverage (N test = N scenario).
+ *
+ * Trả null nếu slug không có scenario nào.
+ */
+export function generateHybridTestCode(args: {
+  gameSlug: string;
+  harnessImportPath: string; // unused — hybrid không dùng test-harness, chỉ để symmetric API
+  envVarUrl: string;
+  spinButton?: { x: number; y: number };
+  catalog?: TestCaseCatalog | null;
+}): string | null {
+  const { gameSlug, envVarUrl, catalog } = args;
+  const scenarioNames = listScenarios(gameSlug);
+  if (scenarioNames.length === 0) return null;
+  // Auto-detect spin button coord từ recording. User có thể override qua args.
+  const spinButton = args.spinButton ?? detectSpinButtonCoord(gameSlug);
+
+  const availableScenarios: AvailableScenario[] = scenarioNames.map((name) => {
+    const scenario = loadScenario(gameSlug, name);
+    return { name, label: scenario.label, scenario };
+  });
+
+  // Catalog-driven mode
+  if (catalog && catalog.cases && catalog.cases.length > 0) {
+    const coverage = summarizeCoverage(catalog.cases, availableScenarios, gameSlug);
+    // Partition tests: stateless (shared session) vs stateful (isolated per test).
+    // Only real_network_verify strategy được wire shared session — các strategy
+    // khác (replay_or_vision, fs_chain_replay, ...) vẫn isolated.
+    const sharedBlocks: string[] = [];
+    const isolatedBlocks: string[] = [];
+    const coverageRows: string[] = [];
+
+    for (const tc of catalog.cases) {
+      const strategy = strategyFor(tc, availableScenarios, { slug: gameSlug });
+      const isStateless = isStatelessTest(tc, strategy);
+      const canShare = isStateless && strategy.type === "real_network_verify";
+      const block = emitTestBlock({
+        testCase: tc,
+        strategy,
+        slug: gameSlug,
+        spinButton,
+        sharedSession: canShare,
+      });
+      if (canShare) sharedBlocks.push(block);
+      else isolatedBlocks.push(block);
+      let flag: string;
+      if (strategy.type === "skip") flag = "SKIP";
+      else if (strategy.type === "spin_sequence") flag = "SEQ ";
+      else if (strategy.type === "cascade_chain") flag = "CASC";
+      else if (strategy.type === "free_spin_chain") flag = "FREE";
+      else if (strategy.type === "use_scenario" && strategy.overrides) flag = "SYN ";
+      else flag = "MOCK";
+      const sessionFlag = canShare ? "[shared]" : "[iso]   ";
+      coverageRows.push(`//  ${sessionFlag} [${flag}] ${tc.id.padEnd(40)} — ${strategy.reason.slice(0, 70)}`);
+    }
+    const testBlocks: string[] = []; // kept for legacy reference in fallback below
+
+    const coverageLines = [
+      `// Coverage: ${coverage.mockable}/${coverage.total} active (${coverage.skipped} skipped)`,
+      `// Breakdown:`,
+      `//   MOCK = ${coverage.mockable - coverage.spinSequence - coverage.synthesized - coverage.cascadeChain - coverage.freeSpinChain} (use scenario as-is)`,
+      `//   SYN  = ${coverage.synthesized} (synthesize override bet/win/balance)`,
+      `//   SEQ  = ${coverage.spinSequence} (autoplay rotate)`,
+      `//   CASC = ${coverage.cascadeChain} (cascade chain N responses)`,
+      `//   FREE = ${coverage.freeSpinChain} (free spin chain N responses)`,
+      `//   SKIP = ${coverage.skipped} (cần LLM flow)`,
+      `// `,
+      ...coverageRows,
+    ].join("\n");
+
+    return `// Auto-generated CATALOG-DRIVEN hybrid test for "${gameSlug}".
+// Source: ${catalog.total_cases} cases từ fixtures/specs/${gameSlug}/${gameSlug}.test-cases.json
+// + ${availableScenarios.length} scenarios từ fixtures/scenarios/${gameSlug}/.
+//
+// Mock strategy:
+//   MOCK = use 1 scenario response
+//   SEQ  = rotate N scenarios cho autoplay
+//   SKIP = test.skip với reason (cần LLM flow)
+//
+${coverageLines}
+
+import { test, expect } from "@playwright/test";
+import { makeDeterministic } from "../../src/runner/deterministic.js";
+import {
+  spinDeterministic,
+  assertSpinMatchesExpected,
+} from "../../src/runner/deterministic-spin.js";
+import { preGameWithReplayOrVision } from "../../src/runner/pre-game-replay.js";
+import { runCaseActionWithReplayOrVision } from "../../src/runner/case-action.js";
+import { loadScenario } from "../../src/runner/scenario.js";
+import {
+  assertUIMatchesResponse,
+  extractExpectedFromResponse,
+} from "../../src/runner/ui-verifier.js";
+import { assertPayoutMatchesPaytable } from "../../src/runner/rule-engine.js";
+import {
+  spinReal,
+  computeBet,
+  computeWin,
+  verifyShape,
+  verifyBalanceConservation,
+  verifyMaxWinCap,
+  verifyWinPatternConsistency,
+  verifyStateConsistency,
+  dismissAnyModal,
+} from "../../src/runner/spin-verify.js";
+import { resolveSpinButton } from "../../src/runner/spin-button-resolve.js";
+
+const GAME_URL = process.env.${envVarUrl};
+if (!GAME_URL) throw new Error("${envVarUrl} required");
+
+const SLUG = "${gameSlug}";
+const VIEWPORT = { width: 1440, height: 900 };
+// SPIN_BUTTON = fallback hardcode từ recording. Khi vision return bbox tại
+// pre-game, resolveSpinButton dùng bbox center (live, không stale) → SPIN_BUTTON
+// chỉ là safety net khi vision không locate được button (vd replay path).
+const SPIN_BUTTON = { x: ${spinButton.x}, y: ${spinButton.y} };
+
+${sharedBlocks.length > 0 ? `// ===== SHARED SESSION =====
+// ${sharedBlocks.length} stateless tests — 1 browser + 1 pre-game upfront → 4× faster.
+// KHÔNG dùng .serial vì auto-cascade-skip khi 1 fail → đè full block. Tests
+// ở đây independent enough (mỗi test = dismissModal + spinReal), failure isolated.
+test.describe(\`Hybrid shared session — \${SLUG}\`, () => {
+  test.setTimeout(4 * 60_000);
+  let sharedPage: import("playwright").Page;
+  // Resolved trong beforeAll từ vision bbox (nếu có) → tests đọc tại click time.
+  let sharedSpinButton: { x: number; y: number } = SPIN_BUTTON;
+  let sharedSpinButtonLive = false;
+
+  test.beforeAll(async ({ browser }) => {
+    const context = await browser.newContext({ viewport: VIEWPORT });
+    sharedPage = await context.newPage();
+    await sharedPage.goto(GAME_URL);
+    const ready = await preGameWithReplayOrVision(sharedPage, {
+      slug: SLUG,
+      viewport: VIEWPORT,
+      label: "shared-session-pregame",
+    });
+    if (!ready.ready) {
+      throw new Error(\`shared session pre-game không ready (source=\${ready.source})\`);
+    }
+    const sb = resolveSpinButton(ready, SPIN_BUTTON);
+    sharedSpinButton = sb.coord;
+    sharedSpinButtonLive = sb.live;
+    console.log(\`[shared-session] pre-game ready (source=\${ready.source}) — spin button (\${sharedSpinButton.x},\${sharedSpinButton.y}) source=\${sb.source} — running \${${sharedBlocks.length}} stateless tests\`);
+  });
+
+  test.afterAll(async () => {
+    if (sharedPage) await sharedPage.close().catch(() => {});
+  });
+
+${sharedBlocks.join("\n\n")}
+});
+
+` : ""}// ===== ISOLATED SESSION =====
+// ${isolatedBlocks.length} stateful tests — fresh page mỗi test (stateful action,
+// FS chain, autoplay, buy_feature, ...). Pre-game riêng cho từng test.
+test.describe(\`Hybrid isolated — \${SLUG}\`, () => {
+  test.setTimeout(4 * 60_000);
+  test.beforeEach(async ({ page }) => {
+    await page.setViewportSize(VIEWPORT);
+  });
+
+${isolatedBlocks.join("\n\n")}
+});
+`;
+  }
+
+  // Scenario-only fallback mode
+  const testBlocks: string[] = [];
+  for (const av of availableScenarios) {
+    const exp = av.scenario.expected;
+    const expFields = [
+      exp.bet != null ? `bet: ${exp.bet}` : null,
+      exp.win != null ? `win: ${exp.win}` : null,
+      exp.starting_balance != null ? `starting_balance: ${exp.starting_balance}` : null,
+      exp.ending_balance != null ? `ending_balance: ${exp.ending_balance}` : null,
+      exp.has_bonus != null ? `has_bonus: ${exp.has_bonus}` : null,
+      exp.is_free_spin != null ? `is_free_spin: ${exp.is_free_spin}` : null,
+    ]
+      .filter(Boolean)
+      .join(",\n      ");
+
+    const extraAssertions =
+      av.name === "no_win" &&
+      exp.bet != null &&
+      exp.starting_balance != null &&
+      exp.ending_balance != null
+        ? `
+    expect(handle.scenario.expected.ending_balance, "no_win: ending = starting - bet").toBeCloseTo(
+      handle.scenario.expected.starting_balance! - handle.scenario.expected.bet!,
+      2,
+    );`
+        : "";
+
+    testBlocks.push(`  test("${av.name} — verify mocked response + UI", async ({ page }) => {
+    const handle = await makeDeterministic(page, {
+      slug: SLUG,
+      scenario: "${av.name}",
+      spinOnly: true,
+      noFreeze: true,
+    });
+    await page.goto(GAME_URL);
+    const ready = await preGameWithReplayOrVision(page, {
+      slug: SLUG,
+      viewport: VIEWPORT,
+      label: "pregame-${av.name}",
+    });
+    expect(ready.ready, \`pre-game không ready (source=\${ready.source})\`).toBe(true);
+    const sb = resolveSpinButton(ready, SPIN_BUTTON);
+
+    const result = await spinDeterministic(page, handle, { spinButton: sb.coord });
+    expect(result.parsed).not.toBeNull();
+    assertSpinMatchesExpected(result, {
+      ${expFields},
+    });
+    expect(handle.spinRequestCount).toBeGreaterThanOrEqual(1);${extraAssertions}
+  });`);
+  }
+
+  return `// Auto-generated scenario-only hybrid test for "${gameSlug}".
+// Pattern: 1 test() per scenario. Pass catalog vào generateHybridTestCode()
+// để có catalog-driven mode với rich coverage.
+
+import { test, expect } from "@playwright/test";
+import { makeDeterministic } from "../../src/runner/deterministic.js";
+import {
+  spinDeterministic,
+  assertSpinMatchesExpected,
+} from "../../src/runner/deterministic-spin.js";
+import { preGameWithReplayOrVision } from "../../src/runner/pre-game-replay.js";
+import { resolveSpinButton } from "../../src/runner/spin-button-resolve.js";
+
+const GAME_URL = process.env.${envVarUrl};
+if (!GAME_URL) throw new Error("${envVarUrl} required");
+
+const SLUG = "${gameSlug}";
+const VIEWPORT = { width: 1440, height: 900 };
+const SPIN_BUTTON = { x: ${spinButton.x}, y: ${spinButton.y} };
+
+test.describe(\`Hybrid scenario-only — \${SLUG}\`, () => {
+  test.setTimeout(4 * 60_000);
+  test.beforeEach(async ({ page }) => {
+    await page.setViewportSize(VIEWPORT);
+  });
+
+${testBlocks.join("\n\n")}
+});
+`;
+}
+
+/**
+ * Unified codegen — emit 1 spec file với BOTH style (mock + LLM).
+ *
+ * Logic per case:
+ *   - strategyFor(case, scenarios) = use_scenario | spin_sequence → emit hybrid mock test
+ *   - strategyFor(case, scenarios) = skip → emit LLM-driven test (doAutoSpin)
+ *
+ * Result: 27 cases run hết, không có test.skip. Cost-optimized (mock những gì
+ * mock được, LLM cho phần còn lại).
+ *
+ * Pre-requisite:
+ *   - fixtures/specs/{slug}/{slug}.test-cases.json (catalog từ Phase 2 Generate)
+ *   - fixtures/scenarios/{slug}/*.json (scenarios từ Phase 1 Collect)
+ *
+ * Trả null nếu thiếu catalog (caller fallback sang generateHybridTestCode hoặc
+ * generateParameterizedTestCode).
+ */
+export function generateUnifiedTestCode(args: {
+  gameSlug: string;
+  envVarUrl: string;
+  spinButton?: { x: number; y: number };
+  catalog: TestCaseCatalog;
+}): string | null {
+  const { gameSlug, envVarUrl, catalog } = args;
+  if (!catalog || !catalog.cases || catalog.cases.length === 0) return null;
+  // Auto-detect spin button coord từ recording. User có thể override qua args.
+  const spinButton = args.spinButton ?? detectSpinButtonCoord(gameSlug);
+  const scenarioNames = listScenarios(gameSlug);
+
+  const availableScenarios: AvailableScenario[] = scenarioNames.map((name) => {
+    const scenario = loadScenario(gameSlug, name);
+    return { name, label: scenario.label, scenario };
+  });
+
+  const coverage = summarizeCoverage(catalog.cases, availableScenarios);
+  const testBlocks: string[] = [];
+  const coverageRows: string[] = [];
+  let mockCount = 0;
+  let llmCount = 0;
+
+  for (const tc of catalog.cases) {
+    const strategy = strategyFor(tc, availableScenarios, { slug: gameSlug });
+    if (strategy.type === "skip") {
+      testBlocks.push(emitLLMTestBlock({ testCase: tc, reason: strategy.reason }));
+      coverageRows.push(`//  [LLM ] ${tc.id.padEnd(40)} — ${strategy.reason.slice(0, 80)}`);
+      llmCount++;
+    } else {
+      testBlocks.push(emitTestBlock({ testCase: tc, strategy, slug: gameSlug, spinButton }));
+      const flag = strategy.type === "spin_sequence" ? "SEQ " : "MOCK";
+      coverageRows.push(`//  [${flag}] ${tc.id.padEnd(40)} — ${strategy.reason.slice(0, 80)}`);
+      mockCount++;
+    }
+  }
+
+  const coverageLines = [
+    `// Coverage: ${coverage.total} cases — ${mockCount} mock (${coverage.spinSequence} sequence + ${mockCount - coverage.spinSequence} single) + ${llmCount} LLM`,
+    `// Cost estimate: ~$${(mockCount * 0.1 + llmCount * 0.5).toFixed(2)} (mock@$0.10 + LLM@$0.50 per case avg)`,
+    `// `,
+    ...coverageRows,
+  ].join("\n");
+
+  return `// Auto-generated UNIFIED hybrid+LLM test for "${gameSlug}".
+// Source: ${catalog.total_cases} cases + ${availableScenarios.length} scenarios.
+//
+// Strategy auto-routing per case:
+//   MOCK = makeDeterministic + spinDeterministic (deterministic, cheap)
+//   SEQ  = rotate N scenarios cho autoplay (deterministic)
+//   LLM  = doAutoSpin (vision per spin, fallback cho case không mockable)
+//
+${coverageLines}
+
+import { test, expect } from "@playwright/test";
+// Mock-style imports
+import { makeDeterministic } from "../../src/runner/deterministic.js";
+import {
+  spinDeterministic,
+  assertSpinMatchesExpected,
+} from "../../src/runner/deterministic-spin.js";
+import { preGameWithReplayOrVision } from "../../src/runner/pre-game-replay.js";
+import { runCaseActionWithReplayOrVision } from "../../src/runner/case-action.js";
+import { loadScenario } from "../../src/runner/scenario.js";
+import {
+  assertUIMatchesResponse,
+  extractExpectedFromResponse,
+} from "../../src/runner/ui-verifier.js";
+import { assertPayoutMatchesPaytable } from "../../src/runner/rule-engine.js";
+import {
+  spinReal,
+  computeBet,
+  computeWin,
+  verifyShape,
+  verifyBalanceConservation,
+  verifyMaxWinCap,
+  verifyWinPatternConsistency,
+  verifyStateConsistency,
+  dismissAnyModal,
+} from "../../src/runner/spin-verify.js";
+import { resolveSpinButton } from "../../src/runner/spin-button-resolve.js";
+// LLM-style imports
+import {
+  openGame,
+  doAutoSpin,
+  setActiveCase,
+  keepBrowserOpenIfRequested,
+} from "../../src/runner/test-harness.js";
+
+const GAME_URL = process.env.${envVarUrl};
+if (!GAME_URL) throw new Error("${envVarUrl} required");
+
+const SLUG = "${gameSlug}";
+const VIEWPORT = { width: 1440, height: 900 };
+const SPIN_BUTTON = { x: ${spinButton.x}, y: ${spinButton.y} };
+
+test.describe(\`Unified (mock+LLM) — \${SLUG}\`, () => {
+  // LLM cases có thể tốn 30-120s/case → cho timeout rộng
+  test.setTimeout(10 * 60_000);
+  test.beforeEach(async ({ page }) => {
+    await page.setViewportSize(VIEWPORT);
+  });
+
+${testBlocks.join("\n\n")}
+});
+`;
 }

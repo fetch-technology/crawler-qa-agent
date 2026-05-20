@@ -1,0 +1,27 @@
+{
+  "slug": "vs5triple8gold",
+  "case_id": "bet-variation-min-coin",
+  "recorded_at": "2026-05-20T02:24:57.005Z",
+  "instructions": [
+    "Step 1: Locate the bet display in the bottom-right area (currently shows '0.10').",
+    "Step 2: Read current bet value — record as starting_bet.",
+    "Step 3: Click the '-' button labeled 'Bet Decrease' in options.json repeatedly until the bet display shows '0.10' (coin 0.02 × 5 paylines).",
+    "Step 4: Verify the bet display reads exactly '0.10' (within ±1 ladder step tolerance, i.e.",
+    "not less than 0.10 since this is the minimum)."
+  ],
+  "clicks": [
+    {
+      "x": 311,
+      "y": 825,
+      "delay_ms": 4806,
+      "reason": "Bet display showing 0.10",
+      "step": 0
+    }
+  ],
+  "baseline_png": "fixtures/case-actions/vs5triple8gold/bet-variation-min-coin/baseline.png",
+  "max_diff_ratio": 0.05,
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "slug": "fiesta-magenta",
+  "recorded_at": "2026-05-18T02:42:28.282Z",
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  },
+  "initial_wait_ms": 2000,
+  "default_post_click_wait_ms": 2000,
+  "clicks": [
+    {
+      "delay_ms": 16857,
+      "x": 939,
+      "y": 234,
+      "reason": "welcome: Information popup is covering the game; click the X close button to dismiss it."
+    }
+  ],
+  "ready_signal": {
+    "kind": "region_snapshot",
+    "region": {
+      "x": 620,
+      "y": 760,
+      "width": 200,
+      "height": 120
+    },
+    "baseline_name": "play-screen-ready",
+    "max_diff_ratio": 0.05
+  }
+}

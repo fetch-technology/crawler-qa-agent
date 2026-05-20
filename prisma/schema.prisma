@@ -1,0 +1,103 @@
+// Prisma schema mirroring §10 of docs/ai_powered_slot_game_testing.md.
+//
+// All DB writes are env-gated by DATABASE_URL. The filesystem layout under
+// fixtures/ remains the source of truth; this DB is an additive index for
+// queryable history + dashboard joins.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model TestRun {
+  id              String            @id @default(uuid())
+  gameCode        String            @map("game_code")
+  url             String?
+  status          String // "queued" | "running" | "completed" | "failed" | "cancelled"
+  totalSpins      Int               @default(0) @map("total_spins")
+  completedSpins  Int               @default(0) @map("completed_spins")
+  betPerLine      Float?            @map("bet_per_line")
+  lines           Int?
+  startedAt       DateTime?         @map("started_at")
+  endedAt         DateTime?         @map("ended_at")
+  createdAt       DateTime          @default(now()) @map("created_at")
+  /// Optional AI-generated bug summary (filled in Phase 7).
+  summaryMd       String?           @map("summary_md") @db.Text
+  spinResults     SpinResult[]
+  validationErrors ValidationError[]
+  statReport      StatReport?
+
+  @@index([gameCode, createdAt])
+  @@index([status])
+  @@map("test_runs")
+}
+
+model SpinResult {
+  id             String   @id @default(uuid())
+  testRunId      String   @map("test_run_id")
+  roundIndex     Int      @map("round_index")
+  counter        Int?
+  gameCode       String   @map("game_code")
+  betPerLine     Float?   @map("bet_per_line")
+  lines          Int?
+  totalBet       Float    @map("total_bet")
+  serverWin      Float?   @map("server_win")
+  totalWin       Float    @map("total_win")
+  balanceBefore  Float?   @map("balance_before")
+  balanceAfter   Float    @map("balance_after")
+  symbols        String?  @db.Text
+  reelsJson      String?  @map("reels_json") @db.Text
+  rawRequest     String?  @map("raw_request") @db.Text
+  rawResponse    String?  @map("raw_response") @db.Text
+  isFreeSpin     Boolean  @default(false) @map("is_free_spin")
+  hasBonus       Boolean  @default(false) @map("has_bonus")
+  createdAt      DateTime @default(now()) @map("created_at")
+  testRun        TestRun  @relation(fields: [testRunId], references: [id], onDelete: Cascade)
+  validationErrors ValidationError[]
+
+  @@index([testRunId, roundIndex])
+  @@map("spin_results")
+}
+
+model ValidationError {
+  id             String      @id @default(uuid())
+  testRunId      String      @map("test_run_id")
+  spinResultId   String?     @map("spin_result_id")
+  errorType      String      @map("error_type")
+  severity       String      @default("error")
+  expectedValue  String?     @map("expected_value") @db.Text
+  actualValue    String?     @map("actual_value") @db.Text
+  message        String      @db.Text
+  screenshotUrl  String?     @map("screenshot_url")
+  createdAt      DateTime    @default(now()) @map("created_at")
+  testRun        TestRun     @relation(fields: [testRunId], references: [id], onDelete: Cascade)
+  spinResult     SpinResult? @relation(fields: [spinResultId], references: [id], onDelete: SetNull)
+
+  @@index([testRunId, errorType])
+  @@map("validation_errors")
+}
+
+model StatReport {
+  id                String   @id @default(uuid())
+  testRunId         String   @unique @map("test_run_id")
+  totalSpins        Int      @map("total_spins")
+  totalBet          Float    @map("total_bet")
+  totalWin          Float    @map("total_win")
+  rtp               Float?
+  hitRate           Float?   @map("hit_rate")
+  maxWin            Float?   @map("max_win")
+  averageWin        Float?   @map("average_win")
+  volatility        Float?
+  volatilityBand    String?  @map("volatility_band")
+  rtpConfidence95   Float?   @map("rtp_confidence_95")
+  /// JSON blob of featureFrequency, symbolDistribution, winDistribution.
+  metricsJson       String   @map("metrics_json") @db.Text
+  createdAt         DateTime @default(now()) @map("created_at")
+  testRun           TestRun  @relation(fields: [testRunId], references: [id], onDelete: Cascade)
+
+  @@map("stat_reports")
+}

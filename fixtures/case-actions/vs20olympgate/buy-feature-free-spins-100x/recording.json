@@ -1,0 +1,16 @@
+{
+  "slug": "vs20olympgate",
+  "case_id": "buy-feature-free-spins-100x",
+  "recorded_at": "2026-05-19T13:32:07.616Z",
+  "instructions": [
+    "click the 'Buy Free Spins' button (usually shows '100x' label on left/bottom side of game)",
+    "click the confirm button in the buy feature popup to commit the purchase"
+  ],
+  "clicks": [],
+  "baseline_png": "fixtures/case-actions/vs20olympgate/buy-feature-free-spins-100x/baseline.png",
+  "max_diff_ratio": 0.05,
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  }
+}

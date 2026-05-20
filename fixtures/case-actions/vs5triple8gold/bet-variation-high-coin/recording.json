@@ -1,0 +1,32 @@
+{
+  "slug": "vs5triple8gold",
+  "case_id": "bet-variation-high-coin",
+  "recorded_at": "2026-05-20T02:25:59.505Z",
+  "instructions": [
+    "Step 1: Locate the bet display in the bottom-right area.",
+    "Step 2: Click the '+' button labeled 'Bet Increase' repeatedly until the bet display shows '150.00' (coin 30 × 5 paylines).",
+    "Step 3: Verify the bet display reads exactly '150.00' (within ±1 ladder step tolerance)."
+  ],
+  "clicks": [
+    {
+      "x": 1294,
+      "y": 815,
+      "delay_ms": 10304,
+      "reason": "Plus button to increase bet",
+      "step": 1
+    },
+    {
+      "x": 362,
+      "y": 590,
+      "delay_ms": 5498,
+      "reason": "Click $150.00 bet option",
+      "step": 2
+    }
+  ],
+  "baseline_png": "fixtures/case-actions/vs5triple8gold/bet-variation-high-coin/baseline.png",
+  "max_diff_ratio": 0.05,
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  }
+}

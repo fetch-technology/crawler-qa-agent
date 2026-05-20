@@ -1,0 +1,1 @@
+{"betSize":0.05,"betLevel":1,"walletType":"CASH","brandCode":"rcdemo","gameCode":"fiesta-magenta","playerToken":"WaN0YdjiIr9sdC0RB6pkq2aj_BRL"}

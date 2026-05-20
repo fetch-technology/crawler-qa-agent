@@ -1,0 +1,17 @@
+{
+  "slug": "vs20rnriches",
+  "case_id": "buy-feature-purchase-2",
+  "recorded_at": "2026-05-20T07:04:56.095Z",
+  "instructions": [
+    "click the Buy Feature button",
+    "select the intended buy option shown for this case",
+    "click confirm in the buy dialog"
+  ],
+  "clicks": [],
+  "baseline_png": "fixtures/case-actions/vs20rnriches/buy-feature-purchase-2/baseline.png",
+  "max_diff_ratio": 0.05,
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  }
+}

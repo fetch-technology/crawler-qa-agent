@@ -1,0 +1,26 @@
+[
+  {
+    "n": 1,
+    "filename": "001-pregame-record-turbo-spin-toggle-00.png",
+    "label": "pregame-record-turbo-spin-toggle-00",
+    "scope": null,
+    "caseScope": null,
+    "timestamp": "2026-05-19T18:43:05.088Z"
+  },
+  {
+    "n": 2,
+    "filename": "002-pregame-record-options-sound-toggle-00.png",
+    "label": "pregame-record-options-sound-toggle-00",
+    "scope": null,
+    "caseScope": null,
+    "timestamp": "2026-05-19T18:43:22.200Z"
+  },
+  {
+    "n": 3,
+    "filename": "003-pregame-record-history-normal-bet-00.png",
+    "label": "pregame-record-history-normal-bet-00",
+    "scope": null,
+    "caseScope": null,
+    "timestamp": "2026-05-19T18:43:49.450Z"
+  }
+]
