@@ -1,0 +1,385 @@
+{
+  "caseId": "logic-version-captured",
+  "name": "Meta — logic version field present (sver)",
+  "category": "meta",
+  "severity": "minor",
+  "status": "pass",
+  "actionsExecuted": 1,
+  "assertions": [
+    {
+      "id": "meta-round-id-present",
+      "description": "Spin response includes a non-empty round identifier for traceability",
+      "pass": true,
+      "outcome": "PASS_LOW",
+      "confidence": 0.65,
+      "signals": [
+        {
+          "name": "api",
+          "value": true,
+          "weight": 0.35,
+          "source": "parser/captured-spin",
+          "observed": 1
+        },
+        {
+          "name": "network",
+          "value": true,
+          "weight": 0.1,
+          "source": "page.on(response)",
+          "observed": 1
+        },
+        {
+          "name": "ui_ocr",
+          "value": false,
+          "weight": 0.25
+        },
+        {
+          "name": "state",
+          "value": false,
+          "weight": 0.1
+        },
+        {
+          "name": "rule",
+          "value": true,
+          "weight": 0.2,
+          "source": "assertion:meta-round-id-present",
+          "observed": "predicate=true"
+        }
+      ]
+    },
+    {
+      "id": "meta-balance-numeric",
+      "description": "Ending balance is a finite number (response was parsed correctly)",
+      "pass": true,
+      "outcome": "PASS_LOW",
+      "confidence": 0.8,
+      "signals": [
+        {
+          "name": "api",
+          "value": true,
+          "weight": 0.35,
+          "observed": 99995672.8,
+          "expected": 99995672.8,
+          "source": "parser/balanceAfter"
+        },
+        {
+          "name": "rule",
+          "value": true,
+          "weight": 0.2,
+          "observed": "balance formula",
+          "expected": "balanceAfter == bb - bet + win"
+        },
+        {
+          "name": "ui_ocr",
+          "value": true,
+          "weight": 0.25,
+          "observed": 99995672.807,
+          "expected": 99995672.8,
+          "source": "ocr/balanceArea"
+        }
+      ]
+    },
+    {
+      "id": "meta-bet-numeric",
+      "description": "Bet amount is a non-negative finite number",
+      "pass": true,
+      "outcome": "PASS_LOW",
+      "confidence": 0.65,
+      "signals": [
+        {
+          "name": "api",
+          "value": true,
+          "weight": 0.35,
+          "source": "parser/captured-spin",
+          "observed": 1
+        },
+        {
+          "name": "network",
+          "value": true,
+          "weight": 0.1,
+          "source": "page.on(response)",
+          "observed": 1
+        },
+        {
+          "name": "ui_ocr",
+          "value": false,
+          "weight": 0.25
+        },
+        {
+          "name": "state",
+          "value": false,
+          "weight": 0.1
+        },
+        {
+          "name": "rule",
+          "value": true,
+          "weight": 0.2,
+          "source": "assertion:meta-bet-numeric",
+          "observed": "predicate=true"
+        }
+      ]
+    },
+    {
+      "id": "meta-no-mapping-warnings",
+      "description": "No network mapping or field-extraction warnings emitted during the spin",
+      "pass": true,
+      "outcome": "PASS_LOW",
+      "confidence": 0.3,
+      "signals": [
+        {
+          "name": "api",
+          "value": false,
+          "weight": 0.35
+        },
+        {
+          "name": "network",
+          "value": true,
+          "weight": 0.1,
+          "source": "page.on(response)",
+          "observed": 1
+        },
+        {
+          "name": "ui_ocr",
+          "value": false,
+          "weight": 0.25
+        },
+        {
+          "name": "state",
+          "value": false,
+          "weight": 0.1
+        },
+        {
+          "name": "rule",
+          "value": true,
+          "weight": 0.2,
+          "source": "assertion:meta-no-mapping-warnings",
+          "observed": "predicate=true"
+        }
+      ]
+    },
+    {
+      "id": "_auto_ui_balance_matches_api",
+      "description": "UI-displayed balance matches API-settled balance (OCR cross-check)",
+      "pass": true,
+      "outcome": "PASS_LOW",
+      "confidence": 0.8,
+      "signals": [
+        {
+          "name": "ui_ocr",
+          "value": true,
+          "weight": 0.25
+        },
+        {
+          "name": "api",
+          "value": true,
+          "weight": 0.35
+        },
+        {
+          "name": "rule",
+          "value": true,
+          "weight": 0.2
+        }
+      ]
+    }
+  ],
+  "spin": {
+    "bet": 5,
+    "win": 0,
+    "balanceBefore": 99995677.8,
+    "balanceAfter": 99995672.8,
+    "state": "NORMAL",
+    "roundId": "req-1088-2"
+  },
+  "durationMs": 11684,
+  "spinsCount": 1,
+  "screenshotPath": "fixtures/registry/vswaysmahwin2/case-evidence/logic-version-captured.png",
+  "ocrSnapshots": [
+    {
+      "region": "balance",
+      "bbox": {
+        "x": 292,
+        "y": 651,
+        "width": 207,
+        "height": 27
+      },
+      "text": "$99,995,672.80 7%",
+      "parsed": 99995672.807,
+      "durationMs": 66,
+      "bboxScreenshotPath": "fixtures/registry/vswaysmahwin2/case-evidence/logic-version-captured.balance.png"
+    },
+    {
+      "region": "bet",
+      "bbox": {
+        "x": 292,
+        "y": 671,
+        "width": 103,
+        "height": 25
+      },
+      "text": "$5.00",
+      "parsed": 5,
+      "durationMs": 42,
+      "bboxScreenshotPath": "fixtures/registry/vswaysmahwin2/case-evidence/logic-version-captured.bet.png"
+    },
+    {
+      "region": "last_win",
+      "bbox": {
+        "x": 628,
+        "y": 627,
+        "width": 165,
+        "height": 54
+      },
+      "text": "",
+      "parsed": null,
+      "durationMs": 43,
+      "bboxScreenshotPath": "fixtures/registry/vswaysmahwin2/case-evidence/logic-version-captured.last_win.png"
+    }
+  ],
+  "actionLog": [
+    {
+      "kind": "spin",
+      "durationMs": 502,
+      "success": true
+    }
+  ],
+  "signalRollup": [
+    {
+      "signal": "api",
+      "pass": true,
+      "checks": [
+        {
+          "field": "spin captured",
+          "expected": "non-empty roundId",
+          "actual": "req-1088-2",
+          "match": true,
+          "source": "parser/captured-spin"
+        },
+        {
+          "field": "bet",
+          "expected": "> 0 (bet was applied)",
+          "actual": 5,
+          "match": true,
+          "source": "parser/spin.bet"
+        },
+        {
+          "field": "win",
+          "expected": ">= 0 (non-negative)",
+          "actual": 0,
+          "match": true,
+          "source": "parser/spin.win"
+        },
+        {
+          "field": "balanceAfter",
+          "expected": "finite number",
+          "actual": 99995672.8,
+          "match": true,
+          "source": "parser/spin.balanceAfter"
+        }
+      ]
+    },
+    {
+      "signal": "ui_ocr",
+      "pass": true,
+      "checks": [
+        {
+          "field": "balance",
+          "expected": 99995672.8,
+          "actual": 99995672.807,
+          "match": true,
+          "source": "ocr/balanceArea ↔ parser/balanceAfter"
+        },
+        {
+          "field": "bet",
+          "expected": 5,
+          "actual": 5,
+          "match": true,
+          "source": "ocr/betArea ↔ parser/spin.bet"
+        },
+        {
+          "field": "win",
+          "expected": 0,
+          "actual": 0,
+          "match": true,
+          "source": "ocr/winArea ↔ parser/spin.win"
+        }
+      ],
+      "detail": "3/3 UI widgets match API"
+    },
+    {
+      "signal": "network",
+      "pass": true,
+      "checks": [
+        {
+          "field": "captured spins",
+          "expected": ">= 1",
+          "actual": 1,
+          "match": true,
+          "source": "page.on(response)"
+        },
+        {
+          "field": "no error warnings",
+          "expected": "0 errors/failures/debounced clicks",
+          "actual": 0,
+          "match": true,
+          "source": "case-executor warnings"
+        }
+      ]
+    },
+    {
+      "signal": "state",
+      "pass": true,
+      "checks": [
+        {
+          "field": "stayed on MAIN (or allowed interrupts)",
+          "expected": "all transitions to MAIN | allowed",
+          "actual": "all clean",
+          "match": true,
+          "source": "stateTimeline"
+        }
+      ]
+    },
+    {
+      "signal": "rule",
+      "pass": true,
+      "checks": [
+        {
+          "field": "balance arithmetic",
+          "expected": 99995672.8,
+          "actual": 99995672.8,
+          "match": true,
+          "source": "balanceAfter == balanceBefore - bet + win"
+        }
+      ]
+    }
+  ],
+  "networkLogPath": "fixtures/registry/vswaysmahwin2/case-evidence/logic-version-captured.network.jsonl",
+  "networkSummary": [
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": true
+    }
+  ],
+  "parserDiagnostic": {
+    "parserKind": "PragmaticParser",
+    "betMultiplier": 20,
+    "requestFields": {
+      "action": "doSpin",
+      "symbol": "vswaysmahwin2",
+      "c": 0.25,
+      "l": 1024,
+      "sInfo": "t",
+      "bl": 0,
+      "index": 1088,
+      "counter": 2,
+      "repeat": 0,
+      "mgckey": "demo@SFTIqmxdilH7qHteQ8Fij529_USD"
+    },
+    "formulaUsed": "c × M = 0.25 × 20",
+    "parsedBet": 5,
+    "expectedBet": 5,
+    "mismatch": false
+  },
+  "outcome": "PASS_LOW",
+  "confidence": 1
+}

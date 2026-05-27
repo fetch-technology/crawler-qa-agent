@@ -1,0 +1,407 @@
+{
+  "caseId": "options-ambient-music-toggle",
+  "name": "Ambient Music toggle",
+  "category": "options",
+  "severity": "minor",
+  "status": "pass",
+  "actionsExecuted": 8,
+  "assertions": [
+    {
+      "id": "spin-resolved-after-toggle",
+      "description": "Spin still resolves cleanly after ambient music toggle",
+      "pass": true,
+      "outcome": "PASS_LOW",
+      "confidence": 0.8,
+      "signals": [
+        {
+          "name": "api",
+          "value": true,
+          "weight": 0.35,
+          "observed": 99995807.55,
+          "expected": 99995807.55,
+          "source": "parser/balanceAfter"
+        },
+        {
+          "name": "rule",
+          "value": true,
+          "weight": 0.2,
+          "observed": "balance formula",
+          "expected": "balanceAfter == bb - bet + win"
+        },
+        {
+          "name": "ui_ocr",
+          "value": true,
+          "weight": 0.25,
+          "observed": 99995807.55,
+          "expected": 99995807.55,
+          "source": "ocr/balanceArea"
+        }
+      ]
+    },
+    {
+      "id": "no-error-warnings",
+      "description": "No setup or runtime errors emitted by the engine during toggle + spin",
+      "pass": true,
+      "outcome": "PASS_LOW",
+      "confidence": 0.3,
+      "signals": [
+        {
+          "name": "api",
+          "value": false,
+          "weight": 0.35
+        },
+        {
+          "name": "network",
+          "value": true,
+          "weight": 0.1,
+          "source": "page.on(response)",
+          "observed": 1
+        },
+        {
+          "name": "ui_ocr",
+          "value": false,
+          "weight": 0.25
+        },
+        {
+          "name": "state",
+          "value": false,
+          "weight": 0.1
+        },
+        {
+          "name": "rule",
+          "value": true,
+          "weight": 0.2,
+          "source": "assertion:no-error-warnings",
+          "observed": "predicate=true"
+        }
+      ]
+    },
+    {
+      "id": "balance-arithmetic-holds",
+      "description": "Per-spin balance arithmetic holds (skip first spin where startingBalance is null)",
+      "pass": true,
+      "outcome": "PASS_LOW",
+      "confidence": 0.8,
+      "signals": [
+        {
+          "name": "api",
+          "value": true,
+          "weight": 0.35,
+          "observed": 99995807.55,
+          "expected": 99995807.55,
+          "source": "parser/balanceAfter"
+        },
+        {
+          "name": "rule",
+          "value": true,
+          "weight": 0.2,
+          "observed": "balance formula",
+          "expected": "balanceAfter == bb - bet + win"
+        },
+        {
+          "name": "ui_ocr",
+          "value": true,
+          "weight": 0.25,
+          "observed": 99995807.55,
+          "expected": 99995807.55,
+          "source": "ocr/balanceArea"
+        }
+      ]
+    },
+    {
+      "id": "_auto_ui_balance_matches_api",
+      "description": "UI-displayed balance matches API-settled balance (OCR cross-check)",
+      "pass": true,
+      "outcome": "PASS_LOW",
+      "confidence": 0.8,
+      "signals": [
+        {
+          "name": "ui_ocr",
+          "value": true,
+          "weight": 0.25
+        },
+        {
+          "name": "api",
+          "value": true,
+          "weight": 0.35
+        },
+        {
+          "name": "rule",
+          "value": true,
+          "weight": 0.2
+        }
+      ]
+    }
+  ],
+  "spin": {
+    "bet": 0.5,
+    "win": 0.45,
+    "balanceBefore": 99995807.6,
+    "balanceAfter": 99995807.55,
+    "state": "NORMAL",
+    "roundId": "req-994-2"
+  },
+  "durationMs": 20318,
+  "spinsCount": 1,
+  "screenshotPath": "fixtures/registry/vswaysmahwin2/case-evidence/options-ambient-music-toggle.png",
+  "ocrSnapshots": [
+    {
+      "region": "balance",
+      "bbox": {
+        "x": 292,
+        "y": 651,
+        "width": 207,
+        "height": 27
+      },
+      "text": "$99,995,807.55",
+      "parsed": 99995807.55,
+      "durationMs": 91,
+      "bboxScreenshotPath": "fixtures/registry/vswaysmahwin2/case-evidence/options-ambient-music-toggle.balance.png"
+    },
+    {
+      "region": "bet",
+      "bbox": {
+        "x": 292,
+        "y": 671,
+        "width": 103,
+        "height": 25
+      },
+      "text": "$0.50",
+      "parsed": 0.5,
+      "durationMs": 49,
+      "bboxScreenshotPath": "fixtures/registry/vswaysmahwin2/case-evidence/options-ambient-music-toggle.bet.png"
+    },
+    {
+      "region": "last_win",
+      "bbox": {
+        "x": 628,
+        "y": 627,
+        "width": 165,
+        "height": 54
+      },
+      "text": "$0.45",
+      "parsed": 0.45,
+      "durationMs": 58,
+      "bboxScreenshotPath": "fixtures/registry/vswaysmahwin2/case-evidence/options-ambient-music-toggle.last_win.png"
+    }
+  ],
+  "actionLog": [
+    {
+      "kind": "click",
+      "target": "menuButton",
+      "durationMs": 656,
+      "success": true
+    },
+    {
+      "kind": "wait_ms",
+      "target": "1500ms",
+      "durationMs": 1502,
+      "success": true
+    },
+    {
+      "kind": "click",
+      "target": "menuButton__ambientMusicToggle",
+      "durationMs": 653,
+      "success": true
+    },
+    {
+      "kind": "wait_ms",
+      "target": "500ms",
+      "durationMs": 503,
+      "success": true
+    },
+    {
+      "kind": "click",
+      "target": "menuButton__closeButton",
+      "durationMs": 655,
+      "success": true
+    },
+    {
+      "kind": "wait_ms",
+      "target": "1500ms",
+      "durationMs": 1502,
+      "success": true
+    },
+    {
+      "kind": "spin",
+      "durationMs": 504,
+      "success": true
+    },
+    {
+      "kind": "wait_ms",
+      "target": "2500ms",
+      "durationMs": 2502,
+      "success": true
+    }
+  ],
+  "signalRollup": [
+    {
+      "signal": "api",
+      "pass": true,
+      "checks": [
+        {
+          "field": "spin captured",
+          "expected": "non-empty roundId",
+          "actual": "req-994-2",
+          "match": true,
+          "source": "parser/captured-spin"
+        },
+        {
+          "field": "bet",
+          "expected": "> 0 (bet was applied)",
+          "actual": 0.5,
+          "match": true,
+          "source": "parser/spin.bet"
+        },
+        {
+          "field": "win",
+          "expected": ">= 0 (non-negative)",
+          "actual": 0.45,
+          "match": true,
+          "source": "parser/spin.win"
+        },
+        {
+          "field": "balanceAfter",
+          "expected": "finite number",
+          "actual": 99995807.55,
+          "match": true,
+          "source": "parser/spin.balanceAfter"
+        }
+      ]
+    },
+    {
+      "signal": "ui_ocr",
+      "pass": true,
+      "checks": [
+        {
+          "field": "balance",
+          "expected": 99995807.55,
+          "actual": 99995807.55,
+          "match": true,
+          "source": "ocr/balanceArea ↔ parser/balanceAfter"
+        },
+        {
+          "field": "bet",
+          "expected": 0.5,
+          "actual": 0.5,
+          "match": true,
+          "source": "ocr/betArea ↔ parser/spin.bet"
+        },
+        {
+          "field": "win",
+          "expected": 0.45,
+          "actual": 0.45,
+          "match": true,
+          "source": "ocr/winArea ↔ parser/spin.win"
+        }
+      ],
+      "detail": "3/3 UI widgets match API"
+    },
+    {
+      "signal": "network",
+      "pass": true,
+      "checks": [
+        {
+          "field": "captured spins",
+          "expected": ">= 1",
+          "actual": 1,
+          "match": true,
+          "source": "page.on(response)"
+        },
+        {
+          "field": "no error warnings",
+          "expected": "0 errors/failures/debounced clicks",
+          "actual": 0,
+          "match": true,
+          "source": "case-executor warnings"
+        }
+      ]
+    },
+    {
+      "signal": "state",
+      "pass": true,
+      "checks": [
+        {
+          "field": "stayed on MAIN (or allowed interrupts)",
+          "expected": "all transitions to MAIN | allowed",
+          "actual": "all clean",
+          "match": true,
+          "source": "stateTimeline"
+        }
+      ]
+    },
+    {
+      "signal": "rule",
+      "pass": true,
+      "checks": [
+        {
+          "field": "balance arithmetic",
+          "expected": 99995807.55,
+          "actual": 99995807.55,
+          "match": true,
+          "source": "balanceAfter == balanceBefore - bet + win"
+        }
+      ]
+    }
+  ],
+  "networkLogPath": "fixtures/registry/vswaysmahwin2/case-evidence/options-ambient-music-toggle.network.jsonl",
+  "networkSummary": [
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/saveSettings.do",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": false
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": true
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": true
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": true
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": false
+    }
+  ],
+  "parserDiagnostic": {
+    "parserKind": "PragmaticParser",
+    "betMultiplier": 20,
+    "requestFields": {
+      "action": "doSpin",
+      "symbol": "vswaysmahwin2",
+      "c": 0.025,
+      "l": 1024,
+      "sInfo": "t",
+      "bl": 0,
+      "index": 994,
+      "counter": 2,
+      "repeat": 0,
+      "mgckey": "demo@SFTIqmxdilH7qHteQ8Fij529_USD"
+    },
+    "formulaUsed": "c × M = 0.025 × 20",
+    "parsedBet": 0.5,
+    "expectedBet": 0.5,
+    "mismatch": false
+  },
+  "outcome": "PASS_LOW",
+  "confidence": 1
+}

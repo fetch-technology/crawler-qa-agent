@@ -599,6 +599,39 @@ export async function doAutoSpin(
   const startCount = collector.spins.length;
   const store = getScreenshotStore();
   const snum = String(startCount + 1).padStart(2, "0");
+  const waitForRoundSettled = async (): Promise<SpinResponse> => {
+    const timeoutMs = Number(process.env.DO_AUTO_SPIN_SETTLE_TIMEOUT_MS ?? 20_000);
+    const quietMs = Number(process.env.DO_AUTO_SPIN_SETTLE_QUIET_MS ?? 700);
+    const started = Date.now();
+    let lastLen = collector.spins.length;
+    let lastGrowthAt = Date.now();
+
+    while (Date.now() - started < timeoutMs) {
+      const len = collector.spins.length;
+      if (len > lastLen) {
+        lastLen = len;
+        lastGrowthAt = Date.now();
+      }
+      if (len > startCount) {
+        const latest = collector.spins[len - 1] as Record<string, unknown>;
+        const na = String(latest?.na ?? "");
+        const rsMore = Number(latest?.rs_more ?? 0);
+        const chainContinuing = na === "c" || (Number.isFinite(rsMore) && rsMore > 0);
+        if (!chainContinuing && Date.now() - lastGrowthAt >= quietMs) {
+          return collector.last();
+        }
+      }
+      await page.waitForTimeout(120);
+    }
+
+    // Timeout fallback: still return the latest captured spin instead of hard-failing.
+    return collector.last();
+  };
+  const finalizeSpin = async (): Promise<SpinResponse> => {
+    const settled = await waitForRoundSettled();
+    await store.take(page, `spin-${snum}-after`);
+    return settled;
+  };
 
   // Trace lại các action AI đã thử để in chi tiết khi throw
   const actionTrace: string[] = [];
@@ -609,17 +642,15 @@ export async function doAutoSpin(
   if (await probeSpinAroundHint(page, collector.spinButtonHint, 5)) {
     await page.waitForTimeout(2_000);
     if (collector.spins.length > startCount) {
-      await store.take(page, `spin-${snum}-after`);
-      return collector.last();
+      return await finalizeSpin();
     }
   }
 
   for (let i = 0; i < maxIter; i++) {
     // Nếu đã có spin mới thì return luôn
     if (collector.spins.length > startCount) {
-      await page.waitForTimeout(2_500);
-      await store.take(page, `spin-${snum}-after`);
-      return collector.last();
+      await page.waitForTimeout(400);
+      return await finalizeSpin();
     }
 
     // If still no progress, periodically try deterministic probe first to
@@ -630,8 +661,7 @@ export async function doAutoSpin(
       if (hit) {
         await page.waitForTimeout(2_000);
         if (collector.spins.length > startCount) {
-          await store.take(page, `spin-${snum}-after`);
-          return collector.last();
+          return await finalizeSpin();
         }
       }
     }
@@ -709,15 +739,13 @@ export async function doAutoSpin(
       await page.waitForTimeout(2_000);
 
       if (collector.spins.length > startCount) {
-        await store.take(page, `spin-${snum}-after`);
-        return collector.last();
+        return await finalizeSpin();
       }
     } else if (decision.action === "wait") {
       await page.waitForTimeout(2_000);
     } else if (decision.action === "spin_done") {
       if (collector.spins.length > startCount) {
-        await store.take(page, `spin-${snum}-after`);
-        return collector.last();
+        return await finalizeSpin();
       }
     } else if (decision.action === "error") {
       await store.take(page, `spin-${snum}-error`);

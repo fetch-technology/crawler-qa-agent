@@ -1,0 +1,40 @@
+{
+  "text": "{\n  \"spinButton\": { \"x\": 1065, \"y\": 655, \"confidence\": 0.97 },\n  \"autoButton\": { \"x\": 1065, \"y\": 700, \"confidence\": 0.85 },\n  \"buyBonusButton\": { \"x\": 138, \"y\": 225, \"confidence\": 0.95 },\n  \"paytableButton\": { \"x\": 217, \"y\": 658, \"confidence\": 0.9 },\n  \"menuButton\": { \"x\": 217, \"y\": 632, \"confidence\": 0.9 },\n  \"betPlus\": { \"x\": 1160, \"y\": 655, \"confidence\": 0.92 },\n  \"betMinus\": { \"x\": 970, \"y\": 655, \"confidence\": 0.92 }\n}",
+  "parsed": {
+    "spinButton": {
+      "x": 1065,
+      "y": 655,
+      "confidence": 0.97
+    },
+    "autoButton": {
+      "x": 1065,
+      "y": 700,
+      "confidence": 0.85
+    },
+    "buyBonusButton": {
+      "x": 138,
+      "y": 225,
+      "confidence": 0.95
+    },
+    "paytableButton": {
+      "x": 217,
+      "y": 658,
+      "confidence": 0.9
+    },
+    "menuButton": {
+      "x": 217,
+      "y": 632,
+      "confidence": 0.9
+    },
+    "betPlus": {
+      "x": 1160,
+      "y": 655,
+      "confidence": 0.92
+    },
+    "betMinus": {
+      "x": 970,
+      "y": 655,
+      "confidence": 0.92
+    }
+  }
+}

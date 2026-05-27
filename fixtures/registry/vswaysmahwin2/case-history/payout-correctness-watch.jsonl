@@ -1,0 +1,5 @@
+{"ranAt":"2026-05-27T08:27:21.259Z","outcome":"PASS_LOW","confidence":1,"status":"fail","durationMs":301051,"spinsCount":43,"reason":"Sum of bets/wins reconciles to final balance change (within ±0.01)"}
+{"ranAt":"2026-05-27T09:30:17.087Z","outcome":"PASS_LOW","confidence":1,"status":"pass","durationMs":201695,"spinsCount":30}
+{"ranAt":"2026-05-27T14:57:08.032Z","outcome":"PASS_LOW","confidence":0.8999999999999999,"status":"fail","durationMs":192061,"spinsCount":44,"reason":"Sum of bets/wins reconciles to final balance change (within ±0.01)"}
+{"ranAt":"2026-05-27T17:24:57.963Z","outcome":"PASS_LOW","confidence":1,"status":"fail","durationMs":228454,"spinsCount":55,"reason":"Sum of bets/wins reconciles to final balance change (within ±0.01)"}
+{"ranAt":"2026-05-27T17:27:42.097Z","outcome":"PASS_LOW","confidence":1,"status":"pass","durationMs":164131,"spinsCount":30}

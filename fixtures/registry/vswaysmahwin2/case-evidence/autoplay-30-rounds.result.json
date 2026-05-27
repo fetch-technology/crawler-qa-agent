@@ -1,0 +1,628 @@
+{
+  "caseId": "autoplay-30-rounds",
+  "name": "Autoplay 30 rounds — medium batch",
+  "category": "autoplay",
+  "severity": "major",
+  "status": "pass",
+  "actionsExecuted": 6,
+  "assertions": [
+    {
+      "id": "autoplay-30-round-count",
+      "description": "At least 30 round-end spins captured (autoplay batch fulfilled)",
+      "pass": true,
+      "outcome": "PASS_LOW",
+      "confidence": 0.65,
+      "signals": [
+        {
+          "name": "api",
+          "value": true,
+          "weight": 0.35,
+          "source": "parser/captured-spin",
+          "observed": 30
+        },
+        {
+          "name": "network",
+          "value": true,
+          "weight": 0.1,
+          "source": "page.on(response)",
+          "observed": 30
+        },
+        {
+          "name": "ui_ocr",
+          "value": false,
+          "weight": 0.25
+        },
+        {
+          "name": "state",
+          "value": false,
+          "weight": 0.1
+        },
+        {
+          "name": "rule",
+          "value": true,
+          "weight": 0.2,
+          "source": "assertion:autoplay-30-round-count",
+          "observed": "predicate=true"
+        }
+      ]
+    },
+    {
+      "id": "autoplay-30-unique-ids",
+      "description": "Every round-end spin has a unique roundId",
+      "pass": true,
+      "outcome": "PASS_LOW",
+      "confidence": 0.65,
+      "signals": [
+        {
+          "name": "api",
+          "value": true,
+          "weight": 0.35,
+          "source": "parser/captured-spin",
+          "observed": 30
+        },
+        {
+          "name": "network",
+          "value": true,
+          "weight": 0.1,
+          "source": "page.on(response)",
+          "observed": 30
+        },
+        {
+          "name": "ui_ocr",
+          "value": false,
+          "weight": 0.25
+        },
+        {
+          "name": "state",
+          "value": false,
+          "weight": 0.1
+        },
+        {
+          "name": "rule",
+          "value": true,
+          "weight": 0.2,
+          "source": "assertion:autoplay-30-unique-ids",
+          "observed": "predicate=true"
+        }
+      ]
+    },
+    {
+      "id": "autoplay-30-cumulative-balance",
+      "description": "End-to-end balance reconciles across 30 rounds",
+      "pass": true,
+      "outcome": "PASS_LOW",
+      "confidence": 0.8,
+      "signals": [
+        {
+          "name": "api",
+          "value": true,
+          "weight": 0.35,
+          "observed": 99995736.54,
+          "expected": 99995736.53999999,
+          "source": "parser/balanceAfter"
+        },
+        {
+          "name": "rule",
+          "value": true,
+          "weight": 0.2,
+          "observed": "balance formula",
+          "expected": "balanceAfter == bb - bet + win"
+        },
+        {
+          "name": "ui_ocr",
+          "value": true,
+          "weight": 0.25,
+          "observed": 99995736.549,
+          "expected": 99995736.54,
+          "source": "ocr/balanceArea"
+        }
+      ]
+    },
+    {
+      "id": "autoplay-30-win-shape-valid",
+      "description": "All winAmounts are well-formed non-negative numbers across long batch",
+      "pass": true,
+      "outcome": "PASS_LOW",
+      "confidence": 0.65,
+      "signals": [
+        {
+          "name": "api",
+          "value": true,
+          "weight": 0.35,
+          "source": "parser/captured-spin",
+          "observed": 30
+        },
+        {
+          "name": "network",
+          "value": true,
+          "weight": 0.1,
+          "source": "page.on(response)",
+          "observed": 30
+        },
+        {
+          "name": "ui_ocr",
+          "value": false,
+          "weight": 0.25
+        },
+        {
+          "name": "state",
+          "value": false,
+          "weight": 0.1
+        },
+        {
+          "name": "rule",
+          "value": true,
+          "weight": 0.2,
+          "source": "assertion:autoplay-30-win-shape-valid",
+          "observed": "predicate=true"
+        }
+      ]
+    },
+    {
+      "id": "autoplay-30-no-debounced",
+      "description": "No spin clicks dropped or blocked during 30-round autoplay",
+      "pass": true,
+      "outcome": "PASS_LOW",
+      "confidence": 0.65,
+      "signals": [
+        {
+          "name": "api",
+          "value": true,
+          "weight": 0.35,
+          "source": "parser/captured-spin",
+          "observed": 30
+        },
+        {
+          "name": "network",
+          "value": true,
+          "weight": 0.1,
+          "source": "page.on(response)",
+          "observed": 30
+        },
+        {
+          "name": "ui_ocr",
+          "value": false,
+          "weight": 0.25
+        },
+        {
+          "name": "state",
+          "value": false,
+          "weight": 0.1
+        },
+        {
+          "name": "rule",
+          "value": true,
+          "weight": 0.2,
+          "source": "assertion:autoplay-30-no-debounced",
+          "observed": "predicate=true"
+        }
+      ]
+    },
+    {
+      "id": "_auto_no_lost_spins",
+      "description": "No spin clicks reported as debounced or dropped during autoplay batch",
+      "pass": true,
+      "outcome": "PASS_LOW",
+      "confidence": 0.3,
+      "signals": [
+        {
+          "name": "network",
+          "value": true,
+          "weight": 0.1
+        },
+        {
+          "name": "rule",
+          "value": true,
+          "weight": 0.2
+        }
+      ]
+    },
+    {
+      "id": "_auto_round_ids_unique",
+      "description": "Every captured spin has a unique roundId (30 spins)",
+      "pass": true,
+      "outcome": "PASS_LOW",
+      "confidence": 0.55,
+      "signals": [
+        {
+          "name": "api",
+          "value": true,
+          "weight": 0.35
+        },
+        {
+          "name": "rule",
+          "value": true,
+          "weight": 0.2
+        }
+      ]
+    },
+    {
+      "id": "_auto_ui_balance_matches_api",
+      "description": "UI-displayed balance matches API-settled balance (OCR cross-check)",
+      "pass": true,
+      "outcome": "PASS_LOW",
+      "confidence": 0.8,
+      "signals": [
+        {
+          "name": "ui_ocr",
+          "value": true,
+          "weight": 0.25
+        },
+        {
+          "name": "api",
+          "value": true,
+          "weight": 0.35
+        },
+        {
+          "name": "rule",
+          "value": true,
+          "weight": 0.2
+        }
+      ]
+    }
+  ],
+  "spin": {
+    "bet": 0.2,
+    "win": 0.19,
+    "balanceBefore": 99995736.55,
+    "balanceAfter": 99995736.54,
+    "state": "NORMAL",
+    "roundId": "req-118-2"
+  },
+  "durationMs": 134017,
+  "spinsCount": 30,
+  "screenshotPath": "fixtures/registry/vswaysmahwin2/case-evidence/autoplay-30-rounds.png",
+  "ocrSnapshots": [
+    {
+      "region": "balance",
+      "bbox": {
+        "x": 292,
+        "y": 651,
+        "width": 207,
+        "height": 27
+      },
+      "text": "$99,995,736.549%\"",
+      "parsed": 99995736.549,
+      "durationMs": 102,
+      "bboxScreenshotPath": "fixtures/registry/vswaysmahwin2/case-evidence/autoplay-30-rounds.balance.png"
+    },
+    {
+      "region": "bet",
+      "bbox": {
+        "x": 292,
+        "y": 671,
+        "width": 103,
+        "height": 25
+      },
+      "text": "$0.20",
+      "parsed": 0.2,
+      "durationMs": 49,
+      "bboxScreenshotPath": "fixtures/registry/vswaysmahwin2/case-evidence/autoplay-30-rounds.bet.png"
+    },
+    {
+      "region": "last_win",
+      "bbox": {
+        "x": 628,
+        "y": 627,
+        "width": 165,
+        "height": 54
+      },
+      "text": "$0.19",
+      "parsed": 0.19,
+      "durationMs": 47,
+      "bboxScreenshotPath": "fixtures/registry/vswaysmahwin2/case-evidence/autoplay-30-rounds.last_win.png"
+    }
+  ],
+  "actionLog": [
+    {
+      "kind": "click",
+      "target": "autoButton",
+      "durationMs": 654,
+      "success": true
+    },
+    {
+      "kind": "wait_ms",
+      "target": "1500ms",
+      "durationMs": 1502,
+      "success": true
+    },
+    {
+      "kind": "click",
+      "target": "autoButton__autoCountSlide-30",
+      "durationMs": 658,
+      "success": true
+    },
+    {
+      "kind": "wait_ms",
+      "target": "500ms",
+      "durationMs": 502,
+      "success": true
+    },
+    {
+      "kind": "click",
+      "target": "autoButton__startAutoplayButton",
+      "durationMs": 656,
+      "success": true
+    },
+    {
+      "kind": "wait_until_no_spin_response",
+      "durationMs": 119671,
+      "success": true
+    }
+  ],
+  "signalRollup": [
+    {
+      "signal": "api",
+      "pass": true,
+      "checks": [
+        {
+          "field": "spin captured",
+          "expected": "non-empty roundId",
+          "actual": "req-118-2",
+          "match": true,
+          "source": "parser/captured-spin"
+        },
+        {
+          "field": "bet",
+          "expected": "> 0 (bet was applied)",
+          "actual": 0.2,
+          "match": true,
+          "source": "parser/spin.bet"
+        },
+        {
+          "field": "win",
+          "expected": ">= 0 (non-negative)",
+          "actual": 0.19,
+          "match": true,
+          "source": "parser/spin.win"
+        },
+        {
+          "field": "balanceAfter",
+          "expected": "finite number",
+          "actual": 99995736.54,
+          "match": true,
+          "source": "parser/spin.balanceAfter"
+        }
+      ]
+    },
+    {
+      "signal": "ui_ocr",
+      "pass": true,
+      "checks": [
+        {
+          "field": "balance",
+          "expected": 99995736.54,
+          "actual": 99995736.549,
+          "match": true,
+          "source": "ocr/balanceArea ↔ parser/balanceAfter"
+        },
+        {
+          "field": "bet",
+          "expected": 0.2,
+          "actual": 0.2,
+          "match": true,
+          "source": "ocr/betArea ↔ parser/spin.bet"
+        },
+        {
+          "field": "win",
+          "expected": 0.19,
+          "actual": 0.19,
+          "match": true,
+          "source": "ocr/winArea ↔ parser/spin.win"
+        }
+      ],
+      "detail": "3/3 UI widgets match API"
+    },
+    {
+      "signal": "network",
+      "pass": true,
+      "checks": [
+        {
+          "field": "captured spins",
+          "expected": ">= 30",
+          "actual": 30,
+          "match": true,
+          "source": "page.on(response)"
+        },
+        {
+          "field": "no error warnings",
+          "expected": "0 errors/failures/debounced clicks",
+          "actual": 0,
+          "match": true,
+          "source": "case-executor warnings"
+        }
+      ]
+    },
+    {
+      "signal": "state",
+      "pass": true,
+      "checks": [
+        {
+          "field": "stayed on MAIN (or allowed interrupts)",
+          "expected": "all transitions to MAIN | allowed",
+          "actual": "all clean",
+          "match": true,
+          "source": "stateTimeline"
+        }
+      ]
+    },
+    {
+      "signal": "rule",
+      "pass": true,
+      "checks": [
+        {
+          "field": "balance arithmetic",
+          "expected": 99995736.53999999,
+          "actual": 99995736.54,
+          "match": true,
+          "source": "balanceAfter == balanceBefore - bet + win"
+        }
+      ]
+    }
+  ],
+  "networkLogPath": "fixtures/registry/vswaysmahwin2/case-evidence/autoplay-30-rounds.network.jsonl",
+  "networkSummary": [
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": true
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": true
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": true
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": true
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": true
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": false
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": true
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": true
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": true
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": true
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": true
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": true
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": true
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": true
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": false
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": true
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/announcements/unread/?symbol=vswaysmahwin2&mgckey=demo@SFTIqmxdilH7qHteQ8Fij529_USD",
+      "method": "GET",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": false
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/promo/active/?symbol=vswaysmahwin2&mgckey=demo@SFTIqmxdilH7qHteQ8Fij529_USD",
+      "method": "GET",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": false
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": true
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": true
+    }
+  ],
+  "parserDiagnostic": {
+    "parserKind": "PragmaticParser",
+    "betMultiplier": 20,
+    "requestFields": {
+      "action": "doSpin",
+      "symbol": "vswaysmahwin2",
+      "c": 0.01,
+      "l": 1024,
+      "sInfo": "an",
+      "bl": 0,
+      "index": 73,
+      "counter": 2,
+      "repeat": 0,
+      "mgckey": "demo@SFTIqmxdilH7qHteQ8Fij529_USD"
+    },
+    "formulaUsed": "c × M = 0.01 × 20",
+    "parsedBet": 0.2,
+    "expectedBet": 0.2,
+    "mismatch": false
+  },
+  "outcome": "FLAKY",
+  "confidence": 1
+}

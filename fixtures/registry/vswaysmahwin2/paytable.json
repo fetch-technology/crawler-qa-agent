@@ -1,0 +1,188 @@
+{
+  "symbols": [
+    {
+      "symbol": "zhong",
+      "name": "Red Zhong (中)",
+      "payouts": [
+        {
+          "count": 3,
+          "multiplier": 0.25
+        },
+        {
+          "count": 4,
+          "multiplier": 0.63
+        },
+        {
+          "count": 5,
+          "multiplier": 1.25
+        }
+      ]
+    },
+    {
+      "symbol": "back",
+      "name": "Tile Back",
+      "payouts": [
+        {
+          "count": 3,
+          "multiplier": 0.2
+        },
+        {
+          "count": 4,
+          "multiplier": 0.5
+        },
+        {
+          "count": 5,
+          "multiplier": 1
+        }
+      ]
+    },
+    {
+      "symbol": "fa",
+      "name": "Green Fa (發)",
+      "payouts": [
+        {
+          "count": 3,
+          "multiplier": 0.15
+        },
+        {
+          "count": 4,
+          "multiplier": 0.38
+        },
+        {
+          "count": 5,
+          "multiplier": 0.75
+        }
+      ]
+    },
+    {
+      "symbol": "ba_wan",
+      "name": "Ba Wan (八萬)",
+      "payouts": [
+        {
+          "count": 3,
+          "multiplier": 0.13
+        },
+        {
+          "count": 4,
+          "multiplier": 0.25
+        },
+        {
+          "count": 5,
+          "multiplier": 0.38
+        }
+      ]
+    },
+    {
+      "symbol": "dots_4",
+      "name": "Four Dots Tile",
+      "payouts": [
+        {
+          "count": 3,
+          "multiplier": 0.08
+        },
+        {
+          "count": 4,
+          "multiplier": 0.13
+        },
+        {
+          "count": 5,
+          "multiplier": 0.3
+        }
+      ]
+    },
+    {
+      "symbol": "dots_3",
+      "name": "Three Dots Tile",
+      "payouts": [
+        {
+          "count": 3,
+          "multiplier": 0.08
+        },
+        {
+          "count": 4,
+          "multiplier": 0.13
+        },
+        {
+          "count": 5,
+          "multiplier": 0.3
+        }
+      ]
+    },
+    {
+      "symbol": "dots_1",
+      "name": "One Dot Tile",
+      "payouts": [
+        {
+          "count": 3,
+          "multiplier": 0.05
+        },
+        {
+          "count": 4,
+          "multiplier": 0.1
+        },
+        {
+          "count": 5,
+          "multiplier": 0.25
+        }
+      ]
+    },
+    {
+      "symbol": "bamboo_3",
+      "name": "Three Bamboo",
+      "payouts": [
+        {
+          "count": 3,
+          "multiplier": 0.03
+        },
+        {
+          "count": 4,
+          "multiplier": 0.08
+        },
+        {
+          "count": 5,
+          "multiplier": 0.15
+        }
+      ]
+    },
+    {
+      "symbol": "bamboo_2",
+      "name": "Two Bamboo",
+      "payouts": [
+        {
+          "count": 3,
+          "multiplier": 0.03
+        },
+        {
+          "count": 4,
+          "multiplier": 0.08
+        },
+        {
+          "count": 5,
+          "multiplier": 0.15
+        }
+      ]
+    }
+  ],
+  "features": [
+    {
+      "name": "Free Spins",
+      "description": "Triggers the FREE SPINS feature."
+    },
+    {
+      "name": "Ways to Win",
+      "description": "Wins awarded for left to right adjacent symbol combinations. The maximum number of possible ways to win is 2000."
+    },
+    {
+      "name": "Tumble Feature",
+      "description": "Winning combinations are paid and all winning symbols disappear. The remaining symbols fall to the bottom of the screen and the empty positions are replaced with new symbols coming from above. Tumbling continues until no more winning combinations appear as a result of a tumble. All wins are added to the player's balance after all the tumbles resulted from a base spin have been played."
+    },
+    {
+      "name": "Gold Symbols",
+      "description": "Normal paying symbols marked in gold can appear in random positions on reels 2, 3 and 4. When winning combinations are formed with gold symbols they will transform into WILD for the next tumble."
+    },
+    {
+      "name": "Tumble Multipliers",
+      "description": "In the base game a win multiplier that applies to all wins for the current tumble is increasing to 2x, 3x, 5x after every tumble. From the 4th tumble on, the multiplier remains 5x for all subsequent ones. The multiplier is reset at the end of all tumbles."
+    }
+  ]
+}

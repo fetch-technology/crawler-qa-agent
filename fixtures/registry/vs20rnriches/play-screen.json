@@ -1,0 +1,119 @@
+{
+  "game_title": "Rolling in Treasures",
+  "provider_guess": "Pragmatic Play",
+  "balance": {
+    "value": "99,996,514.56",
+    "currency": "$"
+  },
+  "bet": {
+    "current": "4.00",
+    "min": null,
+    "max": null,
+    "step_kind": "plus_minus",
+    "chips": null
+  },
+  "controls": [
+    {
+      "name": "Spin",
+      "kind": "button",
+      "visible": true,
+      "approx_location": "bottom-right center",
+      "state_hint": "ready"
+    },
+    {
+      "name": "Autoplay",
+      "kind": "button",
+      "visible": true,
+      "approx_location": "below spin button",
+      "state_hint": null
+    },
+    {
+      "name": "Bet Decrease (-)",
+      "kind": "button",
+      "visible": true,
+      "approx_location": "left of spin button",
+      "state_hint": null
+    },
+    {
+      "name": "Bet Increase (+)",
+      "kind": "button",
+      "visible": true,
+      "approx_location": "right of spin button",
+      "state_hint": null
+    },
+    {
+      "name": "Menu",
+      "kind": "button",
+      "visible": true,
+      "approx_location": "bottom-left",
+      "state_hint": null
+    },
+    {
+      "name": "Info",
+      "kind": "button",
+      "visible": true,
+      "approx_location": "bottom-left (below menu)",
+      "state_hint": null
+    },
+    {
+      "name": "Sound",
+      "kind": "toggle",
+      "visible": true,
+      "approx_location": "bottom-left (below info)",
+      "state_hint": null
+    },
+    {
+      "name": "Buy Feature",
+      "kind": "button",
+      "visible": true,
+      "approx_location": "left side of reels",
+      "state_hint": "3 OPTIONS"
+    },
+    {
+      "name": "Special Bets",
+      "kind": "toggle",
+      "visible": true,
+      "approx_location": "left side, below Buy Feature",
+      "state_hint": "2 OPTIONS, toggle off"
+    }
+  ],
+  "buy_feature": {
+    "available": true,
+    "options": [
+      {
+        "label": "BUY FEATURE - 3 OPTIONS",
+        "price_multiplier": null,
+        "price_absolute": null
+      }
+    ]
+  },
+  "special_bets": {
+    "available": true,
+    "variants": [
+      {
+        "label": "SPECIAL BETS - 2 OPTIONS",
+        "state": "off",
+        "price": null
+      }
+    ]
+  },
+  "rules_summary": {
+    "paylines_or_ways": null,
+    "feature_mentions": [
+      "Buy Feature (3 options)",
+      "Special Bets (2 options)"
+    ],
+    "visible_symbols": [
+      "Mine Cart with Gold",
+      "Yellow Diamond",
+      "Green Crystal/Emerald",
+      "Red Crystal/Ruby",
+      "Purple Crystal/Amethyst",
+      "Miner Helmet",
+      "Lantern",
+      "Pickaxe"
+    ],
+    "max_win": null
+  },
+  "raw_observations": "6x5 reel grid with mining-themed symbols. Banner shows 'PLACE YOUR BETS!'. Credit $99,996,514.56, Bet $4.00. Left side has red 'BUY FEATURE 3 OPTIONS' button and grey 'SPECIAL BETS 2 OPTIONS' panel with a toggle switch (appears off). Right side shows game logo 'ROLLING IN TREASURES' and a miner character holding gold. Bottom-right has spin button with AUTOPLAY label below and +/- bet steppers. Bottom-left has menu, info, and sound icons."
+}

@@ -1,1 +1,0 @@
-{"message":"Error processing your request.\n\nPlease contact your provider's customer support for assistance.\n\nRequest ID: 2bd69aa9916cf153\nError Code: 1603\nReach maximum bet limit for the player","code":1603,"requestId":"2bd69aa9916cf153","region":"ap-southeast-1"}

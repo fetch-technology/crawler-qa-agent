@@ -1,0 +1,22 @@
+{"ranAt":"2026-05-27T07:27:29.749Z","outcome":"PASS_LOW","confidence":1,"status":"pass","durationMs":17704,"spinsCount":1}
+{"ranAt":"2026-05-27T14:20:40.629Z","outcome":"PASS_LOW","confidence":1,"status":"pass","durationMs":15886,"spinsCount":1}
+{"ranAt":"2026-05-27T14:23:24.508Z","outcome":"FAIL_LOW","confidence":0.75,"status":"fail","durationMs":15719,"spinsCount":1,"reason":"UI balance display (OCR) matches API endingBalance when OCR available"}
+{"ranAt":"2026-05-27T15:03:59.294Z","outcome":"PASS_LOW","confidence":1,"status":"pass","durationMs":17127,"spinsCount":1}
+{"ranAt":"2026-05-27T15:04:14.992Z","outcome":"FAIL_LOW","confidence":0.7999999999999999,"status":"fail","durationMs":15697,"spinsCount":1,"reason":"endingBalance reflects bet/win arithmetic when previous balance is available"}
+{"ranAt":"2026-05-27T15:04:30.694Z","outcome":"FAIL_LOW","confidence":0.7999999999999999,"status":"fail","durationMs":15702,"spinsCount":1,"reason":"endingBalance reflects bet/win arithmetic when previous balance is available"}
+{"ranAt":"2026-05-27T15:36:38.312Z","outcome":"PASS_LOW","confidence":1,"status":"pass","durationMs":15884,"spinsCount":1}
+{"ranAt":"2026-05-27T15:36:53.825Z","outcome":"FAIL_LOW","confidence":0.7999999999999999,"status":"fail","durationMs":15512,"spinsCount":1,"reason":"endingBalance reflects bet/win arithmetic when previous balance is available"}
+{"ranAt":"2026-05-27T15:37:09.526Z","outcome":"FAIL_LOW","confidence":0.7999999999999999,"status":"fail","durationMs":15701,"spinsCount":1,"reason":"endingBalance reflects bet/win arithmetic when previous balance is available"}
+{"ranAt":"2026-05-27T15:43:05.187Z","outcome":"PASS_LOW","confidence":1,"status":"pass","durationMs":33449,"spinsCount":4}
+{"ranAt":"2026-05-27T15:43:21.381Z","outcome":"FAIL_LOW","confidence":0.7999999999999999,"status":"fail","durationMs":15734,"spinsCount":1,"reason":"endingBalance reflects bet/win arithmetic when previous balance is available"}
+{"ranAt":"2026-05-27T15:43:37.758Z","outcome":"FAIL_LOW","confidence":0.7999999999999999,"status":"fail","durationMs":15668,"spinsCount":1,"reason":"endingBalance reflects bet/win arithmetic when previous balance is available"}
+{"ranAt":"2026-05-27T15:44:13.726Z","outcome":"PASS_LOW","confidence":1,"status":"pass","durationMs":15889,"spinsCount":1}
+{"ranAt":"2026-05-27T15:44:30.164Z","outcome":"FAIL_LOW","confidence":0.7999999999999999,"status":"fail","durationMs":15916,"spinsCount":1,"reason":"endingBalance reflects bet/win arithmetic when previous balance is available"}
+{"ranAt":"2026-05-27T15:44:46.486Z","outcome":"FAIL_LOW","confidence":0.7999999999999999,"status":"fail","durationMs":15681,"spinsCount":1,"reason":"endingBalance reflects bet/win arithmetic when previous balance is available"}
+{"ranAt":"2026-05-27T15:56:15.355Z","outcome":"PASS_LOW","confidence":1,"status":"pass","durationMs":16571,"spinsCount":1}
+{"ranAt":"2026-05-27T15:56:31.054Z","outcome":"PASS_LOW","confidence":1,"status":"pass","durationMs":15698,"spinsCount":1}
+{"ranAt":"2026-05-27T15:56:46.779Z","outcome":"PASS_LOW","confidence":1,"status":"pass","durationMs":15725,"spinsCount":1}
+{"ranAt":"2026-05-27T16:07:57.262Z","outcome":"PASS_LOW","confidence":1,"status":"pass","durationMs":17959,"spinsCount":1}
+{"ranAt":"2026-05-27T16:08:16.242Z","outcome":"PASS_LOW","confidence":1,"status":"pass","durationMs":18980,"spinsCount":1}
+{"ranAt":"2026-05-27T16:08:32.148Z","outcome":"PASS_LOW","confidence":1,"status":"pass","durationMs":15904,"spinsCount":1}
+{"ranAt":"2026-05-27T16:42:52.194Z","outcome":"PASS_LOW","confidence":1,"status":"pass","durationMs":18984,"spinsCount":1}

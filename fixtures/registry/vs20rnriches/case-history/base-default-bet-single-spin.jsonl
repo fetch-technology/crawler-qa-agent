@@ -1,0 +1,4 @@
+{"ranAt":"2026-05-26T01:12:17.855Z","outcome":"FAIL_LOW","confidence":1,"status":"fail","durationMs":14358,"spinsCount":1,"reason":"Server-side betAmount equals default 0.20"}
+{"ranAt":"2026-05-26T01:17:52.678Z","outcome":"FAIL_LOW","confidence":1,"status":"fail","durationMs":16652,"spinsCount":1,"reason":"Setup should have reached bet=0.2"}
+{"ranAt":"2026-05-26T01:18:45.337Z","outcome":"PASS_LOW","confidence":1,"status":"pass","durationMs":16482,"spinsCount":1}
+{"ranAt":"2026-05-26T01:38:00.987Z","outcome":"FAIL_LOW","confidence":0.5499999999999999,"status":"fail","durationMs":16823,"spinsCount":1,"reason":"Setup should have reached bet=0.2"}

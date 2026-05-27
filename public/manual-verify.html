@@ -1,0 +1,2718 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>QA · Manual Verify (Phase 6.1)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, system-ui, sans-serif; margin: 0; padding: 20px; background: #0f1115; color: #e8eaed; font-size: 14px; }
+    h1 { margin: 0 0 6px; font-size: 20px; }
+    .sub { color: #8b939c; font-size: 12px; margin-bottom: 16px; }
+    .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+    .tabs a { padding: 6px 10px; background: #1c2230; border-radius: 5px; font-size: 13px; color: #8b939c; text-decoration: none; }
+    .tabs a.active { background: #2a3852; color: #e8eaed; }
+    .panel { background: #161a22; border: 1px solid #232a35; border-radius: 8px; padding: 14px; margin-bottom: 14px; }
+    .panel h2 { margin: 0 0 10px; font-size: 14px; color: #b8c0c8; }
+    label { font-size: 12px; color: #8b939c; }
+    input, select { padding: 6px 8px; background: #0b0e13; color: #e8eaed; border: 1px solid #2a3140; border-radius: 4px; font: inherit; }
+    button { padding: 6px 10px; border: 0; border-radius: 4px; cursor: pointer; font: inherit; background: #4f7cff; color: white; font-size: 12px; }
+    button.green { background: #29b673; }
+    button.red { background: #d9534f; }
+    button.gray { background: #5a6470; }
+    button.purple { background: #8b5cf6; }
+    button[disabled] { background: #3a3e46; cursor: not-allowed; opacity: 0.5; }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #232a35; vertical-align: middle; }
+    th { color: #8b939c; font-weight: 500; font-size: 10px; text-transform: uppercase; }
+    td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .pill { padding: 2px 6px; border-radius: 999px; font-size: 10px; font-weight: 500; }
+    .pill.pending { background: #5a647033; color: #c8d0d8; }
+    .pill.verified { background: #29b67333; color: #9be0bc; }
+    .pill.rejected { background: #d9534f33; color: #f0a39e; }
+    .row-actions { display: flex; gap: 4px; flex-wrap: wrap; }
+    .empty { color: #5e6772; padding: 12px; text-align: center; font-style: italic; }
+    code { background: #0b0e13; padding: 2px 5px; border-radius: 3px; font-size: 11px; }
+    .toast { position: fixed; bottom: 20px; right: 20px; background: #2a3852; padding: 10px 14px; border-radius: 5px; max-width: 360px; box-shadow: 0 4px 16px rgba(0,0,0,0.4); display: none; }
+    .toast.show { display: block; }
+    .toast.err { background: #5a2a2a; }
+    .tree-node { display: grid; grid-template-columns: 24px 240px 70px 70px 80px 55px 90px 1fr; gap: 8px; align-items: center; padding: 4px 6px; border-bottom: 1px solid #1a1f29; }
+    .tree-node:hover { background: #1a1f29; }
+    .tree-toggle { width: 20px; height: 20px; background: transparent; border: 0; color: #8b939c; cursor: pointer; font-size: 12px; padding: 0; }
+    .tree-toggle:hover { color: #e8eaed; }
+    .tree-toggle.invisible { visibility: hidden; }
+    .tree-key { font-family: ui-monospace, SF Mono, Menlo, monospace; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tree-header { display: grid; grid-template-columns: 24px 240px 70px 70px 80px 55px 90px 1fr; gap: 8px; padding: 6px; color: #8b939c; font-size: 10px; text-transform: uppercase; border-bottom: 1px solid #232a35; font-weight: 500; }
+    .tree-actions { display: flex; gap: 4px; flex-wrap: wrap; }
+    .tree-actions button { padding: 3px 7px; font-size: 11px; }
+    .tree-children { border-left: 2px solid #2a3140; margin-left: 14px; padding-left: 4px; }
+    @keyframes flashRow { 0% { background: #2a3852; } 100% { background: transparent; } }
+    tr.flash > td { animation: flashRow 2s ease-out; }
+    tr.running > td { background: #2a3852; }
+    @keyframes spinIcon { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+    .spin-badge::before { content: "🔄"; display: inline-block; margin-right: 4px; animation: spinIcon 1.2s linear infinite; }
+    /* override default ::before so badge text doesn't double-render the icon */
+    .spin-badge { padding-left: 4px !important; }
+    /* Test cases table: fixed layout so detail row doesn't blow up width */
+    table { table-layout: auto; }
+    .case-detail { width: 100%; max-width: calc(100vw - 80px); box-sizing: border-box; }
+    .case-detail pre { white-space: pre-wrap; word-break: break-word; max-width: 100%; overflow-x: hidden; }
+    .case-detail .grid-2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+    .case-detail .grid-2 > div { min-width: 0; }
+    .case-detail .assertion-fail-detail { white-space: pre-wrap; word-break: break-word; }
+  </style>
+</head>
+<body>
+  <h1>QA · Manual Verify</h1>
+  <p class="sub">Phase 6.1 — Human-in-the-loop UI element verification. AI proposes, QA confirms.</p>
+
+  <!-- Pipeline task banner (visible across page) -->
+  <div id="taskBanner" style="display: none; background: linear-gradient(90deg, #2563eb, #1d4ed8); color: #fff; padding: 10px 14px; border-radius: 6px; margin-bottom: 12px; font-size: 13px; box-shadow: 0 2px 8px rgba(37,99,235,0.4);">
+    <strong id="taskBannerLabel">Pipeline running…</strong>
+    <span id="taskBannerStatus" style="margin-left: 8px;"></span>
+    <span id="taskBannerElapsed" style="float: right; font-variant-numeric: tabular-nums;"></span>
+  </div>
+
+  <!-- Registered games (resume previous work) -->
+  <div class="panel">
+    <h2>Registered Games · Resume Previous Work</h2>
+    <div id="gamesList"><p class="empty">Loading…</p></div>
+  </div>
+
+  <!-- Session control -->
+  <div class="panel">
+    <h2>New / Active Session</h2>
+    <div class="row">
+      <label style="flex: 0 0 auto;">URL:</label>
+      <input id="url" type="text" placeholder="https://pp.dev.revenge-games.com/vs20rnriches/?t=..." style="flex: 1;" />
+      <label style="flex: 0 0 auto;"><input id="autoDiscover" type="checkbox" checked> Auto-discover AI</label>
+      <button id="btnStart">Start Session</button>
+      <button id="btnRefresh" class="gray" disabled>Refresh State</button>
+    </div>
+    <div id="sessionInfo" style="margin-top: 8px; font-size: 12px; color: #8b939c;">Not started.</div>
+  </div>
+
+  <!-- Element registry table (with per-row Discover) -->
+  <div class="panel">
+    <h2>Registry · Verify Elements & Discover</h2>
+    <p style="color: #8b939c; font-size: 12px; margin: 0 0 8px;">
+      Per-row <code>[Discover]</code> button: backend clicks that element → waits popup → AI captures sub-state children → adds nested under parent.
+      For ad-hoc state (popup already open from another path): type label + click "Discover Current Screen" below.
+    </p>
+    <div class="row" style="margin-bottom: 10px;">
+      <span style="color: #8b939c; font-size: 12px;">Ad-hoc state label:</span>
+      <input id="newStateLabel" type="text" placeholder="custom_popup" style="width: 200px; font-size: 11px;" />
+      <button id="btnDiscoverState" disabled class="gray" style="font-size: 11px;">Discover Current Screen</button>
+    </div>
+    <div id="elementsContainer">
+      <p class="empty">No active session.</p>
+    </div>
+    <div id="discoveryGaps"></div>
+  </div>
+
+  <!-- Add new element -->
+  <div class="panel">
+    <h2>Add Element (missed by AI)</h2>
+    <div class="row">
+      <label>uiKey:</label>
+      <input id="newKey" type="text" placeholder="e.g. autoplay_popup__autospins-10" style="width: 280px;" />
+      <button id="btnPickNew" style="background: #d97706;" disabled title="Type a uiKey then click here, then click the actual button in Playwright Chrome window">Pick in Game</button>
+      <span style="color: #5e6772; font-size: 11px;">or fill manually:</span>
+      <label>x:</label> <input id="newX" type="number" style="width: 80px;" />
+      <label>y:</label> <input id="newY" type="number" style="width: 80px;" />
+      <button id="btnAdd" disabled>Add</button>
+    </div>
+  </div>
+
+  <!-- OCR Regions panel — define balance/bet/win bbox for runtime OCR -->
+  <div class="panel">
+    <h2>OCR Regions · Define widget bounding boxes</h2>
+    <p style="color: #8b939c; font-size: 12px; margin: 0 0 8px;">
+      Tier A2/A3: case-executor OCRs these regions per spin → populates
+      <code>screen.balance</code> / <code>screen.bet</code> / <code>screen.last_win</code> for assertions,
+      stamps <code>_ocrBalance</code> for <code>UiBalanceMatchesApiRule</code>.
+    </p>
+    <ol style="color: #c8d0d8; font-size: 12px; margin: 0 0 10px 18px; padding: 0; line-height: 1.7;">
+      <li>Click <strong>Draw</strong> on the row you want to configure (e.g. Balance widget).</li>
+      <li>Screenshot auto-loads below. Orange banner appears: <strong>"STEP 1/2: Click TOP-LEFT corner"</strong>.</li>
+      <li>Click the <strong>top-left corner</strong> of the widget on the screenshot. An orange dot marks the click.</li>
+      <li>Move the mouse to see a live ghost rectangle (preview). Banner updates to <strong>"STEP 2/2: Click BOTTOM-RIGHT corner"</strong>.</li>
+      <li>Click the <strong>bottom-right corner</strong>. Backend auto-tests OCR + saves the bbox.</li>
+    </ol>
+    <div id="ocrDrawBanner" style="display:none;background:linear-gradient(90deg,#d97706,#b45309);color:#fff;padding:10px 14px;border-radius:6px;margin-bottom:8px;font-size:13px;font-weight:600;box-shadow:0 2px 8px rgba(217,119,6,0.4);"></div>
+    <div class="row" style="margin-bottom: 8px;">
+      <button id="btnOcrRefreshShot" class="gray" disabled>🔄 Refresh screenshot</button>
+      <button id="btnOcrCancelDraw" style="display:none;background:#5e6772;font-size:11px;padding:4px 10px;">✕ Cancel drawing</button>
+      <span id="ocrDrawHint" style="color: #8b939c; font-size: 12px;">(no session)</span>
+    </div>
+    <div id="ocrRegionsTable" style="margin-bottom: 8px;"><p class="empty" style="margin:0;">No active session.</p></div>
+    <div style="position: relative; display: inline-block;">
+      <img id="ocrShotImg" alt="game screenshot" style="display:none;max-width: 100%; border: 1px solid #2a3140; border-radius: 4px; background: #0b0e13;" />
+      <canvas id="ocrShotOverlay" style="display:none;position:absolute;left:0;top:0;pointer-events:none;"></canvas>
+    </div>
+    <div id="ocrTestResult" style="display:none;margin-top:8px;padding:8px 12px;background:#161a22;border-radius:4px;font-size:12px;font-family:ui-monospace,monospace;"></div>
+  </div>
+
+  <!-- Test Cases panel -->
+  <div class="panel">
+    <h2>
+      Test Cases · Inspect & Run
+      <button id="btnClearResults" class="gray" style="float: right; font-size: 11px; padding: 4px 8px; margin-left: 6px;" title="Clear cached run results for current game (localStorage)">Clear Results</button>
+      <button id="btnRetranslateAllForce" style="background: #d9534f; float: right; font-size: 11px; padding: 4px 8px; margin-left: 6px;" title="Re-translate ALL cases (including runnable ones — re-runs AI for everything)">Re-translate ALL</button>
+      <button id="btnRetranslateAll" style="background: #d97706; float: right; font-size: 11px; padding: 4px 8px; margin-left: 6px;" title="Re-translate only SKIPPED cases (those with 0 actions or skipReason)">Re-translate Skipped</button>
+      <button id="btnLoadCases" class="gray" style="float: right; font-size: 11px; padding: 4px 8px; margin-left: 6px;">Load Cases</button>
+      <button id="btnRunUnrun" style="background: #1f9d57; float: right; font-size: 11px; padding: 4px 8px; margin-left: 6px;" title="Run only cases with NO pass/fail verdict yet (unrun or skipped) — uses the active session">Run Unrun</button>
+      <button id="btnRunAllCases" style="background: #29b673; float: right; font-size: 11px; padding: 4px 8px;" title="Run ALL runnable cases one by one — uses the active session">Run All cases</button>
+    </h2>
+    <p style="color: #8b939c; font-size: 12px; margin: 0 0 8px;">
+      Test cases are generated by <code>qa:cold</code> (AI catalog). Each case has translated actions (click sequence) referencing verified registry coords.
+      <strong>Preview</strong> executes one case's actions on the live Playwright browser so QA can visually verify each step.
+    </p>
+    <div id="runAllBanner" style="display: none; background: #2a3852; padding: 8px 12px; border-radius: 4px; margin-bottom: 10px; font-size: 12px;"></div>
+    <div id="runProgressTable" style="display: none; margin-bottom: 10px; max-height: 340px; overflow: auto; border: 1px solid #232a35; border-radius: 4px;"></div>
+    <div class="row" style="background: #161a22; padding: 8px 12px; border-radius: 4px; margin-bottom: 8px; font-size: 12px; gap: 12px;">
+      <strong>Run All settings:</strong>
+      <label>Max wait per case (sec):
+        <input type="number" id="runAllMaxWaitSec" value="90" min="5" max="600" style="width: 60px; font-size: 12px;" title="Max seconds to wait for game to settle on main between cases. Polls every 2s; proceeds immediately when on main. Default 90s." />
+      </label>
+      <label title="Click spinButton before each case + wait 3s for spin response. Confirms 'on main' but consumes 1 real spin per case (deducts bet)."><input type="checkbox" id="runAllProbe" /> behavioral probe (uses 1 spin/case)</label>
+      <label title="When case outcome is FAIL_LOW or INCONCLUSIVE, automatically run heuristic AI Review (free — no AI call) + auto-apply patch if heuristic confidence ≥ 0.85 + rerun once. Capped to 1 patch per case (no loop). For full loop, use 🔁 Auto-Rerun Loop button per case."><input type="checkbox" id="runAllAutoMode" checked /> 🤖 Auto-mode (heuristic + auto-apply high-conf patches)</label>
+      <span style="color: #5e6772; font-size: 11px;">No fixed delay — polls every 2s, proceeds when game on main (OCR + overlay check).</span>
+    </div>
+    <div id="casesList"><p class="empty" style="margin: 0;">Click "Load Cases" after a qa:cold run.</p></div>
+  </div>
+
+
+  <!-- App log (frontend API call trace) -->
+  <div class="panel">
+    <h2>
+      App Log · Dashboard ↔ Server
+      <button onclick="document.getElementById('appLog').textContent = ''" class="gray" style="float: right; font-size: 11px; padding: 4px 8px;">Clear</button>
+    </h2>
+    <pre id="appLog" style="background: #0b0e13; border: 1px solid #232a35; padding: 10px; font-size: 11px; max-height: 280px; overflow: auto; border-radius: 4px; line-height: 1.5; margin: 0; color: #c8d0d8; white-space: pre-wrap; word-break: break-word;">(empty)</pre>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    const $ = (s) => document.querySelector(s);
+    const elementsContainer = $("#elementsContainer");
+    const sessionInfo = $("#sessionInfo");
+    let currentStatus = null;
+
+    function toast(msg, isErr = false) {
+      const t = $("#toast");
+      t.textContent = msg;
+      t.classList.toggle("err", isErr);
+      t.classList.add("show");
+      setTimeout(() => t.classList.remove("show"), 3500);
+    }
+
+    async function api(path, opts = {}) {
+      const method = opts.method || "GET";
+      const tag = `[api] ${method} ${path}`;
+      console.log(tag, opts.body || "");
+      appendLog(`${tag} ${opts.body ? JSON.stringify(opts.body).slice(0, 200) : ""}`);
+      try {
+        const r = await fetch(path, {
+          method,
+          headers: opts.body ? { "content-type": "application/json" } : undefined,
+          body: opts.body ? JSON.stringify(opts.body) : undefined,
+        });
+        const body = await r.json().catch(() => ({}));
+        console.log(tag, "→", r.status, body);
+        appendLog(`${tag} → ${r.status} ${JSON.stringify(body).slice(0, 200)}`);
+        if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+        return body;
+      } catch (err) {
+        console.error(tag, "✗", err);
+        appendLog(`${tag} ✗ ${err.message}`);
+        throw err;
+      }
+    }
+
+    function appendLog(line) {
+      const el = $("#appLog");
+      if (!el) return;
+      const ts = new Date().toLocaleTimeString();
+      el.textContent = `[${ts}] ${line}\n` + el.textContent;
+      if (el.textContent.length > 10000) el.textContent = el.textContent.slice(0, 10000);
+    }
+
+    function renderStatus(status) {
+      currentStatus = status;
+      const active = status.active;
+      $("#btnRefresh").disabled = !active;
+      $("#btnAdd").disabled = !active;
+      $("#btnPickNew").disabled = !active;
+      $("#btnStart").disabled = active;
+      $("#btnDiscoverState").disabled = !active;
+      $("#btnOcrRefreshShot").disabled = !active;
+
+      if (!active) {
+        sessionInfo.textContent = "Not started.";
+        elementsContainer.innerHTML = `<p class="empty">No active session.</p>`;
+        $("#discoveryGaps").innerHTML = "";
+        $("#ocrRegionsTable").innerHTML = `<p class="empty" style="margin:0;">No active session.</p>`;
+        $("#ocrDrawHint").textContent = "(no session)";
+        return;
+      }
+      // Lazy-load OCR regions for the active game
+      renderOcrRegions().catch(() => {});
+      sessionInfo.innerHTML = `Active · slug=<code>${status.gameSlug}</code> · started ${status.startedAt}`;
+
+      const keys = Object.keys(status.registry || {}).sort();
+      if (keys.length === 0) {
+        elementsContainer.innerHTML = `<p class="empty">Registry empty. Use "Add Element" or "Discover This State".</p>`;
+      } else {
+        // Namespace → trigger button mapping. When a namespace prefix doesn't
+        // exist as a registry key itself, re-parent its children under the
+        // associated trigger key. E.g. `autoplay_popup__*` becomes children
+        // of `autoButton`.
+        const NAMESPACE_TO_TRIGGER = {
+          autoplay_popup: "autoButton",
+          bet_minus_state: "betMinus",
+          bet_plus_state: "betPlus",
+          buy_feature_popup: "buyBonusButton",
+          menu: "menuButton",
+          paytable: "paytableButton",
+          history_popup: "historyButton",
+          settings: "settingsButton",
+          spin_in_progress: "spinButton",
+        };
+
+        // Build parent → children map. Root nodes have parent "".
+        const childrenMap = new Map();
+        for (const k of keys) {
+          const i = k.lastIndexOf("__");
+          let parent = i === -1 ? "" : k.slice(0, i);
+          // If parent path doesn't exist in registry, try reverse-mapping the
+          // top-level namespace to a trigger key.
+          if (parent && !status.registry[parent]) {
+            const topNamespace = parent.split("__")[0];
+            const trigger = NAMESPACE_TO_TRIGGER[topNamespace];
+            if (trigger && status.registry[trigger]) parent = trigger;
+          }
+          if (!childrenMap.has(parent)) childrenMap.set(parent, []);
+          childrenMap.get(parent).push(k);
+        }
+
+        // Render root + recursive children. expandedSet persists across renders.
+        const header = `<div class="tree-header">
+          <span></span><span>uiKey</span><span>X</span><span>Y</span><span>Strategy</span><span>Conf</span><span>Status</span><span>Actions</span>
+        </div>`;
+        const roots = (childrenMap.get("") || []).sort();
+        elementsContainer.innerHTML = header + roots.map((k) => renderTreeNode(k, childrenMap, status.registry)).join("");
+      }
+      renderDiscoveryGaps(status);
+    }
+
+    // P5 — surface discovery GAPS so missing elements are visible + actionable:
+    //   1. Missing expected elements (in expectedElements but not in registry)
+    //      → [AI Recover] + [Pick in Game] per key.
+    //   2. AI auto-added extras (game-specific buttons beyond expected list,
+    //      already added to the registry as pending) → informational; verify
+    //      in the tree above (Click → Confirm / rename / remove).
+    function renderDiscoveryGaps(status) {
+      const container = $("#discoveryGaps");
+      if (!container) return;
+      const registry = status.registry || {};
+      const expected = Array.isArray(status.expectedElements) ? status.expectedElements : [];
+      const missing = expected.filter((k) => !registry[k]);
+      const autoAdded = Array.isArray(status.discoveryAutoAdded) ? status.discoveryAutoAdded : [];
+
+      let html = "";
+      if (missing.length > 0) {
+        const rows = missing.map((k) => `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid #1a1f2a;">
+          <code style="flex:1;color:#f0a39e;">${escapeHtml(k)}</code>
+          <button class="purple" style="font-size:11px;padding:3px 8px;" onclick="doAiRecover('${k}')" title="AI vision searches the current screen for this element">AI Recover</button>
+          <button style="background:#d97706;font-size:11px;padding:3px 8px;" onclick="doCaptureClick('${k}')" title="Click the actual button in the Playwright window to capture its coord">Pick in Game</button>
+        </div>`).join("");
+        html += `<div style="margin-top:12px;padding:8px 12px;background:#241318;border:1px solid #3a1f26;border-radius:6px;">
+          <div style="color:#f0a39e;font-weight:600;font-size:12px;margin-bottom:4px;">⚠ Missing expected elements (${missing.length}/${expected.length})</div>
+          <div style="color:#8b939c;font-size:11px;margin-bottom:6px;">These elements were expected but not detected. Recover via AI or pick manually.</div>
+          ${rows}
+        </div>`;
+      } else if (expected.length > 0) {
+        html += `<div style="margin-top:12px;padding:6px 12px;background:#10231a;border:1px solid #1f3a2b;border-radius:6px;color:#9be0bc;font-size:12px;">✓ All ${expected.length} expected elements detected.</div>`;
+      }
+
+      if (autoAdded.length > 0) {
+        const rows = autoAdded.map((s) => `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid #1a1f2a;">
+          <div style="flex:1;">
+            <code style="color:#c8d0d8;">${escapeHtml(s.key)}</code>
+            <span style="color:#5e6772;font-size:10px;">(${s.x},${s.y}) · conf ${(s.confidence ?? 0).toFixed(2)}</span>
+            ${s.note ? `<div style="color:#8b939c;font-size:10px;">${escapeHtml(s.note)}</div>` : ""}
+          </div>
+          <button style="background:#d97706;font-size:11px;padding:3px 8px;" onclick="doCaptureClick('${escapeHtml(s.key)}')" title="Re-pick this button in the Playwright window if the auto-detected coord is wrong">Re-pick</button>
+        </div>`).join("");
+        html += `<div style="margin-top:10px;padding:8px 12px;background:#13202b;border:1px solid #1f3245;border-radius:6px;">
+          <div style="color:#7da3d8;font-weight:600;font-size:12px;margin-bottom:4px;">🤖 AI auto-added extras (${autoAdded.length})</div>
+          <div style="color:#8b939c;font-size:11px;margin-bottom:6px;">Game-specific buttons the AI found beyond the standard set — added to the registry as <strong>pending</strong>. Verify each in the tree above (Click → Confirm), or rename/remove. Re-pick if the coord looks off.</div>
+          ${rows}
+        </div>`;
+      }
+
+      container.innerHTML = html;
+    }
+
+    // Set of keys whose children are visible. Persists across re-renders.
+    const expandedSet = new Set();
+
+    function renderTreeNode(key, childrenMap, registry) {
+      const el = registry[key];
+      const lastDelim = key.lastIndexOf("__");
+      const displayKey = lastDelim === -1 ? key : key.slice(lastDelim + 2);
+      const children = (childrenMap.get(key) || []).sort();
+      const hasChildren = children.length > 0;
+      const isExpanded = expandedSet.has(key);
+      const vs = el?.status || "pending";
+      const toggleBtn = hasChildren
+        ? `<button class="tree-toggle" onclick="toggleNode('${key}')">${isExpanded ? '▼' : '▶'}</button>`
+        : `<button class="tree-toggle invisible">·</button>`;
+
+      const childSummary = hasChildren
+        ? ` <span style="color: #5e6772; font-size: 10px;">[${children.length}]</span>`
+        : "";
+
+      const row = `<div class="tree-node">
+        ${toggleBtn}
+        <span class="tree-key" title="${key}"><code>${displayKey}</code>${childSummary}</span>
+        <span class="num">${el?.x ?? '—'}</span>
+        <span class="num">${el?.y ?? '—'}</span>
+        <span style="font-size: 11px; color: #8b939c;">${el?.strategy || ''}</span>
+        <span class="num">${(el?.confidence ?? 0).toFixed(2)}</span>
+        <span><span class="pill ${vs}">${vs}</span></span>
+        <span class="tree-actions">
+          <button onclick="doClick('${key}')">Test</button>
+          <button class="green" onclick="doConfirm('${key}')">✓ Verify</button>
+          ${hasChildren ? `<button class="green" title="Verify ALL ${children.length} child element(s) under ${key}" onclick="doConfirmChildren('${key}')">✓ All (${children.length})</button>` : ""}
+          <button style="background: #d97706;" onclick="doCaptureClick('${key}')">Pick</button>
+          <button class="purple" onclick="doDiscoverFromButton('${key}')">Discover</button>
+          <button class="green" title="Add child element under this key (prefills '${key}__' in form)" onclick="doAddChild('${key}')">+</button>
+          <button class="gray" title="Copy key to Add Element form (edit & repick)" onclick="doCopyKey('${key}')">⧉</button>
+          <button class="gray" onclick="doRemove('${key}')">×</button>
+        </span>
+      </div>`;
+
+      if (!hasChildren || !isExpanded) return row;
+      return row + `<div class="tree-children">${children.map((c) => renderTreeNode(c, childrenMap, registry)).join("")}</div>`;
+    }
+
+    window.toggleNode = (key) => {
+      if (expandedSet.has(key)) expandedSet.delete(key);
+      else expandedSet.add(key);
+      if (currentStatus) renderStatus(currentStatus);
+    };
+
+    async function refresh() {
+      let status = null;
+      try {
+        status = await api("/api/qa/manual/status");
+        renderStatus(status);
+      } catch (err) { toast(err.message, true); }
+      await refreshGames();
+      // Auto-load cases for the active game (page reload while session live).
+      if (status) await autoLoadCasesForActive(status);
+    }
+
+    async function refreshGames() {
+      try {
+        const r = await api("/api/qa/manual/games");
+        renderGames(r.games);
+      } catch (err) {
+        $("#gamesList").innerHTML = `<p class="empty">Failed to load: ${err.message}</p>`;
+      }
+    }
+
+    function renderGames(games) {
+      const list = $("#gamesList");
+      if (!games || games.length === 0) {
+        list.innerHTML = `<p class="empty">No registered games yet — start a new session below.</p>`;
+        return;
+      }
+      const activeSlug = currentStatus?.active ? currentStatus.gameSlug : null;
+      list.innerHTML = `<table>
+        <thead><tr>
+          <th>Game</th><th>URL</th><th>Created</th>
+          <th>Verified</th><th></th>
+        </tr></thead>
+        <tbody>${games.map((g) => {
+          const isActive = activeSlug === g.gameSlug;
+          const rowStyle = isActive
+            ? `style="background:#16243a;box-shadow:inset 3px 0 0 #4f7cff;"`
+            : "";
+          const activeBadge = isActive
+            ? `<span style="display:inline-block;margin-left:6px;font-size:10px;font-weight:700;color:#9bb8ff;background:#23365c;padding:1px 6px;border-radius:8px;vertical-align:middle;">● ACTIVE</span>`
+            : "";
+          const nameCell = (g.gameName && g.gameName !== g.gameSlug)
+            ? `<div style="font-weight:600;color:#e6edf3;font-size:13px;">${escapeHtml(g.gameName)}${activeBadge}</div>
+               <div style="font-size:11px;color:#8b939c;margin-top:2px;"><code>${g.gameSlug}</code>${g.provider ? ` · ${escapeHtml(g.provider)}` : ""}</div>`
+            : `<div style="font-weight:600;color:#e6edf3;font-size:13px;"><code>${g.gameSlug}</code>${activeBadge}</div>${g.provider ? `<div style="font-size:11px;color:#8b939c;margin-top:2px;">${escapeHtml(g.provider)}</div>` : ""}`;
+          // Open (when idle) OR Stop & Save (when this row's session is active).
+          const openOrStop = isActive
+            ? `<button class="red" onclick="doStopSession()" title="Stop & save the active session for this game">Stop &amp; Save</button>`
+            : `<button onclick="doResume('${g.gameSlug}')">Open</button>`;
+          return `<tr ${rowStyle}>
+          <td>${nameCell}</td>
+          <td>
+            <input type="text" value="${g.gameUrl.replace(/"/g, '&quot;')}" id="url-${g.gameSlug}" style="width: 320px; font-size: 11px;" title="Edit to change token/URL — registry preserved" />
+            <button class="gray" onclick="doSaveUrl('${g.gameSlug}')" style="font-size: 11px; padding: 4px 8px;">Save</button>
+          </td>
+          <td>${new Date(g.createdAt).toLocaleString()}</td>
+          <td class="num"><span class="pill verified">${g.verifiedCount}</span></td>
+          <td style="white-space: nowrap;">
+            ${openOrStop}
+            <button class="purple" onclick="doGenerateCases('${g.gameSlug}')" title="Generate test cases (AI catalog + translations only — stops here)">Generate Cases</button>
+            <button class="gray" onclick="doLoadCases('${g.gameSlug}')" title="Load cases from disk (no session needed)">Load Cases</button>
+            <button style="background: #4f7cff;" onclick="doRunStats('${g.gameSlug}')" title="Massive spin + RTP/hit-rate/volatility stats only (no case execution)">Run Stats</button>
+            <label style="font-size: 11px; color: #8b939c; margin-left: 8px;">spins: <input type="number" id="spins-${g.gameSlug}" value="100" min="1" max="100000" style="width: 70px; font-size: 11px;" title="Spin count for Run Stats / Run Cases" /></label>
+            <button class="red" onclick="doDeleteGame('${g.gameSlug}')" style="font-size: 11px; padding: 4px 8px; margin-left: 12px;" title="Delete this game + ALL related fixtures (registry, cases, scenarios, stats). Irreversible.">Delete</button>
+          </td>
+        </tr>`;
+        }).join("")}</tbody></table>`;
+    }
+
+    // Stage 1: Generate test cases (AI catalog + translations only — no execution, no spins)
+    window.doGenerateCases = async (gameSlug) => {
+      const url = document.getElementById(`url-${gameSlug}`).value.trim();
+      if (!url) return toast("URL empty", true);
+      try {
+        const body = await api("/api/qa/cold", {
+          method: "POST",
+          body: { url, mode: "api", stopAfterCatalog: true },
+        });
+        toast(`Generate Cases started · task=${body.id} · ~3-5 min`);
+        subscribeTaskLog(body.id, {
+          label: `Generate Cases · ${gameSlug} · task=${body.id.slice(-6)}`,
+          // Catalog re-gen redefines case assertions → backend already cleared
+          // the persisted result.json + history. Drop the browser localStorage
+          // cache too so the dashboard shows "not run yet" instead of stale
+          // pass/fail. Reload the list if it's the one on screen.
+          onDone: (code) => {
+            if (code !== 0) return;
+            try { localStorage.removeItem(caseResultsKey(gameSlug)); } catch {}
+            if (window.__lastCasesSlug === gameSlug) {
+              window.__caseResults = {};
+              loadCasesForSlug(gameSlug, { scrollToTop: false });
+            }
+            toast(`Generate done · stale results cleared for ${gameSlug}`);
+          },
+        });
+        showPipelinePane(true);
+      } catch (err) { toast(err.message, true); }
+    };
+
+    // Stats only: massive spin + RTP/volatility, skip case execution
+    window.doRunStats = async (gameSlug) => {
+      const spinsInput = document.getElementById(`spins-${gameSlug}`);
+      const spins = Number(spinsInput?.value) || 100;
+      try {
+        const body = await api("/api/qa/warm", {
+          method: "POST",
+          body: { game: gameSlug, spins, mode: "api", skipCases: true },
+        });
+        const estMin = spins <= 100 ? "<1 min" : spins <= 1000 ? "~3 min" : "~10+ min";
+        toast(`Run Stats started · ${spins} spins · ${estMin}`);
+        subscribeTaskLog(body.id, { label: `Run Stats · ${gameSlug} · ${spins} spins · task=${body.id.slice(-6)}` });
+        showPipelinePane(true);
+      } catch (err) { toast(err.message, true); }
+    };
+
+    // Stage 2: Run cases sequentially in the active browser session.
+    // Frontend iterates: highlight row → click Run logic → wait → next.
+    // Uses currently-loaded cases (must Load Cases first) + active session
+    // (must Open game first). Same code path as single Run, just looped.
+    let runCasesCancelFlag = false;
+    window.doRunCases = async (gameSlug, mode = "all") => {
+      // Sanity check: need an active session targeting this game.
+      const status = await api("/api/qa/manual/status").catch(() => ({ active: false }));
+      if (!status.active || status.gameSlug !== gameSlug) {
+        return toast(`Click [Open] for ${gameSlug} first (need active browser session)`, true);
+      }
+      // Ensure cases are loaded (also populates window.__caseResults from
+      // localStorage + server so "unrun" filtering is accurate).
+      if (!window.__cases || window.__lastCasesSlug !== gameSlug) {
+        toast(`Loading cases for ${gameSlug}…`);
+        await loadCasesForSlug(gameSlug);
+      }
+      const allCases = window.__cases || [];
+      let runnable = allCases.filter((c) => c.actionCount > 0);
+      const modeLabel = mode === "unrun" ? "Run unrun" : "Run all";
+      if (mode === "unrun") {
+        // "Unrun" = no PASS/FAIL verdict yet: never executed OR last outcome
+        // was "skip" (e.g. ensure-main failed, no spin captured — transient,
+        // worth retrying). pass/fail cases are considered done. Note: cases
+        // with no actions (actionCount===0) are already excluded above, so
+        // only retryable runtime-skips get picked up here.
+        runnable = runnable.filter((c) => {
+          const r = window.__caseResults?.[c.id];
+          return !r || r.status === "skip";
+        });
+        if (runnable.length === 0) {
+          return toast("All runnable cases already have a pass/fail verdict — nothing to run", true);
+        }
+      }
+      if (runnable.length === 0) return toast("No runnable cases (all skipped)", true);
+
+      runCasesCancelFlag = false;
+      toggleRunAllUi(true, runnable.length);
+      // Live progress table at top — updated in place, no per-row scroll/jump.
+      startRunProgress(runnable, modeLabel);
+
+      // Inter-case max-wait: cap on how long we'll poll for game to return
+      // to main screen before proceeding (or giving up). Pulled from input;
+      // clamped to [5, 600]. Backend polls every 2s, exits as soon as on-main.
+      const maxWaitInput = document.getElementById("runAllMaxWaitSec");
+      const maxWaitSec = Math.max(5, Math.min(600, parseInt(maxWaitInput?.value ?? "90", 10) || 90));
+      // Whether to run behavioral probe (C) — consumes 1 spin per case for
+      // strict confirmation we're on main. Default off (B alone is usually enough).
+      const probeOn = document.getElementById("runAllProbe")?.checked === true;
+
+      let pass = 0, fail = 0, skip = 0, skippedNotOnMain = 0;
+      for (let i = 0; i < runnable.length; i++) {
+        if (runCasesCancelFlag) {
+          appendLog(`[run-all] cancelled at ${i}/${runnable.length}`);
+          toast(`Cancelled at ${i}/${runnable.length}`);
+          break;
+        }
+        const c = runnable[i];
+        updateRunAllProgress(i + 1, runnable.length, `${c.id} · pre-flight (ensure-main)`);
+        setRunProgressStatus(c.id, "running", "pre-flight");
+        appendLog(`[run-all] ${i + 1}/${runnable.length} ${c.id} pre-flight check…`);
+
+        // Pre-flight: verify on main screen (OCR + dark overlay + optional probe)
+        // Auto-recover via ESC+corner click if popup detected.
+        let onMain = true;
+        try {
+          const em = await api("/api/qa/manual/ensure-main", {
+            method: "POST",
+            body: { probe: probeOn, autoRecover: true, maxRecoverAttempts: 2 },
+          });
+          onMain = em.onMain;
+          const layerSummary = [
+            em.layers?.ocr ? `ocr=${em.layers.ocr.hasPopup ? 'POPUP[' + em.layers.ocr.matched.join(',') + ']' : 'clean'}` : null,
+            em.layers?.overlay ? `overlay=${em.layers.overlay.overlayPresent ? 'DARK' : 'clean'}` : null,
+            em.layers?.probe ? `probe=${em.layers.probe.spinFired ? 'fired' : 'NO-SPIN'}` : null,
+          ].filter(Boolean).join(" · ");
+          appendLog(`[run-all] ${c.id} ensure-main: onMain=${onMain} recovered=${em.recovered} ${layerSummary}${em.reason ? ' · ' + em.reason : ''}`);
+        } catch (err) {
+          appendLog(`[run-all] ${c.id} ensure-main error: ${err.message} — proceeding anyway`);
+          onMain = true; // don't block on infra error
+        }
+
+        if (!onMain) {
+          appendLog(`[run-all] ${c.id} SKIPPED — could not return to main screen`);
+          window.__caseResults = window.__caseResults || {};
+          window.__caseResults[c.id] = {
+            caseId: c.id, status: "skip", actionsExecuted: 0, actionsTotal: 0,
+            assertions: [], skipReason: "ensure-main failed — game not on main screen",
+            durationMs: 0, ranAt: new Date().toLocaleTimeString(),
+          };
+          saveCaseResults(gameSlug, window.__caseResults);
+          setRunProgressStatus(c.id, "skip", "not on main");
+          skip++;
+          skippedNotOnMain++;
+        } else {
+          updateRunAllProgress(i + 1, runnable.length, c.id);
+          appendLog(`[run-all] ${i + 1}/${runnable.length} ${c.id} starting…`);
+          setRunProgressStatus(c.id, "running");
+          try {
+            // Quiet backend run — no per-row expand/scroll/re-render; the
+            // progress table above shows status.
+            const r = await runCaseBackend(c.id, { ensureMain: false }); // loop already pre-flighted
+            const status = r?.status ?? "skip";
+            setRunProgressStatus(c.id, status);
+            if (status === "pass") pass++;
+            else if (status === "fail") fail++;
+            else skip++;
+          } catch (err) {
+            appendLog(`[run-all] ${c.id} error: ${err.message}`);
+            setRunProgressStatus(c.id, "fail", err.message);
+            fail++;
+          }
+        }
+
+        // Smart inter-case wait: poll wait-for-main until game settles back
+        // to the play screen, or maxWaitSec elapses. No fixed delay — fast
+        // cases proceed immediately; slow cases (cascade, free spins) get
+        // the time they need. Cancelable via runCasesCancelFlag.
+        if (i < runnable.length - 1 && !runCasesCancelFlag) {
+          const startWait = Date.now();
+          updateRunAllProgress(i + 1, runnable.length, `${c.id} · waiting for main screen…`);
+          // Poll backend; backend itself loops every 2s internally. We fire
+          // requests with shorter maxWait so we can update progress + check cancel.
+          let total = 0;
+          const cap = maxWaitSec * 1000;
+          let landed = false;
+          while (total < cap && !runCasesCancelFlag) {
+            const chunkMs = Math.min(8000, cap - total);
+            try {
+              const w = await api("/api/qa/manual/wait-for-main", {
+                method: "POST", body: { maxWaitMs: chunkMs, pollMs: 2000 },
+              });
+              total += w.elapsedMs ?? chunkMs;
+              if (w.onMain) {
+                landed = true;
+                appendLog(`[run-all] ${c.id} on main after ${(total / 1000).toFixed(1)}s (${w.polls} polls, ${w.recoveredCount} recoveries)`);
+                break;
+              }
+              updateRunAllProgress(i + 1, runnable.length, `${c.id} · waiting for main · ${(total / 1000).toFixed(0)}s / ${maxWaitSec}s`);
+            } catch (err) {
+              appendLog(`[run-all] ${c.id} wait-for-main error: ${err.message} — proceeding`);
+              break;
+            }
+          }
+          if (!landed && !runCasesCancelFlag) {
+            appendLog(`[run-all] ${c.id} gave up waiting after ${maxWaitSec}s — next case will pre-flight check & may skip`);
+          }
+        }
+      }
+      toggleRunAllUi(false);
+      // Refresh the case list ONCE at the end so per-case rows show final
+      // results (progress table stays visible above for the run overview).
+      renderCases(window.__cases || [], gameSlug);
+      const summary = `${modeLabel} done · ${pass} pass · ${fail} fail · ${skip} skip${skippedNotOnMain > 0 ? ` (${skippedNotOnMain} not-on-main)` : ''}`;
+      toast(summary);
+      appendLog(`[run-all] FINISHED ${summary} out of ${runnable.length}`);
+    };
+
+    function toggleRunAllUi(running, total) {
+      const banner = $("#runAllBanner");
+      if (running) {
+        banner.style.display = "block";
+        banner.innerHTML = `<strong>Running ${total} cases…</strong> <span id="runAllProgress">0/${total}</span> <button onclick="cancelRunAll()" class="red" style="float: right; font-size: 11px;">Cancel</button>`;
+      } else {
+        banner.style.display = "none";
+      }
+    }
+    function updateRunAllProgress(idx, total, caseId) {
+      const el = $("#runAllProgress");
+      if (el) el.textContent = `${idx}/${total} · ${caseId}`;
+    }
+    window.cancelRunAll = () => { runCasesCancelFlag = true; toast("Cancelling after current case…"); };
+
+    // ===== Batch run progress table (top-of-panel, no per-row jumping) =====
+    // Replaces the old per-case expand+scroll+re-render during Run All/Unrun.
+    // A compact table shows every case's live status; updated in place.
+    let runProgressState = []; // [{ id, category, status, detail }]
+
+    const PROG_STATUS = {
+      pending: { cls: "pending", label: "⏳ pending" },
+      running: { cls: "pending", label: "▶ running" },
+      pass:    { cls: "verified", label: "✓ pass" },
+      fail:    { cls: "rejected", label: "✗ fail" },
+      skip:    { cls: "pending", label: "skip" },
+    };
+
+    function startRunProgress(cases, modeLabel) {
+      runProgressState = cases.map((c) => ({ id: c.id, category: c.category || "", status: "pending", detail: "" }));
+      renderRunProgressTable(modeLabel);
+      const el = $("#runProgressTable");
+      if (el) { el.style.display = "block"; el.scrollIntoView({ behavior: "smooth", block: "nearest" }); }
+    }
+
+    function setRunProgressStatus(caseId, status, detail) {
+      const row = runProgressState.find((r) => r.id === caseId);
+      if (row) { row.status = status; if (detail !== undefined) row.detail = detail; }
+      renderRunProgressTable();
+      if (status === "running") {
+        // Scroll the running row into view WITHIN the table only (nearest →
+        // never moves the page, so no chaotic jumping).
+        const tr = document.querySelector(`#runProgressTable tr[data-prog-id="${CSS.escape(caseId)}"]`);
+        tr?.scrollIntoView({ block: "nearest" });
+      }
+    }
+
+    function renderRunProgressTable(modeLabel) {
+      const el = $("#runProgressTable");
+      if (!el) return;
+      const counts = { pending: 0, running: 0, pass: 0, fail: 0, skip: 0 };
+      for (const r of runProgressState) counts[r.status] = (counts[r.status] || 0) + 1;
+      const total = runProgressState.length;
+      const done = counts.pass + counts.fail + counts.skip;
+      const header = `${modeLabel ? modeLabel + " · " : ""}${done}/${total} done · ${counts.pass} ✓ · ${counts.fail} ✗ · ${counts.skip} skip${counts.running ? ` · 1 running` : ""}`;
+      const rows = runProgressState.map((r, i) => {
+        const meta = PROG_STATUS[r.status] || PROG_STATUS.pending;
+        return `<tr data-prog-id="${escapeHtml(r.id)}" onclick="scrollToCaseRow('${escapeHtml(r.id)}')" title="Jump to this case below" style="cursor:pointer;${r.status === "running" ? "background:#16243a;" : ""}border-bottom:1px solid #1a1f2a;">
+          <td style="padding:3px 8px;color:#5e6772;text-align:right;">${i + 1}</td>
+          <td style="padding:3px 8px;"><code>${escapeHtml(r.id)}</code></td>
+          <td style="padding:3px 8px;color:#8b939c;">${escapeHtml(r.category)}</td>
+          <td style="padding:3px 8px;white-space:nowrap;"><span class="pill ${meta.cls}">${meta.label}</span>${r.detail ? ` <span style="color:#8b939c;font-size:10px;">${escapeHtml(r.detail)}</span>` : ""}</td>
+        </tr>`;
+      }).join("");
+      el.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:11px;">
+        <thead><tr style="background:#161a22;color:#c8d0d8;position:sticky;top:0;">
+          <th colspan="4" style="padding:6px 8px;text-align:left;font-size:12px;">🏃 Run progress — ${header}</th>
+        </tr></thead>
+        <tbody>${rows}</tbody></table>`;
+    }
+
+    // Subscribe to a task's SSE log → pipe lines + parse case-runner progress
+    let currentTaskSse = null;
+    let currentReportDir = null;
+    let taskBannerTimer = null;
+    let taskBannerStart = 0;
+    function startTaskBanner(label, status) {
+      const banner = document.getElementById("taskBanner");
+      const lbl = document.getElementById("taskBannerLabel");
+      const st = document.getElementById("taskBannerStatus");
+      const el = document.getElementById("taskBannerElapsed");
+      if (!banner) return;
+      banner.style.display = "block";
+      lbl.textContent = label;
+      st.textContent = status || "starting…";
+      taskBannerStart = Date.now();
+      el.textContent = "0s";
+      if (taskBannerTimer) clearInterval(taskBannerTimer);
+      taskBannerTimer = setInterval(() => {
+        const s = Math.floor((Date.now() - taskBannerStart) / 1000);
+        const mm = Math.floor(s / 60);
+        const ss = s % 60;
+        el.textContent = mm > 0 ? `${mm}m ${ss}s` : `${ss}s`;
+      }, 1000);
+    }
+    function updateTaskBanner(status) {
+      const st = document.getElementById("taskBannerStatus");
+      if (st) st.textContent = status;
+    }
+    function stopTaskBanner(finalStatus, isError) {
+      const banner = document.getElementById("taskBanner");
+      const lbl = document.getElementById("taskBannerLabel");
+      const st = document.getElementById("taskBannerStatus");
+      if (!banner) return;
+      if (taskBannerTimer) { clearInterval(taskBannerTimer); taskBannerTimer = null; }
+      lbl.textContent = isError ? "✗ Pipeline failed" : "✓ Pipeline done";
+      banner.style.background = isError
+        ? "linear-gradient(90deg, #dc2626, #b91c1c)"
+        : "linear-gradient(90deg, #16a34a, #15803d)";
+      st.textContent = finalStatus || "";
+      // Auto-fade after 8s
+      setTimeout(() => {
+        banner.style.display = "none";
+        banner.style.background = "linear-gradient(90deg, #2563eb, #1d4ed8)";
+      }, 8000);
+    }
+
+    function subscribeTaskLog(taskId, opts = {}) {
+      if (currentTaskSse) {
+        currentTaskSse.close();
+        currentTaskSse = null;
+      }
+      currentReportDir = null;
+      const shortId = taskId.slice(-6);
+      appendLog(`[task:${taskId}] subscribing to SSE stream…`);
+      startTaskBanner(opts.label ?? `Pipeline task ${shortId} running…`, "subscribing to log stream");
+      // Auto-scroll to App Log so user sees activity. Done in next frame so
+      // banner renders first.
+      requestAnimationFrame(() => {
+        document.getElementById("appLog")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      });
+      const sse = new EventSource(`/api/qa/tasks/${taskId}/stream`);
+      currentTaskSse = sse;
+      let lastNonEmpty = "";
+      sse.onmessage = (e) => {
+        appendLog(`[task:${shortId}] ${e.data}`);
+        handleTaskLogLine(e.data);
+        if (e.data && e.data.trim()) lastNonEmpty = e.data.trim().slice(0, 120);
+        updateTaskBanner(lastNonEmpty || "running…");
+        const exitMatch = e.data.match(/\[exit\] code=(\d+)/);
+        if (exitMatch) {
+          sse.close();
+          currentTaskSse = null;
+          appendLog(`[task:${taskId}] stream closed`);
+          const code = Number(exitMatch[1]);
+          stopTaskBanner(code === 0 ? `done · exit=0` : `failed · exit=${code}`, code !== 0);
+          // Fetch full report JSON to populate detailed assertions/spins per case.
+          if (currentReportDir) setTimeout(() => applyReportResults(currentReportDir), 1500);
+          if (typeof opts.onDone === "function") {
+            try { opts.onDone(code); } catch (err) { console.warn("onDone failed:", err); }
+          }
+        }
+      };
+      sse.onerror = () => {
+        appendLog(`[task:${taskId}] SSE error (may be normal if task ended)`);
+      };
+    }
+
+    function handleTaskLogLine(line) {
+      // Sniff report dir (used after task exits to fetch full report.json)
+      const dirMatch = line.match(/fixtures\/test-runs\/([^\s/]+)/);
+      if (dirMatch) currentReportDir = dirMatch[1];
+
+      // Parse "[case-runner] N/M caseId → status (skipReason?)"
+      const caseMatch = line.match(/\[case-runner\] (\d+)\/(\d+) (\S+) → (\w+)(?:\s+\((.+?)\))?\s*$/);
+      if (caseMatch) {
+        const [, idx, total, caseId, status, skipReason] = caseMatch;
+        handleCaseProgress(caseId, status, skipReason, Number(idx), Number(total));
+      }
+    }
+
+    function handleCaseProgress(caseId, status, skipReason, idx, total) {
+      if (!window.__caseResults) window.__caseResults = {};
+      const prev = window.__caseResults[caseId] || {};
+      window.__caseResults[caseId] = {
+        ...prev,
+        caseId,
+        status,
+        skipReason,
+        actionsExecuted: prev.actionsExecuted ?? 0,
+        durationMs: prev.durationMs ?? 0,
+        assertions: prev.assertions ?? [],
+        assertionsTotal: prev.assertionsTotal ?? 0,
+        assertionsPass: prev.assertionsPass ?? 0,
+        ranAt: new Date().toISOString(),
+      };
+      if (window.__lastCasesSlug) saveCaseResults(window.__lastCasesSlug, window.__caseResults);
+      // Re-render so row shows new status pill
+      renderCases(window.__cases || [], window.__lastCasesSlug);
+      // Scroll + highlight the row
+      highlightCaseRow(caseId);
+      toast(`${idx}/${total}: ${caseId} → ${status}`);
+    }
+
+    function highlightCaseRow(caseId) {
+      const row = document.querySelector(`tr[data-case-id="${CSS.escape(caseId)}"]`);
+      if (!row) return;
+      row.scrollIntoView({ behavior: "smooth", block: "center" });
+      // Briefly flash background
+      row.classList.remove("flash");
+      // Force reflow then add for animation restart
+      void row.offsetWidth;
+      row.classList.add("flash");
+      setTimeout(() => row.classList.remove("flash"), 2200);
+    }
+
+    // Click a Run-progress row → expand that case in the list below + scroll to
+    // it (so QA can inspect its result/assertions). Re-renders once to ensure
+    // the expanded row exists, then scrolls + flashes.
+    window.scrollToCaseRow = (caseId) => {
+      if (!document.querySelector(`tr[data-case-id="${CSS.escape(caseId)}"]`)) {
+        toast(`Case ${caseId} not in the list — click Load Cases first`, true);
+        return;
+      }
+      expandedCases.add(caseId);
+      renderCases(window.__cases || [], window.__lastCasesSlug);
+      requestAnimationFrame(() => highlightCaseRow(caseId));
+    };
+
+    const LAST_REPORT_KEY = "lastRunReportDir";
+
+    async function applyReportResults(reportDir) {
+      try {
+        const r = await fetch(`/api/qa/runs/${encodeURIComponent(reportDir)}/report.json`);
+        if (!r.ok) {
+          appendLog(`[report] fetch failed HTTP ${r.status}`);
+          // Clear stale pointer so we don't auto-restore a deleted run on next reload
+          if (r.status === 404) localStorage.removeItem(LAST_REPORT_KEY);
+          return;
+        }
+        const report = await r.json();
+        // ALWAYS render the warm/cold-start aggregate summary (RTP, hit-rate,
+        // skip reason, report links). Previously only `caseRun.cases` was
+        // surfaced → qa:warm runs (which have no per-case section but DO
+        // have massive/stats/rules) silently produced nothing on dashboard.
+        renderRunSummary(report, reportDir);
+        // Persist pointer so the panel survives page reloads. We re-fetch
+        // (rather than caching the full JSON) so QA always sees fresh data
+        // if the run is updated server-side.
+        try { localStorage.setItem(LAST_REPORT_KEY, reportDir); } catch {}
+
+        const cases = report.caseRun?.cases || [];
+        if (cases.length > 0) {
+          const slug = window.__lastCasesSlug;
+          if (!window.__caseResults) window.__caseResults = {};
+          for (const c of cases) {
+            const assertionsTotal = c.assertions?.length ?? 0;
+            const assertionsPass = (c.assertions || []).filter((a) => a.pass).length;
+            window.__caseResults[c.caseId] = {
+              ...c,
+              assertionsTotal,
+              assertionsPass,
+              ranAt: new Date().toISOString(),
+            };
+          }
+          if (slug) saveCaseResults(slug, window.__caseResults);
+          renderCases(window.__cases || [], slug);
+          appendLog(`[report] loaded ${cases.length} full case results from report.json`);
+          toast(`Loaded ${cases.length} case results from report`);
+        } else {
+          appendLog(`[report] no caseRun.cases in report — surfacing aggregate summary only`);
+        }
+      } catch (err) {
+        appendLog(`[report] failed to apply: ${err.message}`);
+      }
+    }
+
+    /**
+     * Render the qa:warm / qa:cold aggregate report into a sticky panel near
+     * the top of the dashboard. Shows: provider/game info, massive-spin
+     * outcome (or skipReason), aggregate stats (RTP / hit-rate / volatility),
+     * rule engine summary, and clickable links to the HTML + PDF reports.
+     */
+    function renderRunSummary(report, reportDir) {
+      const host = document.getElementById("runSummaryPanel") || (() => {
+        const div = document.createElement("div");
+        div.id = "runSummaryPanel";
+        div.style.cssText = "margin: 12px 0; padding: 12px 14px; background: #161a22; border: 1px solid #2a3140; border-radius: 6px;";
+        // Insert at top of main content area (after toolbar)
+        const target = document.querySelector("table") || document.body;
+        target.parentNode.insertBefore(div, target);
+        return div;
+      })();
+
+      const crawl = report.crawl || {};
+      const massive = report.massive || {};
+      const stats = report.stats || {};
+      const rules = report.rules || {};
+      const skipReason = massive.skipReason;
+      const rtpPct = stats.totalSpins > 0 ? (stats.rtp * 100).toFixed(2) + "%" : "—";
+      const hitPct = stats.totalSpins > 0 ? (stats.hitRate * 100).toFixed(2) + "%" : "—";
+
+      const skipBanner = skipReason
+        ? `<div style="background: #2a1f0e; border-left: 3px solid #d97706; padding: 8px 10px; margin-bottom: 10px; border-radius: 3px; font-size: 12px; color: #fbbf24;">
+             <strong>⚠ massive-spin skipped:</strong> ${escapeHtml(skipReason)}
+           </div>`
+        : "";
+
+      // High-variance warning: RTP/HitRate from <1000 spins on high-volatility
+      // slot games (cluster/cascade) can swing wildly. One big-win spin in 100
+      // can push RTP from 90% to 300%+. Surface this to QA so the absurd
+      // numbers aren't read as engine bugs.
+      const lowSampleBanner = (stats.totalSpins > 0 && stats.totalSpins < 1000)
+        ? `<div style="background:#1d233a;border-left:3px solid #3b82f6;padding:8px 10px;margin-bottom:10px;border-radius:3px;font-size:12px;color:#93c5fd;">
+             <strong>ⓘ Small sample (${stats.totalSpins} spins):</strong> RTP / Hit Rate
+             have high variance under ${stats.totalSpins.toLocaleString()} spins on volatile slots —
+             one big-win spin can swing RTP &gt;300%. Run 1,000+ spins for stable values.
+           </div>`
+        : "";
+
+      // Collect ALL failing rule results across all spins, then cap visible
+      // rows at 10 — store full list on window for the "Show all" toggle.
+      const allMismatches = [];
+      for (const spinEntry of rules.results ?? []) {
+        for (const rr of spinEntry.results ?? []) {
+          if (rr.pass === false) {
+            allMismatches.push({
+              roundIndex: spinEntry.roundIndex,
+              ruleName: rr.ruleName,
+              severity: rr.severity ?? "error",
+              expected: rr.expected,
+              actual: rr.actual,
+              detail: rr.detail,
+            });
+          }
+        }
+      }
+      window.__allMismatches = allMismatches;
+      const mismatches = allMismatches.slice(0, 10);
+      const totalFailed = rules.failed ?? allMismatches.length;
+      const mismatchHtml = mismatches.length === 0
+        ? ""
+        : (() => {
+            const rows = mismatches.map((m) => {
+              const sevColor = m.severity === "error" ? "#d9534f" : m.severity === "warn" ? "#d97706" : "#5e6772";
+              const expectedStr = m.expected !== undefined ? JSON.stringify(m.expected) : "—";
+              const actualStr = m.actual !== undefined ? JSON.stringify(m.actual) : "—";
+              const detail = m.detail ? `<div style="color:#f0a39e;font-size:11px;margin-top:3px;font-family:ui-monospace,monospace;white-space:pre-wrap;">${escapeHtml(m.detail)}</div>` : "";
+              return `
+                <tr>
+                  <td style="padding:6px 8px;color:#8b939c;font-family:ui-monospace,monospace;">#${m.roundIndex}</td>
+                  <td style="padding:6px 8px;"><span style="color:${sevColor};font-size:10px;text-transform:uppercase;">${m.severity}</span></td>
+                  <td style="padding:6px 8px;font-weight:600;">${escapeHtml(m.ruleName)}</td>
+                  <td style="padding:6px 8px;font-family:ui-monospace,monospace;font-size:11px;color:#29b673;">${escapeHtml(expectedStr)}</td>
+                  <td style="padding:6px 8px;font-family:ui-monospace,monospace;font-size:11px;color:#d9534f;">${escapeHtml(actualStr)}</td>
+                </tr>
+                ${detail ? `<tr><td colspan="5" style="padding:0 8px 8px 8px;">${detail}</td></tr>` : ""}
+              `;
+            }).join("");
+            const moreNote = allMismatches.length > mismatches.length
+              ? `<div style="margin-top:6px;display:flex;justify-content:space-between;align-items:center;font-size:11px;">
+                  <span style="color:#8b939c;font-style:italic;">…showing ${mismatches.length} of ${allMismatches.length} mismatches.</span>
+                  <span>
+                    <button onclick="window.expandAllMismatches()" style="background:#3b82f6;color:#fff;font-size:11px;padding:3px 10px;border-radius:3px;border:0;cursor:pointer;margin-right:6px;">Show all ${allMismatches.length}</button>
+                    <a href="/api/qa/runs/${encodeURIComponent(reportDir)}/report.html" target="_blank" style="color:#3b82f6;">HTML report ↗</a>
+                  </span>
+                </div>`
+              : "";
+            return `
+              <details style="margin-top:12px;background:#0b0e13;border:1px solid #232a35;border-radius:4px;padding:8px 10px;" open>
+                <summary style="cursor:pointer;color:#d9534f;font-size:12px;font-weight:600;">🚨 Game rule mismatches (${mismatches.length}${allMismatches.length > mismatches.length ? `/${allMismatches.length}` : ""})</summary>
+                <div style="margin-top:8px;overflow-x:auto;">
+                  <table id="mismatchTable" style="width:100%;border-collapse:collapse;font-size:12px;">
+                    <thead>
+                      <tr style="color:#8b939c;font-size:10px;text-transform:uppercase;text-align:left;border-bottom:1px solid #232a35;">
+                        <th style="padding:4px 8px;">Round</th>
+                        <th style="padding:4px 8px;">Severity</th>
+                        <th style="padding:4px 8px;">Rule</th>
+                        <th style="padding:4px 8px;">Expected</th>
+                        <th style="padding:4px 8px;">Actual</th>
+                      </tr>
+                    </thead>
+                    <tbody id="mismatchTbody">${rows}</tbody>
+                  </table>
+                  ${moreNote}
+                </div>
+              </details>
+            `;
+          })();
+
+      const fmtNum = (n) => typeof n === "number" ? n.toLocaleString() : "—";
+      host.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
+          <div>
+            <div style="color: #8b939c; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;">Run Summary</div>
+            <div style="font-size: 14px; font-weight: 600; margin-top: 2px;">${escapeHtml(crawl.gameName || crawl.gameSlug || "(unknown game)")} <span style="color:#5e6772;font-weight:400;">· ${escapeHtml(crawl.provider || "?")} · ${escapeHtml(reportDir)}</span></div>
+          </div>
+          <div style="display:flex;gap:8px;font-size:11px;align-items:center;">
+            <a href="/api/qa/runs/${encodeURIComponent(reportDir)}/report.html" target="_blank" style="background:#3b82f6;color:#fff;padding:5px 10px;border-radius:4px;text-decoration:none;">📄 HTML</a>
+            <a href="/api/qa/runs/${encodeURIComponent(reportDir)}/report.pdf" target="_blank" style="background:#16a34a;color:#fff;padding:5px 10px;border-radius:4px;text-decoration:none;">📥 PDF</a>
+            <a href="/api/qa/runs/${encodeURIComponent(reportDir)}/report.json" target="_blank" style="background:#5e6772;color:#fff;padding:5px 10px;border-radius:4px;text-decoration:none;">{ } JSON</a>
+            <button onclick="window.dismissRunSummary()" title="Hide this panel (also clears the saved pointer)" style="background:transparent;border:1px solid #2a3140;color:#8b939c;font-size:11px;padding:5px 10px;border-radius:4px;cursor:pointer;">✕</button>
+          </div>
+        </div>
+        ${skipBanner}
+        ${lowSampleBanner}
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-top:10px;font-size:12px;">
+          <div style="background:#0b0e13;border:1px solid #232a35;border-radius:4px;padding:8px 10px;">
+            <div style="color:#5e6772;font-size:10px;text-transform:uppercase;">Massive Spin</div>
+            <div style="font-size:13px;font-weight:600;margin-top:3px;">${escapeHtml(massive.mode || "?")} · ${fmtNum(massive.attempted)} attempted</div>
+            <div style="color:#8b939c;font-size:11px;margin-top:2px;">${fmtNum(massive.succeeded)} succeeded · ${(massive.durationMs ?? 0).toLocaleString()}ms</div>
+          </div>
+          <div style="background:#0b0e13;border:1px solid #232a35;border-radius:4px;padding:8px 10px;">
+            <div style="color:#5e6772;font-size:10px;text-transform:uppercase;">RTP</div>
+            <div style="font-size:18px;font-weight:600;margin-top:3px;color:${stats.rtp >= 0.9 && stats.rtp <= 1.1 ? '#29b673' : stats.totalSpins > 0 ? '#d97706' : '#5e6772'};">${rtpPct}</div>
+            <div style="color:#8b939c;font-size:11px;margin-top:2px;">${fmtNum(stats.totalSpins)} spins</div>
+          </div>
+          <div style="background:#0b0e13;border:1px solid #232a35;border-radius:4px;padding:8px 10px;">
+            <div style="color:#5e6772;font-size:10px;text-transform:uppercase;">Hit Rate</div>
+            <div style="font-size:18px;font-weight:600;margin-top:3px;">${hitPct}</div>
+            <div style="color:#8b939c;font-size:11px;margin-top:2px;">volatility: ${escapeHtml(stats.volatility || "—")}</div>
+          </div>
+          <div style="background:#0b0e13;border:1px solid #232a35;border-radius:4px;padding:8px 10px;">
+            <div style="color:#5e6772;font-size:10px;text-transform:uppercase;">Rule Engine</div>
+            <div style="font-size:13px;font-weight:600;margin-top:3px;">
+              <span style="color:#29b673;">${fmtNum(rules.passed)} pass</span> ·
+              <span style="color:${(rules.failed ?? 0) > 0 ? '#d9534f' : '#5e6772'};">${fmtNum(rules.failed)} fail</span>
+            </div>
+            <div style="color:#8b939c;font-size:11px;margin-top:2px;">${fmtNum(rules.totalRules)} rules · ${fmtNum(rules.totalSpins)} spins</div>
+          </div>
+        </div>
+        ${mismatchHtml}
+      `;
+    }
+
+    // Dismiss button handler — clears the persisted pointer + removes panel.
+    window.dismissRunSummary = () => {
+      try { localStorage.removeItem(LAST_REPORT_KEY); } catch {}
+      const el = document.getElementById("runSummaryPanel");
+      if (el) el.remove();
+    };
+
+    // Expand "Show all" button — rebuild tbody with the full mismatches list.
+    window.expandAllMismatches = () => {
+      const all = window.__allMismatches || [];
+      const tbody = document.getElementById("mismatchTbody");
+      if (!tbody) return;
+      tbody.innerHTML = all.map((m) => {
+        const sevColor = m.severity === "error" ? "#d9534f" : m.severity === "warn" ? "#d97706" : "#5e6772";
+        const expectedStr = m.expected !== undefined ? JSON.stringify(m.expected) : "—";
+        const actualStr = m.actual !== undefined ? JSON.stringify(m.actual) : "—";
+        const detail = m.detail ? `<div style="color:#f0a39e;font-size:11px;margin-top:3px;font-family:ui-monospace,monospace;white-space:pre-wrap;">${escapeHtml(m.detail)}</div>` : "";
+        return `
+          <tr>
+            <td style="padding:6px 8px;color:#8b939c;font-family:ui-monospace,monospace;">#${m.roundIndex}</td>
+            <td style="padding:6px 8px;"><span style="color:${sevColor};font-size:10px;text-transform:uppercase;">${m.severity}</span></td>
+            <td style="padding:6px 8px;font-weight:600;">${escapeHtml(m.ruleName)}</td>
+            <td style="padding:6px 8px;font-family:ui-monospace,monospace;font-size:11px;color:#29b673;">${escapeHtml(expectedStr)}</td>
+            <td style="padding:6px 8px;font-family:ui-monospace,monospace;font-size:11px;color:#d9534f;">${escapeHtml(actualStr)}</td>
+          </tr>
+          ${detail ? `<tr><td colspan="5" style="padding:0 8px 8px 8px;">${detail}</td></tr>` : ""}
+        `;
+      }).join("");
+      // Remove the "Show all" / "showing N of M" hint
+      const summary = tbody.closest("details")?.querySelector("summary");
+      if (summary) summary.textContent = `🚨 Game rule mismatches (${all.length})`;
+      const note = tbody.parentElement?.querySelector("div:last-child");
+      if (note && note.tagName === "DIV") note.remove();
+    };
+
+    // Auto-restore the most recent Run Summary on page load. Fetches the
+    // report.json again so QA always sees fresh data (in case the run was
+    // re-generated server-side).
+    async function restoreLastRunSummary() {
+      let dir = null;
+      try { dir = localStorage.getItem(LAST_REPORT_KEY); } catch {}
+      if (!dir) return;
+      await applyReportResults(dir);
+    }
+    // Fire on page init — wrapped in setTimeout to run after the main DOM
+    // wires up so target insertion finds the table.
+    setTimeout(() => { restoreLastRunSummary().catch(() => {}); }, 200);
+
+    // Pipeline pane removed — kept as no-op so existing call sites don't error.
+    function showPipelinePane(_open) { /* no-op */ }
+
+    $("#btnLoadCases").onclick = async () => {
+      // Load for currently-active session, or last loaded slug.
+      const slug = currentStatus?.gameSlug ?? window.__lastCasesSlug;
+      if (!slug) return toast("Click [Load Cases] on a game row first, or Open a session.", true);
+      await loadCasesForSlug(slug);
+    };
+
+    // Run All / Run Unrun now live in the Test Cases panel header (not per-row).
+    // They operate on the active session's game (doRunCases verifies session).
+    $("#btnRunAllCases").onclick = () => {
+      const slug = currentStatus?.gameSlug ?? window.__lastCasesSlug;
+      if (!slug) return toast("Open a game session first (Open on a game row)", true);
+      doRunCases(slug, "all");
+    };
+    $("#btnRunUnrun").onclick = () => {
+      const slug = currentStatus?.gameSlug ?? window.__lastCasesSlug;
+      if (!slug) return toast("Open a game session first (Open on a game row)", true);
+      doRunCases(slug, "unrun");
+    };
+
+    window.doLoadCases = (gameSlug) => loadCasesForSlug(gameSlug);
+
+    async function doBatchRetranslate(mode) {
+      const slug = window.__lastCasesSlug;
+      if (!slug) return toast("Load cases first", true);
+      const cases = window.__cases || [];
+      const candidates = mode === "all" ? cases.length : cases.filter((c) => c.actionCount === 0).length;
+      if (candidates === 0) return toast(`No ${mode} cases to retry`);
+      const cost = (candidates * 0.02).toFixed(2);
+      toast(`Re-translating ${candidates} cases (${mode}) via AI (~${(candidates * 5).toFixed(0)}s, ~$${cost})…`);
+      try {
+        const r = await api("/api/qa/manual/retranslate-all", {
+          method: "POST", body: { gameSlug: slug, mode },
+        });
+        if (r.ok) {
+          toast(`Batch done: ${r.succeeded}/${r.total} succeeded, ${r.stillSkipped} still skipped`);
+          await loadCasesForSlug(slug);
+        } else {
+          toast(`Batch failed: ${r.reason}`, true);
+        }
+      } catch (err) { toast(err.message, true); }
+    }
+    $("#btnRetranslateAll").onclick = () => doBatchRetranslate("skipped");
+    $("#btnRetranslateAllForce").onclick = () => doBatchRetranslate("all");
+
+    $("#btnClearResults").onclick = () => {
+      const slug = window.__lastCasesSlug;
+      if (!slug) return toast("No cases loaded", true);
+      localStorage.removeItem(caseResultsKey(slug));
+      window.__caseResults = {};
+      renderCases(window.__cases || [], slug);
+      toast(`Cleared run results for ${slug}`);
+    };
+
+    async function loadCasesForSlug(slug, opts = {}) {
+      try {
+        const r = await api(`/api/qa/manual/cases?game=${encodeURIComponent(slug)}`);
+        window.__lastCasesSlug = slug;
+        // Restore cached run results from localStorage (fastest, browser-only)
+        window.__caseResults = loadCaseResults(slug);
+        // SERVER fallback (2026-05-25): for any case WITHOUT a cached result,
+        // try fetching the persisted JSON from disk. Survives localStorage
+        // clears + works cross-device. Done in parallel; failures silent.
+        const missing = (r.cases || []).filter((c) => !window.__caseResults[c.id]);
+        if (missing.length > 0) {
+          await Promise.all(missing.map(async (c) => {
+            try {
+              const res = await fetch(`/api/qa/manual/case-result?game=${encodeURIComponent(slug)}&caseId=${encodeURIComponent(c.id)}`);
+              if (res.ok) {
+                const data = await res.json();
+                if (data?.result) window.__caseResults[c.id] = data.result;
+              }
+            } catch { /* silent: no server result yet for this case */ }
+          }));
+          saveCaseResults(slug, window.__caseResults);
+        }
+        // Gap C — fetch per-case stats (passRate + flakyScore) for badges
+        await loadCaseStatsForSlug(slug, (r.cases || []).map((c) => c.id));
+        renderCases(r.cases || [], slug);
+        if (opts.scrollToTop !== false) {
+          document.querySelector("#casesList").scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      } catch (err) { toast(err.message, true); }
+    }
+
+    async function loadCaseStatsForSlug(slug, caseIds) {
+      window.__caseStats = window.__caseStats || {};
+      // Fetch in parallel but cap concurrency to 4 to avoid overwhelming backend
+      const queue = [...caseIds];
+      const workers = Array.from({ length: 4 }, async () => {
+        while (queue.length > 0) {
+          const id = queue.shift();
+          if (!id) return;
+          try {
+            const r = await api(`/api/qa/manual/case-stats?game=${encodeURIComponent(slug)}&caseId=${encodeURIComponent(id)}`);
+            if (r.ok && r.stats) window.__caseStats[id] = r.stats;
+          } catch { /* swallow per-case errors */ }
+        }
+      });
+      await Promise.all(workers);
+    }
+
+    function caseResultsKey(slug) { return `qa.manualVerify.caseResults.${slug}`; }
+    function loadCaseResults(slug) {
+      try {
+        const raw = localStorage.getItem(caseResultsKey(slug));
+        return raw ? JSON.parse(raw) : {};
+      } catch { return {}; }
+    }
+    function saveCaseResults(slug, results) {
+      try { localStorage.setItem(caseResultsKey(slug), JSON.stringify(results)); } catch {}
+    }
+
+    function renderCases(cases, slug) {
+      const list = $("#casesList");
+      if (cases.length === 0) {
+        list.innerHTML = `<p class="empty" style="margin: 0;">No cases for ${slug ?? "?"} — run Generate Cases first.</p>`;
+        return;
+      }
+      // Compute aggregate stats from __caseResults
+      const results = window.__caseResults || {};
+      let pass = 0, fail = 0, skip = 0, notRun = 0;
+      let totalAssertionsPass = 0, totalAssertionsTotal = 0;
+      for (const c of cases) {
+        const r = results[c.id];
+        if (!r) { notRun++; continue; }
+        if (r.status === "pass") pass++;
+        else if (r.status === "fail") fail++;
+        else skip++;
+        totalAssertionsPass += r.assertionsPass ?? 0;
+        totalAssertionsTotal += r.assertionsTotal ?? 0;
+      }
+      const ratio = totalAssertionsTotal > 0 ? ((totalAssertionsPass / totalAssertionsTotal) * 100).toFixed(0) : "—";
+      const statsBar = `<div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 0 0 10px; padding: 8px 12px; background: #0b0e13; border: 1px solid #232a35; border-radius: 5px; font-size: 12px;">
+        <strong style="color: #e8eaed;">${cases.length} cases for <code>${slug ?? '?'}</code></strong>
+        <span><span class="pill verified">${pass} pass</span></span>
+        <span><span class="pill rejected">${fail} fail</span></span>
+        <span><span class="pill pending">${skip} skip</span></span>
+        <span style="color: #5e6772;">·</span>
+        <span style="color: #8b939c;">not run: ${notRun}</span>
+        <span style="color: #5e6772;">·</span>
+        <span style="color: #8b939c;">assertions: ${totalAssertionsPass}/${totalAssertionsTotal} (${ratio}%)</span>
+      </div>`;
+      const header = statsBar;
+      const byCategory = new Map();
+      for (const c of cases) {
+        if (!byCategory.has(c.category)) byCategory.set(c.category, []);
+        byCategory.get(c.category).push(c);
+      }
+      list.innerHTML = header + [...byCategory.entries()].map(([cat, arr]) => `
+        <h3 style="margin: 12px 0 6px; font-size: 12px; color: #b8c0c8;">${cat} (${arr.length})</h3>
+        <table>
+          <thead><tr>
+            <th style="width: 22px;"></th><th>ID</th><th>Name</th><th>Sev</th><th>Actions</th><th>Assertions</th><th>Last Run</th><th></th>
+          </tr></thead>
+          <tbody>${arr.map((c) => caseRowHtml(c)).join("")}</tbody>
+        </table>
+      `).join("");
+      // Stash for inspect modal
+      window.__cases = cases;
+    }
+
+    // Expanded case detail rows
+    const expandedCases = new Set();
+    // Case IDs currently being re-translated by AI — used to render in-progress badge
+    const inFlightRetranslate = new Set();
+
+    function caseRowHtml(c) {
+      const isExpanded = expandedCases.has(c.id);
+      const isTranslating = inFlightRetranslate.has(c.id);
+      const sevPill = c.severity === 'critical' ? 'rejected' : c.severity === 'major' ? 'pending' : 'verified';
+      const lastResult = window.__caseResults?.[c.id];
+      const stats = window.__caseStats?.[c.id];
+      const flakyBadge = stats && stats.totalRuns >= 3
+        ? (() => {
+            const tier = stats.flakyScore >= 0.8 ? "HIGH" : stats.flakyScore >= 0.5 ? "MED" : stats.flakyScore >= 0.2 ? "LOW" : "STABLE";
+            const color = tier === "HIGH" ? "#d9534f" : tier === "MED" ? "#d97706" : tier === "LOW" ? "#d97706" : "#29b673";
+            const pct = (stats.passRate * 100).toFixed(0);
+            return `<span title="${stats.passes}P/${stats.fails}F/${stats.inconclusives}I out of ${stats.totalRuns} runs · flakyScore=${stats.flakyScore}" style="display:inline-block;margin-left:6px;padding:1px 6px;border-radius:3px;background:rgba(255,255,255,0.04);color:${color};font-size:10px;border:1px solid ${color};">${pct}% · ${tier}</span>`;
+          })()
+        : "";
+      const resultCell = lastResult
+        ? `<span class="pill ${lastResult.status === 'pass' ? 'verified' : lastResult.status === 'fail' ? 'rejected' : 'pending'}">${lastResult.status}</span>
+           <span style="color: #5e6772; font-size: 10px; margin-left: 4px;">${lastResult.assertionsPass ?? 0}/${lastResult.assertionsTotal ?? 0} · ${(lastResult.durationMs / 1000).toFixed(1)}s</span>${flakyBadge}`
+        : `<span style="color: #5e6772; font-size: 11px;">—</span>${flakyBadge}`;
+      const skipInline = c.skipReason
+        ? `<div style="color: #d9534f; font-size: 10px; margin-top: 2px; line-height: 1.3;" title="${(c.skipReason || '').replace(/"/g, '&quot;')}">⚠ ${escapeHtml(c.skipReason.length > 60 ? c.skipReason.slice(0, 60) + '…' : c.skipReason)}</div>`
+        : '';
+      const translatingBadge = isTranslating
+        ? `<span class="spin-badge" style="display: inline-block; margin-left: 6px; padding: 2px 8px 2px 4px; background: #2563eb; color: #fff; border-radius: 4px; font-size: 10px; font-weight: 600;">Translating…</span>`
+        : '';
+      const rowStyle = isTranslating ? ' style="background-color: rgba(37, 99, 235, 0.08);"' : '';
+      const retranslateBtn = isTranslating
+        ? `<button id="btn-retranslate-${c.id}" class="spin-badge" disabled style="background: #2563eb; font-size: 11px; opacity: 0.95; cursor: wait;">Translating…</button>`
+        : `<button id="btn-retranslate-${c.id}" onclick="doRetranslateCase('${c.id}')" style="background: #d97706; font-size: 11px;" title="Re-run AI translator for this case (uses current verified registry + game spec)">Re-translate</button>`;
+      const main = `<tr id="case-row-${c.id}" data-case-id="${c.id}"${rowStyle}>
+        <td><button class="tree-toggle" onclick="toggleCase('${c.id}')">${isExpanded ? '▼' : '▶'}</button></td>
+        <td><code style="font-size: 11px;">${c.id}</code>${translatingBadge}</td>
+        <td style="font-size: 12px;">${c.name}</td>
+        <td><span class="pill ${sevPill}">${c.severity}</span></td>
+        <td style="font-size: 12px;"><span class="num">${c.actionCount}</span>${skipInline}</td>
+        <td class="num">${c.assertionCount}</td>
+        <td>${resultCell}</td>
+        <td style="white-space: nowrap;">
+          <button onclick="doRunCase('${c.id}')" class="purple" style="font-size: 11px;" ${c.actionCount === 0 ? 'disabled' : ''}>Run</button>
+          ${retranslateBtn}
+        </td>
+      </tr>`;
+      if (!isExpanded) return main;
+      return main + `<tr><td colspan="8" style="background: #0b0e13; padding: 12px 16px; border-top: 0;"><div class="case-detail">${caseDetailHtml(c)}</div></td></tr>`;
+    }
+
+    function caseDetailHtml(c) {
+      const setup = c.setupInstructions || "(empty)";
+      const actionsHtml = c.actions.length === 0
+        ? `<div style="color: #5e6772; font-style: italic;">No translated actions${c.skipReason ? ` — ${escapeHtml(c.skipReason)}` : ""}</div>`
+        : `<ol style="margin: 4px 0 0; padding-left: 20px; font-size: 12px; line-height: 1.6;">${c.actions.map((a) => `<li>${escapeHtml(describeAction(a))}</li>`).join("")}</ol>`;
+      const editActionsBtn = `<button onclick="openActionEditor('${c.id}')" style="background: #3b82f6; font-size: 10px; padding: 2px 8px; margin-left: 8px;" title="Edit translated actions for this case (bypasses AI — your edit is final)">✎ Edit</button>`;
+      const assertionsHtml = c.assertions.length === 0
+        ? `<div style="color: #5e6772; font-style: italic;">No assertions</div>`
+        : `<ul style="margin: 4px 0 0; padding-left: 20px; font-size: 11px; line-height: 1.5;">${c.assertions.map((a) => `
+            <li>
+              <strong>${escapeHtml(a.id)}</strong> — ${escapeHtml(a.description)}
+              <pre style="background: #161a22; border: 1px solid #232a35; border-radius: 4px; padding: 6px 8px; margin: 4px 0; font-size: 11px; overflow-x: auto;">${escapeHtml(a.check_code)}</pre>
+            </li>`).join("")}</ul>`;
+      const lastResult = window.__caseResults?.[c.id];
+      const resultHtml = lastResult ? lastRunHtml(lastResult, c) : `<div style="color: #5e6772; font-style: italic;">Not run yet · click [Run] to execute</div>`;
+      return `
+        <div class="grid-2">
+          <div>
+            <div style="color: #8b939c; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px;">Setup Instructions</div>
+            <div style="font-size: 12px; line-height: 1.6; white-space: pre-wrap;">${escapeHtml(setup)}</div>
+            <div style="margin-top: 10px; color: #8b939c; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;">Actions (${c.actionCount})${editActionsBtn}</div>
+            ${actionsHtml}
+          </div>
+          <div>
+            <div style="color: #8b939c; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px;">Custom Assertions (${c.assertionCount})</div>
+            ${assertionsHtml}
+          </div>
+        </div>
+        <div style="margin-top: 14px; padding-top: 10px; border-top: 1px solid #232a35;">
+          <div style="color: #8b939c; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px;">Last Run Result</div>
+          ${resultHtml}
+        </div>`;
+    }
+
+    // Phase 8.6 — 5-state outcome display. Resolves r.outcome (new) or
+    // falls back to r.status (legacy) for back-compat with old results.
+    function outcomePresentation(r) {
+      const outcome = r.outcome
+        ?? (r.status === "pass" ? "PASS_HIGH" : r.status === "fail" ? "FAIL_HIGH" : "INCONCLUSIVE");
+      const confidence = typeof r.confidence === "number" ? r.confidence : null;
+      // Color + label mapping
+      const presets = {
+        PASS_HIGH: { color: "#29b673", bg: "#163d2a", label: "PASS", subtitle: "high confidence" },
+        PASS_LOW:  { color: "#9be0bc", bg: "#1d2e23", label: "PASS", subtitle: "low confidence" },
+        PASS_WITH_INTERRUPT: { color: "#3b82f6", bg: "#172238", label: "PASS", subtitle: "interrupt handled (free spin / bonus)" },
+        FAIL_HIGH: { color: "#d9534f", bg: "#3d1717", label: "FAIL", subtitle: "high confidence" },
+        FAIL_LOW:  { color: "#f0a39e", bg: "#2e1818", label: "FAIL", subtitle: "low confidence" },
+        INCONCLUSIVE: { color: "#5e6772", bg: "#1a1d24", label: "INCONCLUSIVE", subtitle: "insufficient evidence" },
+        FLAKY: { color: "#d97706", bg: "#3a2a1a", label: "FLAKY", subtitle: "rerun disagreements" },
+        NEEDS_REVIEW: { color: "#8b5cf6", bg: "#241a3a", label: "NEEDS REVIEW", subtitle: "unknown state" },
+      };
+      const p = presets[outcome] ?? presets.INCONCLUSIVE;
+      return { outcome, confidence, ...p };
+    }
+
+    function lastRunHtml(r, c) {
+      const presentation = outcomePresentation(r);
+      const statusPill = r.status === "pass" ? "verified" : r.status === "fail" ? "rejected" : "pending";
+      const skipHtml = r.skipReason ? `<div style="color: #d9534f; font-size: 12px;">Skip: ${escapeHtml(r.skipReason)}</div>` : "";
+      const spinsCount = r.spinsCount ?? (r.spin ? 1 : 0);
+      const spinHtml = r.spin
+        ? `<div style="font-size: 12px; line-height: 1.6;">
+            <strong>Spins captured: ${spinsCount}</strong>${spinsCount > 1 ? ` <span style="color: #8b939c;">(showing last)</span>` : ""}<br>
+            roundId=<code>${escapeHtml(r.spin.roundId)}</code> · bet=${r.spin.bet} · win=${r.spin.win}
+            · balanceBefore=${r.spin.balanceBefore ?? '—'} · balanceAfter=${r.spin.balanceAfter}
+            · state=${r.spin.state}
+           </div>`
+        : `<div style="color: #5e6772; font-size: 11px; font-style: italic;">No spin response captured</div>`;
+      // === Signal Roll-up (PRIMARY view) ===
+      // 5 case-level signals, each with field-by-field sub-checks. User-driven
+      // design 2026-05-25: signals are no longer nested decoration on each
+      // assertion — they ARE the primary case-level assertions.
+      const SIGNAL_META = {
+        api:     { label: "API",     icon: "🟢", hint: "Server response fields valid" },
+        ui_ocr:  { label: "UI OCR",  icon: "👁",  hint: "OCR-read widgets match API values" },
+        network: { label: "Network", icon: "📡", hint: "No errors, all expected spins captured" },
+        state:   { label: "State",   icon: "🔀", hint: "State machine on expected path" },
+        rule:    { label: "Rule",    icon: "🧮", hint: "Math invariants (balance arithmetic) hold" },
+      };
+      const rollupHtml = Array.isArray(r.signalRollup) && r.signalRollup.length > 0
+        ? (() => {
+            const passCount = r.signalRollup.filter((s) => s.pass).length;
+            const headerColor = passCount === r.signalRollup.length ? "#9be0bc" : (passCount >= 3 ? "#d97706" : "#f0a39e");
+            const rows = r.signalRollup.map((s, idx) => {
+              const meta = SIGNAL_META[s.signal] ?? { label: s.signal, icon: "·", hint: "" };
+              const verdictColor = s.pass ? "#9be0bc" : "#f0a39e";
+              const verdictIcon = s.pass ? "✓" : "✗";
+              const rid = `rollup-${c.id}-${idx}`;
+              const checkRows = (s.checks || []).map((ck) => {
+                const ci = ck.match ? "✓" : "✗";
+                const cc = ck.match ? "#9be0bc" : "#f0a39e";
+                const expDisplay = typeof ck.expected === "object" ? JSON.stringify(ck.expected) : String(ck.expected);
+                const actDisplay = typeof ck.actual === "object" ? JSON.stringify(ck.actual) : String(ck.actual);
+                return `<tr style="border-bottom:1px solid #1a1f2a;">
+                  <td style="padding:4px 8px;color:${cc};">${ci}</td>
+                  <td style="padding:4px 8px;color:#c8d0d8;"><strong>${escapeHtml(ck.field)}</strong></td>
+                  <td style="padding:4px 8px;color:#8b939c;font-family:ui-monospace,monospace;font-size:10px;">${escapeHtml(expDisplay)}</td>
+                  <td style="padding:4px 8px;color:${cc};font-family:ui-monospace,monospace;font-size:10px;">${escapeHtml(actDisplay)}</td>
+                  <td style="padding:4px 8px;color:#5e6772;font-size:10px;">${ck.source ? escapeHtml(ck.source) : ""}${ck.note ? `<br><span style="color:#d97706;">${escapeHtml(ck.note)}</span>` : ""}</td>
+                </tr>`;
+              }).join("");
+              const checksTable = s.checks.length > 0
+                ? `<table style="width:100%;border-collapse:collapse;margin-top:6px;font-size:11px;">
+                    <thead><tr style="background:#161a22;color:#8b939c;font-size:10px;text-transform:uppercase;">
+                      <th style="padding:4px 8px;text-align:left;width:30px;">✓</th>
+                      <th style="padding:4px 8px;text-align:left;">Field</th>
+                      <th style="padding:4px 8px;text-align:left;">Expected</th>
+                      <th style="padding:4px 8px;text-align:left;">Actual</th>
+                      <th style="padding:4px 8px;text-align:left;">Source</th>
+                    </tr></thead>
+                    <tbody>${checkRows}</tbody>
+                   </table>`
+                : `<div style="color:#5e6772;font-size:11px;font-style:italic;margin-top:4px;">${escapeHtml(s.detail ?? "no data")}</div>`;
+              return `<div style="margin-bottom:6px;padding:8px 12px;background:#0b0e13;border-left:3px solid ${verdictColor};border-radius:4px;">
+                <div style="display:flex;align-items:center;gap:8px;cursor:pointer;" onclick="toggleEvidence('${rid}')">
+                  <span style="font-size:16px;">${meta.icon}</span>
+                  <strong style="color:${verdictColor};">${verdictIcon} ${meta.label}</strong>
+                  <span style="color:#8b939c;font-size:11px;">— ${escapeHtml(meta.hint)}</span>
+                  ${s.detail && s.checks.length > 0 ? `<span style="margin-left:auto;color:#8b939c;font-size:11px;">${escapeHtml(s.detail)}</span>` : ""}
+                </div>
+                <div id="${rid}" style="display:${s.pass && s.checks.length > 0 ? 'none' : 'block'};">${checksTable}</div>
+              </div>`;
+            }).join("");
+            return `<div style="margin-top:10px;">
+              <div style="color:${headerColor};font-size:13px;font-weight:600;margin-bottom:6px;">Signal Roll-up (${passCount}/${r.signalRollup.length} passed) — click row to toggle details</div>
+              ${rows}
+            </div>`;
+          })()
+        : "";
+
+      const assertionRows = (r.assertions || []).map((a, idx) => {
+        const okPill = a.pass ? "verified" : "rejected";
+        const isPrecheck = a.id.startsWith("_precheck_");
+        const labelPrefix = isPrecheck ? "🔧 PRECHECK " : "";
+        const detailHtml = a.detail
+          ? `<div style="color: #f0a39e; font-size: 11px; margin-top: 3px; padding: 4px 8px; background: ${isPrecheck ? '#3a2010' : '#2a1414'}; border-left: 3px solid ${isPrecheck ? '#d97706' : '#d9534f'}; font-family: ui-monospace, monospace; white-space: pre-wrap;">${escapeHtml(a.detail).replace(/ \| /g, '<br>')}</div>`
+          : "";
+        // Per-assertion outcome badge + confidence % REMOVED 2026-05-25.
+        // Signal Roll-up above is the primary verdict; case-level outcome /
+        // FLAKY status is in the case header. Showing both layers' badges
+        // duplicated info and conflicted (e.g. case=PASS but assertion=PASS_LOW
+        // 65% — confusing). Outcomes worth surfacing (FLAKY, NEEDS_REVIEW) are
+        // case-level and already in the header banner.
+        const outcomeBadge = "";
+        // Per-assertion signal breakdown REMOVED 2026-05-25 — duplicated info
+        // already shown in case-level Signal Roll-up above. AssertionResult.signals
+        // data is still computed + persisted for AI Review / audit, just not
+        // rendered here.
+        return `<li style="margin-bottom: 6px;"><span class="pill ${okPill}">${a.pass ? "PASS" : "FAIL"}</span>${outcomeBadge} <strong>${labelPrefix}${escapeHtml(a.id)}</strong> ${escapeHtml(a.description)}${detailHtml}</li>`;
+      }).join("");
+      const assertionsHtml = assertionRows
+        ? `<ul style="margin: 6px 0 0; padding-left: 20px; font-size: 11px; line-height: 1.7;">${assertionRows}</ul>`
+        : `<div style="color: #5e6772; font-size: 11px;">No assertions evaluated</div>`;
+      // Evidence: screenshot captured for EVERY case (pass + fail).
+      // Toggle Show/Hide, lazy-load PNG on first show.
+      const hasScreenshot = Boolean(r.screenshotPath);
+      const ssLabel = r.status === "fail" ? "📷 Failure screenshot" : "📷 Case screenshot";
+      const screenshotHtml = hasScreenshot
+        ? `<div style="margin-top: 8px;">
+            <button onclick="toggleCaseScreenshot('${c.id}')" id="ssBtn-${c.id}" class="gray" style="font-size: 11px; padding: 4px 8px;">${ssLabel}</button>
+            <div id="ssPane-${c.id}" style="display: none; margin-top: 6px;">
+              <img id="ssImg-${c.id}" alt="case screenshot" style="max-width: 100%; border: 1px solid #2a3140; border-radius: 4px; background: #0b0e13;" />
+              <div style="font-size: 10px; color: #5e6772; margin-top: 4px;">Captured at end of case · path: <code>${escapeHtml(r.screenshotPath)}</code></div>
+            </div>
+          </div>`
+        : "";
+
+      // Evidence: OCR snapshots panel — raw Tesseract text per region.
+      // Lets QA verify what OCR actually read (vs what the assertion claimed).
+      const ocrHtml = Array.isArray(r.ocrSnapshots) && r.ocrSnapshots.length > 0
+        ? (() => {
+            const rid = `ocr-${c.id}`;
+            const slug = window.__lastCasesSlug ?? "";
+            const rows = r.ocrSnapshots.map((s) => {
+              const icon = typeof s.parsed === "number" ? "✓" : "✗";
+              const color = typeof s.parsed === "number" ? "#9be0bc" : "#f0a39e";
+              const parsedDisplay = typeof s.parsed === "number" ? s.parsed : "(parse failed)";
+              const textDisplay = (s.text || "").trim() || "(empty)";
+              // Inline crop thumbnail — shows the exact pixels Tesseract saw.
+              // Image scaled to fit but max-height capped so the panel stays
+              // readable. Hover-zoom via title attr.
+              const cropHtml = s.bboxScreenshotPath
+                ? `<img src="/api/qa/manual/case-ocr-crop?game=${encodeURIComponent(slug)}&caseId=${encodeURIComponent(c.id)}&region=${encodeURIComponent(s.region)}&t=${Date.now()}" alt="${escapeHtml(s.region)} crop" title="bbox=${s.bbox.x},${s.bbox.y} ${s.bbox.width}×${s.bbox.height}" style="display:block;max-width:300px;max-height:60px;margin-top:4px;border:1px solid #232a35;border-radius:3px;background:#000;image-rendering:pixelated;" />`
+                : `<div style="color:#5e6772;font-size:10px;margin-top:3px;font-style:italic;">(no crop captured — re-run case after the 2026-05-25 evidence-pkg update)</div>`;
+              return `<div style="font-family:ui-monospace,monospace;font-size:10px;padding:6px 0;border-bottom:1px solid #1a1f2a;">
+                <div><span style="color:${color};opacity:0.8;">${icon}</span> <strong style="color:${color};">${escapeHtml(s.region)}</strong> · bbox=${s.bbox.width}×${s.bbox.height} @ (${s.bbox.x},${s.bbox.y}) · ${s.durationMs}ms</div>
+                <div style="margin-left:14px;">${cropHtml}</div>
+                <div style="color:#c8d0d8;margin-left:14px;margin-top:3px;">text: "${escapeHtml(textDisplay.slice(0, 160))}"</div>
+                <div style="color:${color};margin-left:14px;">→ parsed: ${parsedDisplay}</div>
+              </div>`;
+            }).join("");
+            const passCount = r.ocrSnapshots.filter((s) => typeof s.parsed === "number").length;
+            return `<div style="margin-top:8px;">
+              <button onclick="toggleEvidence('${rid}')" class="gray" style="font-size:11px;padding:4px 8px;">🔍 OCR Evidence (${passCount}/${r.ocrSnapshots.length})</button>
+              <div id="${rid}" style="display:none;margin-top:6px;padding:8px 12px;background:#0b0e13;border:1px solid #232a35;border-radius:4px;">${rows}</div>
+            </div>`;
+          })()
+        : "";
+
+      // Evidence: parser diagnostic — shows which bet formula parser used + mismatch.
+      const parserDxHtml = r.parserDiagnostic
+        ? (() => {
+            const d = r.parserDiagnostic;
+            const rid = `pdx-${c.id}`;
+            const fieldsRow = d.requestFields
+              ? Object.entries(d.requestFields).map(([k, v]) => `<code style="color:#c8d0d8;">${escapeHtml(k)}=${escapeHtml(String(v ?? "null"))}</code>`).join(" · ")
+              : "(no request body captured)";
+            const mismatchColor = d.mismatch ? "#f0a39e" : "#9be0bc";
+            const mismatchIcon = d.mismatch ? "⚠" : "✓";
+            const expectedLine = typeof d.expectedBet === "number"
+              ? `<div>Expected bet (from betMultiplier=${d.betMultiplier ?? "n/a"}): <strong>${d.expectedBet}</strong></div>`
+              : "<div>Expected bet: <em>n/a</em> (no betMultiplier in registry)</div>";
+            return `<div style="margin-top:6px;">
+              <button onclick="toggleEvidence('${rid}')" class="gray" style="font-size:11px;padding:4px 8px;">🔬 Parser Diagnostic ${mismatchIcon}</button>
+              <div id="${rid}" style="display:none;margin-top:6px;padding:8px 12px;background:#0b0e13;border:1px solid #232a35;border-radius:4px;font-family:ui-monospace,monospace;font-size:11px;color:${mismatchColor};">
+                <div>Parser: <strong>${escapeHtml(d.parserKind)}</strong>${d.betMultiplier != null ? ` · betMultiplier=<strong>${d.betMultiplier}</strong>` : " · <em>no betMultiplier set</em>"}</div>
+                <div style="margin-top:3px;color:#8b939c;">Request fields: ${fieldsRow}</div>
+                <div style="margin-top:3px;">Formula used: <strong>${escapeHtml(d.formulaUsed ?? "?")}</strong></div>
+                <div style="margin-top:3px;">Parsed bet: <strong>${d.parsedBet}</strong></div>
+                ${expectedLine}
+                ${d.mismatch ? '<div style="margin-top:4px;color:#f0a39e;">⚠ MISMATCH — parser likely using wrong formula. Check parser.json kind + provider-cache.json provider.</div>' : ''}
+              </div>
+            </div>`;
+          })()
+        : "";
+
+      // Evidence: network capture — compact list + on-demand full body fetch.
+      const networkHtml = Array.isArray(r.networkSummary) && r.networkSummary.length > 0
+        ? (() => {
+            const rid = `net-${c.id}`;
+            const rows = r.networkSummary.map((n, i) => {
+              const icon = n.parsedAsSpin === true ? "✓" : n.parsedAsSpin === false ? "✗" : "?";
+              const color = n.parsedAsSpin === true ? "#9be0bc" : n.parsedAsSpin === false ? "#f0a39e" : "#8b939c";
+              return `<div style="font-family:ui-monospace,monospace;font-size:10px;padding:2px 0;border-bottom:1px solid #1a1f2a;">
+                <span style="color:${color};">${icon}</span> <strong>${escapeHtml(n.method)}</strong> <span style="color:#c8d0d8;">${escapeHtml(n.url.slice(-80))}</span>
+                <span style="color:${n.status >= 400 ? '#f0a39e' : '#8b939c'};">[${n.status}]</span>
+              </div>`;
+            }).join("");
+            const fetchBtn = r.networkLogPath
+              ? `<button onclick="fetchNetworkLog('${c.id}', '${window.__lastCasesSlug ?? ""}')" class="gray" style="font-size:10px;padding:3px 8px;margin-left:6px;">View full bodies →</button>`
+              : "";
+            const spinCount = r.networkSummary.filter((n) => n.parsedAsSpin === true).length;
+            return `<div style="margin-top:6px;">
+              <button onclick="toggleEvidence('${rid}')" class="gray" style="font-size:11px;padding:4px 8px;">📡 Network Capture (${spinCount} spins / ${r.networkSummary.length} req)</button>${fetchBtn}
+              <div id="${rid}" style="display:none;margin-top:6px;padding:6px 10px;background:#0b0e13;border:1px solid #232a35;border-radius:4px;">${rows}</div>
+              <div id="netBodies-${c.id}" style="display:none;margin-top:6px;padding:6px 10px;background:#0b0e13;border:1px solid #232a35;border-radius:4px;font-family:ui-monospace,monospace;font-size:10px;color:#c8d0d8;white-space:pre-wrap;max-height:400px;overflow:auto;"></div>
+            </div>`;
+          })()
+        : "";
+
+      // Evidence: action log — sequential telemetry per action.
+      const actionLogHtml = Array.isArray(r.actionLog) && r.actionLog.length > 0
+        ? (() => {
+            const rid = `log-${c.id}`;
+            const rows = r.actionLog.map((a, i) => {
+              const icon = a.success ? "✓" : "✗";
+              const color = a.success ? "#9be0bc" : "#f0a39e";
+              const slow = a.durationMs > 3000 ? "color:#d97706;font-weight:600;" : "";
+              const target = a.target ? ` <span style="color:#8b939c;">${escapeHtml(a.target)}</span>` : "";
+              const note = a.note ? ` <span style="color:#8b939c;">— ${escapeHtml(a.note)}</span>` : "";
+              return `<div style="font-family:ui-monospace,monospace;font-size:10px;color:${color};padding:1px 0;">
+                <span style="opacity:0.6;">${i + 1}.</span> <span>${icon}</span> <strong>${escapeHtml(a.kind)}</strong>${target} <span style="${slow};color:#8b939c;">${a.durationMs}ms</span>${note}
+              </div>`;
+            }).join("");
+            const failCount = r.actionLog.filter((a) => !a.success).length;
+            const totalMs = r.actionLog.reduce((acc, a) => acc + a.durationMs, 0);
+            const summary = failCount > 0 ? `${r.actionLog.length} steps · ${failCount} failed · ${(totalMs/1000).toFixed(1)}s` : `${r.actionLog.length} steps · ${(totalMs/1000).toFixed(1)}s`;
+            return `<div style="margin-top:6px;">
+              <button onclick="toggleEvidence('${rid}')" class="gray" style="font-size:11px;padding:4px 8px;">📋 Action Log (${summary})</button>
+              <div id="${rid}" style="display:none;margin-top:6px;padding:6px 10px;background:#0b0e13;border:1px solid #232a35;border-radius:4px;">${rows}</div>
+            </div>`;
+          })()
+        : "";
+      // Evidence: in-game history popup verification (Loại 2). Rendered when
+      // case category=history and the popup opened successfully. Shows:
+      //   - Popup screenshot (paginated if pagesScanned > 1)
+      //   - OCR'd rows table
+      //   - Mismatch list color-coded by kind (missing / field_mismatch /
+      //     extra / ordering)
+      //   - Direction (newest-first / oldest-first) detected from match indices
+      const historyHtml = r.historyVerification
+        ? (() => {
+            const h = r.historyVerification;
+            const rid = `hist-${c.id}`;
+            const slug = window.__lastCasesSlug ?? "";
+            const passed = h.ok && h.opened;
+            const headerColor = passed ? "#9be0bc" : "#f0a39e";
+            const mismatchKindColor = {
+              missing: "#f0a39e",
+              field_mismatch: "#d97706",
+              extra: "#8b939c",
+              ordering: "#d97706",
+            };
+            const mismatchKindIcon = {
+              missing: "✗",
+              field_mismatch: "⚠",
+              extra: "·",
+              ordering: "⇅",
+            };
+            // Pagination strip: clickable links to swap screenshot between pages.
+            const pagesScanned = h.pagesScanned ?? 1;
+            const pageBar = pagesScanned > 1
+              ? `<div style="margin-top:6px;font-size:11px;color:#8b939c;">Pages scanned:
+                  ${Array.from({ length: pagesScanned }, (_, i) => i + 1).map((p) =>
+                    `<a href="javascript:void(0)" onclick="document.getElementById('histImg-${c.id}').src='/api/qa/manual/case-history-screenshot?game=${encodeURIComponent(slug)}&caseId=${encodeURIComponent(c.id)}&page=${p}&t='+Date.now();" style="margin:0 4px;color:#7da3d8;">p${p}</a>`,
+                  ).join(" · ")}
+                </div>`
+              : "";
+            const screenshotHtml = h.screenshotPath
+              ? `<div style="margin-bottom:8px;">
+                  <img id="histImg-${c.id}" src="/api/qa/manual/case-history-screenshot?game=${encodeURIComponent(slug)}&caseId=${encodeURIComponent(c.id)}&page=1&t=${Date.now()}" alt="history popup" style="max-width:100%;border:1px solid #2a3140;border-radius:4px;background:#000;" />
+                  ${pageBar}
+                  <div style="font-size:10px;color:#5e6772;margin-top:4px;">path: <code>${escapeHtml(h.screenshotPath)}</code></div>
+                 </div>`
+              : "";
+            const rowsHtml = Array.isArray(h.rows) && h.rows.length > 0
+              ? (() => {
+                  const rs = h.rows.map((row, i) => `<tr style="border-bottom:1px solid #1a1f2a;">
+                    <td style="padding:3px 6px;color:#5e6772;text-align:right;">${i + 1}</td>
+                    <td style="padding:3px 6px;font-family:ui-monospace,monospace;color:#c8d0d8;">${escapeHtml(row.round_id ?? "—")}</td>
+                    <td style="padding:3px 6px;color:#8b939c;">${escapeHtml(row.time ?? "—")}</td>
+                    <td style="padding:3px 6px;text-align:right;font-family:ui-monospace,monospace;">${row.bet ?? "—"}</td>
+                    <td style="padding:3px 6px;text-align:right;font-family:ui-monospace,monospace;">${row.win ?? "—"}</td>
+                    <td style="padding:3px 6px;text-align:right;font-family:ui-monospace,monospace;">${row.balance_after ?? "—"}</td>
+                  </tr>`).join("");
+                  return `<div style="margin-top:8px;">
+                    <div style="color:#8b939c;font-size:10px;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">Transcribed rows (${h.rows.length})</div>
+                    <table style="width:100%;border-collapse:collapse;font-size:11px;">
+                      <thead><tr style="background:#161a22;color:#8b939c;font-size:10px;text-transform:uppercase;">
+                        <th style="padding:4px 6px;text-align:right;">#</th>
+                        <th style="padding:4px 6px;text-align:left;">Round ID</th>
+                        <th style="padding:4px 6px;text-align:left;">Time</th>
+                        <th style="padding:4px 6px;text-align:right;">Bet</th>
+                        <th style="padding:4px 6px;text-align:right;">Win</th>
+                        <th style="padding:4px 6px;text-align:right;">Balance</th>
+                      </tr></thead>
+                      <tbody>${rs}</tbody>
+                    </table>
+                  </div>`;
+                })()
+              : `<div style="color:#5e6772;font-size:11px;font-style:italic;margin-top:8px;">No rows transcribed (OCR empty or popup didn't render)</div>`;
+            const mismatchHtml = (h.mismatches || []).length > 0
+              ? (() => {
+                  const items = h.mismatches.map((m) => {
+                    const ic = mismatchKindIcon[m.kind] ?? "?";
+                    const cc = mismatchKindColor[m.kind] ?? "#8b939c";
+                    const idTag = m.spinRoundId ? ` <code style="color:#c8d0d8;">${escapeHtml(m.spinRoundId)}</code>` : "";
+                    const rowTag = m.historyRowText ? `<br><span style="color:#5e6772;font-size:10px;">row: ${escapeHtml(m.historyRowText.slice(0, 100))}</span>` : "";
+                    return `<li style="margin-bottom:4px;color:${cc};">
+                      <span style="opacity:0.8;">${ic}</span> <strong>${escapeHtml(m.kind)}</strong>${idTag}
+                      <div style="color:#c8d0d8;font-size:11px;margin-left:14px;">${escapeHtml(m.detail)}</div>
+                      ${rowTag}
+                    </li>`;
+                  }).join("");
+                  return `<div style="margin-top:8px;">
+                    <div style="color:#8b939c;font-size:10px;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">Mismatches (${h.mismatches.length})</div>
+                    <ul style="margin:0;padding-left:18px;font-size:11px;list-style:none;">${items}</ul>
+                  </div>`;
+                })()
+              : `<div style="color:#9be0bc;font-size:11px;margin-top:8px;">✓ No mismatches — all captured spins matched cleanly to history rows.</div>`;
+            const direction = h.ordering?.direction ?? "indeterminate";
+            const directionLabel = direction === "newest_first" ? "newest-first ↓" : direction === "oldest_first" ? "oldest-first ↑" : "indeterminate";
+            const summary = h.opened
+              ? `${h.matchedCount}/${h.spinsCount} matched · ${h.mismatches?.length ?? 0} mismatches · ${pagesScanned} page${pagesScanned > 1 ? "s" : ""} · ${directionLabel}`
+              : `popup not opened: ${escapeHtml(h.reason ?? "unknown")}`;
+            return `<div style="margin-top:6px;">
+              <button onclick="toggleEvidence('${rid}')" class="gray" style="font-size:11px;padding:4px 8px;color:${headerColor};">📜 History Popup — ${summary}</button>
+              <div id="${rid}" style="display:none;margin-top:6px;padding:8px 12px;background:#0b0e13;border:1px solid #232a35;border-radius:4px;">
+                ${screenshotHtml}
+                ${rowsHtml}
+                ${mismatchHtml}
+              </div>
+            </div>`;
+          })()
+        : "";
+
+      // AI Failure Review — only for failed cases. Heuristic-first, AI fallback.
+      const aiReviewHtml = r.status === "fail"
+        ? `<div style="margin-top: 8px;">
+            <button onclick="doAiReview('${c.id}', false)" class="purple" style="font-size: 11px; padding: 4px 8px;" title="Heuristic + AI classifier suggests root cause + optional patch (~$0.02-0.05 per AI call)">🤖 AI Review</button>
+            <button onclick="doAiReview('${c.id}', true)" class="gray" style="font-size: 11px; padding: 4px 8px;" title="Heuristic only — no AI call, no cost">🔍 Quick Diagnose</button>
+            <div id="aiReview-${c.id}" style="margin-top: 6px;"></div>
+          </div>`
+        : "";
+      // Warnings (non-fatal): popup retries, spin-count mismatch, etc.
+      const warningsHtml = Array.isArray(r.warnings) && r.warnings.length > 0
+        ? `<div style="margin-top: 6px; padding: 6px 10px; background: #3a2a1a; border-left: 3px solid #d97706; border-radius: 4px; font-size: 11px;">
+            <div style="color: #d97706; font-weight: 600; margin-bottom: 4px;">⚠ Warnings (${r.warnings.length})</div>
+            <ul style="margin: 0; padding-left: 18px; color: #e8d7b5; line-height: 1.5;">
+              ${r.warnings.map((w) => `<li>${escapeHtml(w)}</li>`).join("")}
+            </ul>
+          </div>`
+        : "";
+      // Build interrupt timeline if available
+      const timelineHtml = Array.isArray(r.stateTimeline) && r.stateTimeline.length > 0
+        ? `<div style="margin-top:6px;padding:6px 10px;background:#0b0e13;border-radius:4px;font-size:11px;">
+            <div style="color:#8b939c;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">Interrupt Timeline</div>
+            <div style="font-family:ui-monospace,monospace;color:#9be0bc;">
+              ${r.stateTimeline.map((s, i) => `${i > 0 ? " → " : ""}<span title="${escapeHtml(s.at ?? "")}">${escapeHtml(s.to)}</span>${s.via ? `<span style="color:#5e6772;font-size:10px;">(${escapeHtml(s.via)})</span>` : ""}`).join("")}
+            </div>
+          </div>`
+        : "";
+      // Outcome banner with confidence bar
+      const confBarHtml = presentation.confidence !== null
+        ? `<div style="margin-top:4px;height:4px;background:#161a22;border-radius:2px;overflow:hidden;width:200px;">
+            <div style="height:100%;background:${presentation.color};width:${Math.round(presentation.confidence * 100)}%;transition:width 0.3s;"></div>
+          </div>
+          <div style="font-size:10px;color:${presentation.color};margin-top:2px;">${(presentation.confidence * 100).toFixed(0)}% confidence</div>`
+        : "";
+      return `
+        <div style="display:flex;align-items:center;gap:12px;padding:6px 10px;background:${presentation.bg};border-left:3px solid ${presentation.color};border-radius:4px;font-size:12px;">
+          <div>
+            <strong style="color:${presentation.color};font-size:13px;">${presentation.label}</strong>
+            <span style="color:#8b939c;font-size:10px;margin-left:4px;">${presentation.subtitle}</span>
+            ${confBarHtml}
+          </div>
+          <div style="margin-left:auto;color:#8b939c;font-size:11px;">
+            ${r.actionsExecuted}/${c.actionCount} actions · ${(r.durationMs / 1000).toFixed(2)}s · ${new Date(r.ranAt).toLocaleTimeString()}
+          </div>
+        </div>
+        ${timelineHtml}
+        <div style="font-size: 12px; line-height: 1.6; margin-top: 4px;"></div>
+        ${skipHtml}
+        ${spinHtml}
+        ${warningsHtml}
+        ${rollupHtml}
+        <div style="margin-top: 8px;">
+          <button onclick="toggleEvidence('detailed-assertions-${c.id}')" class="gray" style="font-size:11px;padding:4px 8px;">📋 Detailed Assertions (${(r.assertions || []).length})</button>
+          <div id="detailed-assertions-${c.id}" style="display:none;margin-top:6px;">
+            <div style="color: #5e6772; font-size: 11px; font-style: italic; margin-bottom: 4px;">Business-logic assertions from AI catalog. Signal Roll-up above is the primary case verdict; these are detailed drill-down.</div>
+            ${assertionsHtml}
+          </div>
+        </div>
+        <div style="margin-top: 8px; color: #8b939c; font-size: 11px; text-transform: uppercase;">Evidence</div>
+        ${screenshotHtml}
+        ${parserDxHtml}
+        ${networkHtml}
+        ${ocrHtml}
+        ${historyHtml}
+        ${actionLogHtml}
+        ${aiReviewHtml}
+      `;
+    }
+
+    // Toggle helper for any evidence pane (OCR snapshots, action log, etc.).
+    // Lighter than the screenshot toggle since no lazy-loading needed.
+    window.toggleEvidence = (paneId) => {
+      const pane = document.getElementById(paneId);
+      if (!pane) return;
+      pane.style.display = pane.style.display === "none" ? "block" : "none";
+    };
+
+    // Fetch + render the full per-case network.jsonl on demand. Files can be
+    // 100KB+ so we don't inline them in the initial case payload.
+    window.fetchNetworkLog = async (caseId, slug) => {
+      const pane = document.getElementById(`netBodies-${caseId}`);
+      if (!pane) return;
+      if (pane.style.display === "block") {
+        pane.style.display = "none";
+        return;
+      }
+      pane.style.display = "block";
+      pane.textContent = "Loading…";
+      try {
+        const r = await fetch(`/api/qa/manual/case-network?game=${encodeURIComponent(slug)}&caseId=${encodeURIComponent(caseId)}`);
+        if (!r.ok) { pane.textContent = `(404 — no network capture for ${caseId})`; return; }
+        const txt = await r.text();
+        const entries = txt.split("\n").filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+        pane.innerHTML = entries.map((e, i) => {
+          const head = `<strong style="color:#9be0bc;">#${i + 1} ${e.method} ${e.url} → ${e.status}</strong>`;
+          const reqB = e.requestBody ? `\nrequest: ${e.requestBody}` : "";
+          const resB = e.responseBody ? `\nresponse: ${e.responseBody}` : "";
+          return `<div style="margin-bottom:8px;border-bottom:1px solid #1a1f2a;padding-bottom:6px;">${head}<pre style="margin:4px 0 0;white-space:pre-wrap;">${(reqB + resB).replace(/</g, "&lt;").slice(0, 4000)}</pre></div>`;
+        }).join("");
+      } catch (err) {
+        pane.textContent = `Error: ${err.message}`;
+      }
+    };
+
+    // AI Review handler — calls /api/qa/manual/review-failure, renders result
+    // with optional patch preview + Apply Patch button.
+    window.doAiReview = async (caseId, dryRun) => {
+      const slug = window.__lastCasesSlug;
+      const pane = document.getElementById(`aiReview-${caseId}`);
+      if (!pane) return;
+      pane.innerHTML = `<span style="color:#8b939c;font-size:11px;">🔄 ${dryRun ? "Running heuristic" : "Calling AI"}…</span>`;
+      // Pass full last-run result (assertions, warnings, spin) so backend
+      // analyzer has real evidence instead of stub. The full CaseResult lives
+      // in window.__caseResults populated by doRunCase / SSE handlers.
+      const lastResult = window.__caseResults?.[caseId];
+      try {
+        const r = await api("/api/qa/manual/review-failure", {
+          method: "POST", body: { caseId, gameSlug: slug, dryRun: dryRun === true, result: lastResult },
+        });
+        if (!r.ok) {
+          pane.innerHTML = `<div style="color:#d9534f;font-size:11px;">${escapeHtml(r.reason || "review failed")}</div>`;
+          return;
+        }
+        renderReviewResult(pane, caseId, r.review, slug);
+      } catch (err) {
+        pane.innerHTML = `<div style="color:#d9534f;font-size:11px;">${escapeHtml(err.message)}</div>`;
+      }
+    };
+
+    function renderReviewResult(pane, caseId, review, slug) {
+      const confidencePct = (review.confidence * 100).toFixed(0);
+      const confidenceColor = review.confidence >= 0.85 ? "#29b673" : review.confidence >= 0.5 ? "#d97706" : "#d9534f";
+      const patchPreview = review.suggestedPatch
+        ? `<div style="margin-top:6px;padding:6px 10px;background:#0b0e13;border:1px solid #232a35;border-radius:4px;">
+            <div style="font-size:11px;color:#8b939c;margin-bottom:3px;">Suggested patch (${review.suggestedPatch.operation} → <code>${escapeHtml(review.suggestedPatch.file)}</code>):</div>
+            <pre style="font-size:10px;margin:0;color:#9be0bc;white-space:pre-wrap;">${escapeHtml(JSON.stringify(review.suggestedPatch.diff, null, 2))}</pre>
+            <button onclick='doApplyPatch("${caseId}", ${JSON.stringify(review).replace(/"/g, "&quot;")})' class="green" style="font-size:11px;padding:4px 8px;margin-top:6px;" title="Validate + apply patch + write audit log">📝 Apply Patch</button>
+            <button onclick='doAutoRerun("${caseId}", ${JSON.stringify(review).replace(/"/g, "&quot;")})' class="purple" style="font-size:11px;padding:4px 8px;margin-top:6px;" title="Apply patch + rerun case + if still fail, AI review again (max 3 iterations)">🔁 Auto-Rerun Loop</button>
+          </div>`
+        : "";
+      const devNote = review.devNotification
+        ? `<div style="margin-top:6px;padding:6px 10px;background:#3a2a1a;border-left:3px solid #d9534f;border-radius:4px;font-size:11px;">
+            <strong style="color:#d9534f;">⚠ Dev escalation (${review.devNotification.severity}): ${escapeHtml(review.devNotification.title)}</strong>
+            <div style="margin-top:3px;color:#e8d7b5;">${escapeHtml(review.devNotification.body)}</div>
+          </div>`
+        : "";
+      pane.innerHTML = `
+        <div style="padding:6px 10px;background:#161a22;border:1px solid #232a35;border-radius:4px;font-size:12px;">
+          <div><strong style="color:${confidenceColor};">${escapeHtml(review.classification)}</strong>
+            <span style="color:#5e6772;font-size:10px;">· confidence ${confidencePct}%</span>
+            ${review.meta?.durationMs ? `<span style="color:#5e6772;font-size:10px;"> · ${review.meta.durationMs}ms</span>` : ""}
+          </div>
+          <div style="margin-top:3px;color:#c8d0d8;">${escapeHtml(review.reason)}</div>
+          ${patchPreview}
+          ${devNote}
+        </div>
+      `;
+    }
+
+    window.doApplyPatch = async (caseId, review) => {
+      const slug = window.__lastCasesSlug;
+      if (!review?.suggestedPatch) return toast("no patch to apply", true);
+      if (!confirm(`Apply patch to ${review.suggestedPatch.file}?\n\nDiff:\n${JSON.stringify(review.suggestedPatch.diff, null, 2)}`)) return;
+      try {
+        const r = await api("/api/qa/manual/apply-patch", {
+          method: "POST",
+          body: { caseId, gameSlug: slug, patch: review.suggestedPatch, review },
+        });
+        if (r.ok) {
+          toast(`✓ Patch applied · ${r.auditLogPath?.split("/").pop()}`);
+          appendLog(`[apply-patch] ${caseId} → ${r.auditLogPath}`);
+        } else {
+          toast(`✗ ${r.reason}`, true);
+          if (r.validation?.errors) for (const e of r.validation.errors) appendLog(`[apply-patch] validation: ${e}`);
+        }
+      } catch (err) { toast(err.message, true); }
+    };
+
+    // Phase 8 item 3 — auto-loop: apply → rerun → re-review → re-apply (max 3)
+    window.doAutoRerun = async (caseId, review) => {
+      const slug = window.__lastCasesSlug;
+      if (!review?.suggestedPatch) return toast("no patch to apply", true);
+      if (!confirm(`Auto-Rerun: apply patch + rerun case up to 3 times until pass.\n\nThis can cost ~$0.05-0.15 in AI calls if multiple iterations needed.\n\nContinue?`)) return;
+      const pane = document.getElementById(`aiReview-${caseId}`);
+      if (pane) pane.insertAdjacentHTML("beforeend", `<div id="autoRerun-${caseId}" style="margin-top:6px;padding:6px 10px;background:#241a3a;border-left:3px solid #8b5cf6;border-radius:4px;font-size:11px;font-family:ui-monospace,monospace;color:#c8b4e8;">🔁 Auto-Rerun starting…</div>`);
+      try {
+        const r = await api("/api/qa/manual/auto-rerun", {
+          method: "POST",
+          body: { caseId, gameSlug: slug, patch: review.suggestedPatch, review },
+        });
+        const logHtml = (r.log || []).map((l) => `<div>${escapeHtml(l)}</div>`).join("");
+        const summary = r.status === "pass"
+          ? `<strong style="color:#29b673;">✓ PASS after ${r.attemptsUsed} iteration(s), ${r.patchesApplied} patch(es)</strong>`
+          : r.status === "escalated"
+          ? `<strong style="color:#d97706;">⚠ ESCALATED after ${r.attemptsUsed} iteration(s) — manual review needed</strong>`
+          : `<strong style="color:#d9534f;">✗ FAIL after ${r.attemptsUsed} iteration(s)</strong>`;
+        const updated = document.getElementById(`autoRerun-${caseId}`);
+        if (updated) updated.innerHTML = `${summary}<div style="margin-top:4px;border-top:1px solid #3a2a5a;padding-top:4px;">${logHtml}</div>`;
+        toast(`Auto-Rerun ${r.status} · ${r.attemptsUsed} attempts · ${r.patchesApplied} patches`);
+        appendLog(`[auto-rerun] ${caseId} → ${r.status} (${r.attemptsUsed} attempts, ${r.patchesApplied} patches)`);
+        // Refresh case list to show new outcome
+        if (slug) await loadCasesForSlug(slug, { scrollToTop: false });
+      } catch (err) {
+        const updated = document.getElementById(`autoRerun-${caseId}`);
+        if (updated) updated.innerHTML = `<strong style="color:#d9534f;">✗ ${escapeHtml(err.message)}</strong>`;
+        toast(err.message, true);
+      }
+    };
+
+    // Toggle failure screenshot show/hide; lazy-load image on first show.
+    // Phase 8.6 — toggle signals expansion under an assertion row
+    window.toggleSignals = (rowId) => {
+      const el = document.getElementById(rowId);
+      if (!el) return;
+      el.style.display = el.style.display === "none" ? "block" : "none";
+    };
+
+    window.toggleCaseScreenshot = (caseId) => {
+      const pane = document.getElementById(`ssPane-${caseId}`);
+      const btn = document.getElementById(`ssBtn-${caseId}`);
+      const img = document.getElementById(`ssImg-${caseId}`);
+      if (!pane || !btn || !img) return;
+      const isHidden = pane.style.display === "none";
+      if (isHidden) {
+        const slug = window.__lastCasesSlug;
+        if (img && !img.src && slug) {
+          img.src = `/api/qa/manual/case-screenshot?game=${encodeURIComponent(slug)}&caseId=${encodeURIComponent(caseId)}&t=${Date.now()}`;
+          img.onerror = () => {
+            img.replaceWith(Object.assign(document.createElement("div"), {
+              textContent: "Screenshot not found on disk (case may have been re-run since)",
+              style: "color: #d9534f; font-size: 11px; padding: 6px;",
+            }));
+          };
+        }
+        pane.style.display = "block";
+        btn.textContent = "📷 Hide screenshot";
+      } else {
+        pane.style.display = "none";
+        btn.textContent = "📷 Show screenshot";
+      }
+    };
+
+    function describeAction(a) {
+      if (a.kind === "click") return `click ${a.uiKey}${a.times ? ` ×${a.times}` : ""}${a.reason ? ` // ${a.reason}` : ""}`;
+      if (a.kind === "wait_ms") return `wait ${a.ms}ms`;
+      if (a.kind === "spin") return "spin (clicks spinButton)";
+      if (a.kind === "set_bet_to_min") return "set bet to min (clicks betMinus ×20)";
+      if (a.kind === "set_bet_to_max") return "set bet to max (clicks betPlus ×20)";
+      if (a.kind === "dismiss") return `dismiss (wait 10s + click center ×2${a.reason ? ` // ${a.reason}` : ""})`;
+      if (a.kind === "reset") return "reset (page reload)";
+      if (a.kind === "wait_until_state") return `wait_until_state ${a.state} (max ${a.maxMs ?? 30000}ms)${a.reason ? ` // ${a.reason}` : ""}`;
+      if (a.kind === "wait_until_network_idle") return `wait_until_network_idle (idle ${a.idleMs ?? 1500}ms, max ${a.maxMs ?? 15000}ms)`;
+      if (a.kind === "wait_until_pixel_stable") return `wait_until_pixel_stable (${a.consecutiveStable ?? 3} consecutive, max ${a.maxMs ?? 30000}ms)`;
+      return JSON.stringify(a);
+    }
+
+    function escapeHtml(s) {
+      return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    }
+
+    // QA Action Editor — fetch current actions for a case, present a simple
+    // JSON textarea modal, validate + save on Confirm.
+    window.openActionEditor = async (caseId) => {
+      const slug = window.__lastCasesSlug;
+      if (!slug) return toast("Load cases first", true);
+      let r;
+      try {
+        r = await api(`/api/qa/manual/case-actions?caseId=${encodeURIComponent(caseId)}&game=${encodeURIComponent(slug)}`);
+      } catch (err) {
+        return toast(`Failed to load actions: ${err.message}`, true);
+      }
+      if (!r.ok) return toast(r.reason || "Failed to load", true);
+      const actions = r.actions ?? [];
+      const initialJson = JSON.stringify(actions, null, 2);
+      const uiKeys = r.availableUiKeys ?? [];
+
+      // Build modal
+      const existing = document.getElementById("actionEditorModal");
+      if (existing) existing.remove();
+      const modal = document.createElement("div");
+      modal.id = "actionEditorModal";
+      modal.style.cssText = "position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center;";
+      modal.innerHTML = `
+        <div style="background:#161a22;border:1px solid #2a3140;border-radius:8px;padding:18px;width:min(800px,92vw);max-height:88vh;display:flex;flex-direction:column;gap:10px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <div>
+              <div style="font-size:13px;color:#8b939c;text-transform:uppercase;letter-spacing:0.04em;">QA Action Editor</div>
+              <div style="font-size:14px;font-weight:600;margin-top:2px;">${escapeHtml(caseId)}</div>
+            </div>
+            <button onclick="document.getElementById('actionEditorModal').remove()" style="background:transparent;border:1px solid #2a3140;color:#8b939c;font-size:12px;padding:4px 10px;">✕ Close</button>
+          </div>
+          <div style="font-size:11px;color:#8b939c;line-height:1.5;">
+            Edit JSON below. Each action: <code>{"kind":"click","uiKey":"...","reason":"..."}</code>,
+            <code>{"kind":"wait_ms","ms":1500}</code>, <code>{"kind":"spin"}</code>,
+            <code>{"kind":"dismiss"}</code>. Available uiKeys (${uiKeys.length}):
+            <details style="display:inline;">
+              <summary style="cursor:pointer;color:#3b82f6;">show list</summary>
+              <div style="margin-top:6px;font-family:ui-monospace,monospace;font-size:10px;max-height:120px;overflow-y:auto;background:#0b0e13;border:1px solid #232a35;border-radius:4px;padding:6px 8px;">${uiKeys.map(k => escapeHtml(k)).join(" · ") || "(no registry)"}</div>
+            </details>
+          </div>
+          <textarea id="actionEditorTextarea" style="background:#0b0e13;color:#dde1e6;border:1px solid #232a35;border-radius:4px;padding:10px;font-family:ui-monospace,monospace;font-size:12px;line-height:1.5;resize:vertical;min-height:340px;flex:1;">${escapeHtml(initialJson)}</textarea>
+          <div id="actionEditorError" style="display:none;color:#f0a39e;font-size:11px;font-family:ui-monospace,monospace;background:#2a1414;border:1px solid #d9534f;border-radius:4px;padding:6px 10px;"></div>
+          <div style="display:flex;gap:8px;justify-content:flex-end;">
+            <button onclick="document.getElementById('actionEditorModal').remove()" style="background:#3a3f4a;font-size:12px;">Cancel</button>
+            <button onclick="window.saveActionEditor('${caseId}')" style="background:#16a34a;font-size:12px;">💾 Save</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+    };
+
+    window.saveActionEditor = async (caseId) => {
+      const slug = window.__lastCasesSlug;
+      const textarea = document.getElementById("actionEditorTextarea");
+      const errBox = document.getElementById("actionEditorError");
+      errBox.style.display = "none";
+      let parsed;
+      try {
+        parsed = JSON.parse(textarea.value);
+      } catch (err) {
+        errBox.textContent = `Invalid JSON: ${err.message}`;
+        errBox.style.display = "block";
+        return;
+      }
+      if (!Array.isArray(parsed)) {
+        errBox.textContent = "Top-level must be an array of action objects.";
+        errBox.style.display = "block";
+        return;
+      }
+      try {
+        const r = await api("/api/qa/manual/case-actions", {
+          method: "PUT",
+          body: { caseId, gameSlug: slug, actions: parsed },
+        });
+        if (!r.ok) {
+          const detail = r.invalidUiKeys?.length
+            ? `Invalid uiKey(s): ${r.invalidUiKeys.join(", ")}`
+            : (r.reason || "Save failed");
+          errBox.textContent = detail;
+          errBox.style.display = "block";
+          return;
+        }
+        toast(`✓ Saved ${parsed.length} action(s) for ${caseId}`);
+        document.getElementById("actionEditorModal").remove();
+        // Refresh case list in-place so new action count + actions list
+        // re-render without losing scroll position. Use the SAME path as the
+        // "Load Cases" button (loadCasesForSlug → fetches + caches + renders).
+        // Keep this case expanded so QA sees the new actions immediately.
+        const refreshSlug = window.__lastCasesSlug;
+        if (refreshSlug && typeof loadCasesForSlug === "function") {
+          try {
+            expandedCases.add(caseId);
+            await loadCasesForSlug(refreshSlug);
+          } catch (err) {
+            console.warn("[action-editor] refresh failed:", err);
+            toast(`Saved but refresh failed: ${err.message}`, true);
+          }
+        }
+      } catch (err) {
+        errBox.textContent = `Save error: ${err.message}`;
+        errBox.style.display = "block";
+      }
+    };
+
+    window.doRetranslateCase = async (caseId) => {
+      const slug = window.__lastCasesSlug;
+      if (!slug) return toast("Load cases first", true);
+      // Mark in-flight + re-render so the row immediately shows "🔄 Translating…"
+      // both as an inline badge next to the case id AND on the button itself.
+      inFlightRetranslate.add(caseId);
+      renderCases(window.__cases || [], slug);
+      // Scroll the row into view so user can see the badge before AI completes.
+      const rowEl = document.querySelector(`#case-row-${CSS.escape(caseId)}`);
+      if (rowEl) rowEl.scrollIntoView({ behavior: "smooth", block: "center" });
+      toast(`Re-translating ${caseId} via AI…`);
+      appendLog(`[retranslate] ${caseId} started`);
+      try {
+        const r = await api("/api/qa/manual/retranslate-case", {
+          method: "POST", body: { caseId, gameSlug: slug },
+        });
+        if (r.ok) {
+          if (r.skipReason) {
+            toast(`Re-translate ${caseId}: still skipped — ${r.skipReason}`, true);
+            appendLog(`[retranslate] ${caseId} skipped: ${r.skipReason}`);
+          } else if (r.aiCalled === false) {
+            // setup_instructions is empty — translator short-circuits to N
+            // repeated spin actions based on case.spin_count (no AI needed).
+            const n = Array.isArray(r.actions) ? r.actions.length : 0;
+            const spins = Array.isArray(r.actions) ? r.actions.filter((a) => a.kind === "spin").length : 0;
+            toast(`ℹ ${caseId}: empty setup → ${spins} spin${spins === 1 ? "" : "s"} (no AI needed)`);
+            appendLog(`[retranslate] ${caseId} no-AI: ${spins} spins (${n} total actions)`);
+          } else {
+            const n = Array.isArray(r.actions) ? r.actions.length : 0;
+            toast(`✓ Re-translated ${caseId} via AI → ${n} action${n === 1 ? "" : "s"}`);
+            appendLog(`[retranslate] ${caseId} AI ok: ${n} actions`);
+          }
+          // Force-expand so QA sees the new actions immediately.
+          expandedCases.add(caseId);
+          inFlightRetranslate.delete(caseId);
+          // Don't scroll to top — user is looking at this specific row.
+          await loadCasesForSlug(slug, { scrollToTop: false });
+          // Re-scroll into view (DOM was replaced) + flash highlight.
+          requestAnimationFrame(() => {
+            const row = document.querySelector(`#case-row-${CSS.escape(caseId)}`);
+            if (row) {
+              row.scrollIntoView({ behavior: "smooth", block: "center" });
+              row.style.transition = "background-color 1.2s ease-out";
+              row.style.backgroundColor = r.skipReason ? "#3a2a1a" : "#1a3a2a";
+              setTimeout(() => { row.style.backgroundColor = ""; }, 1500);
+            }
+          });
+        } else {
+          toast(`Re-translate failed: ${r.reason}`, true);
+          appendLog(`[retranslate] ${caseId} failed: ${r.reason}`);
+        }
+      } catch (err) {
+        toast(`Re-translate error: ${err.message}`, true);
+        appendLog(`[retranslate] ${caseId} error: ${err.message}`);
+      } finally {
+        // Safety net: always clear in-flight + re-render if not already done.
+        if (inFlightRetranslate.has(caseId)) {
+          inFlightRetranslate.delete(caseId);
+          renderCases(window.__cases || [], slug);
+        }
+      }
+    };
+
+    window.toggleCase = (caseId) => {
+      if (expandedCases.has(caseId)) expandedCases.delete(caseId);
+      else expandedCases.add(caseId);
+      // Re-render from cache
+      const cases = window.__cases || [];
+      renderCases(cases, window.__lastCasesSlug);
+    };
+
+    // Quiet runner: POST preview-case + store result + log. Does NOT expand /
+    // scroll / re-render the case list (so batch runs don't jump the screen).
+    // Returns the stored result object (or null on failure).
+    async function runCaseBackend(caseId, opts = {}) {
+      const autoMode = opts.autoMode ?? (document.getElementById("runAllAutoMode")?.checked === true);
+      const ensureMain = opts.ensureMain !== false;
+      appendLog(`[run-case] starting ${caseId}${autoMode ? " (auto-mode)" : ""}`);
+      const r = await api("/api/qa/manual/preview-case", {
+        method: "POST", body: { caseId, autoMode, ensureMain },
+      });
+      if (!r.ok || !r.result) {
+        appendLog(`[run-case] ${caseId} failed: ${r.reason ?? "unknown"}`);
+        return null;
+      }
+      const result = r.result;
+      if (Array.isArray(r.autoActions)) for (const step of r.autoActions) appendLog(`[auto-mode] ${step}`);
+      appendLog(`[run-case] ${caseId} → ${result.status} (${result.actionsExecuted} actions in ${result.durationMs}ms)`);
+      if (result.spin) appendLog(`[run-case] captured spin: bet=${result.spin.bet} win=${result.spin.win} balance=${result.spin.balanceAfter}`);
+      const assertionsTotal = result.assertions?.length ?? 0;
+      const assertionsPass = (result.assertions ?? []).filter((a) => a.pass).length;
+      if (assertionsTotal > 0) appendLog(`[run-case] assertions: ${assertionsPass}/${assertionsTotal} pass`);
+      if (result.skipReason) appendLog(`[run-case] skip: ${result.skipReason}`);
+      if (!window.__caseResults) window.__caseResults = {};
+      window.__caseResults[caseId] = { ...result, assertionsTotal, assertionsPass, ranAt: new Date().toISOString() };
+      if (window.__lastCasesSlug) saveCaseResults(window.__lastCasesSlug, window.__caseResults);
+      return window.__caseResults[caseId];
+    }
+
+    // Single per-row Run: run + expand + re-render + scroll (fine for one case).
+    window.doRunCase = async (caseId, opts = {}) => {
+      const autoMode = document.getElementById("runAllAutoMode")?.checked === true;
+      toast(`Running ${caseId} in Chrome window${autoMode ? " (auto-mode ON)" : ""}…`);
+      try {
+        const result = await runCaseBackend(caseId, { ensureMain: opts.ensureMain });
+        if (result) {
+          expandedCases.add(caseId);
+          renderCases(window.__cases || [], window.__lastCasesSlug);
+          toast(`${caseId} → ${result.status}`);
+        } else {
+          toast(`Run failed for ${caseId}`, true);
+        }
+      } catch (err) { toast(err.message, true); }
+    };
+
+    window.doSaveUrl = async (gameSlug) => {
+      const newUrl = document.getElementById(`url-${gameSlug}`).value.trim();
+      if (!newUrl) return toast("URL empty", true);
+      try {
+        const r = await api("/api/qa/manual/update-url", {
+          method: "POST", body: { gameSlug, url: newUrl },
+        });
+        if (r.ok) {
+          toast(`URL updated for ${gameSlug}${currentStatus?.active && currentStatus?.gameSlug === gameSlug ? " · browser navigated" : ""}`);
+          refreshGames();
+        } else {
+          toast(`Update failed: ${r.reason}`, true);
+        }
+      } catch (err) { toast(err.message, true); }
+    };
+
+    window.doResume = async (gameSlug) => {
+      try {
+        const s = await api("/api/qa/manual/resume", { method: "POST", body: { gameSlug } });
+        renderStatus(s);
+        await refreshGames();
+        await autoLoadCasesForActive(s);
+        toast(`Resumed ${gameSlug}`);
+      } catch (err) { toast(err.message, true); }
+    };
+
+    // Delete a game + ALL related fixtures. Destructive → confirm dialog.
+    window.doDeleteGame = async (gameSlug) => {
+      if (!confirm(`Delete "${gameSlug}" and ALL related data?\n\nThis removes the registry, test cases, scenarios, stats, and evidence. Irreversible.`)) return;
+      try {
+        const r = await api(`/api/qa/manual/game/${encodeURIComponent(gameSlug)}`, { method: "DELETE" });
+        // If the deleted game's cases were loaded, clear the table.
+        if (window.__lastCasesSlug === gameSlug) {
+          window.__cases = null;
+          window.__lastCasesSlug = null;
+          $("#casesList").innerHTML = `<p class="empty" style="margin:0;">Click "Load Cases" after a qa:cold run.</p>`;
+        }
+        await refresh();
+        toast(`Deleted ${gameSlug} · removed ${r.removed?.length ?? 0} path(s)`);
+      } catch (err) { toast(err.message, true); }
+    };
+
+    // Feature 2 — when a session is active, auto-load that game's test cases
+    // into the Test Cases table (no manual "Load Cases" click needed).
+    async function autoLoadCasesForActive(status) {
+      const slug = status?.active ? status.gameSlug : null;
+      if (!slug) return;
+      if (window.__lastCasesSlug === slug && window.__cases) return; // already loaded
+      try {
+        await loadCasesForSlug(slug);
+      } catch (err) {
+        console.warn("auto-load cases failed:", err);
+      }
+    }
+
+    $("#btnStart").onclick = async () => {
+      const url = $("#url").value.trim();
+      if (!url) return toast("URL required", true);
+      $("#btnStart").disabled = true;
+      sessionInfo.textContent = "Starting (Playwright launching + AI discovery)…";
+      try {
+        const s = await api("/api/qa/manual/start", {
+          method: "POST",
+          body: { url, autoDiscover: $("#autoDiscover").checked },
+        });
+        renderStatus(s);
+        await refreshGames();
+        await autoLoadCasesForActive(s);
+        toast("Session started · " + s.gameSlug);
+      } catch (err) {
+        toast(err.message, true);
+        $("#btnStart").disabled = false;
+      }
+    };
+
+    window.doStopSession = async () => {
+      try {
+        await api("/api/qa/manual/stop", { method: "POST" });
+        toast("Session stopped");
+        await refresh();
+      } catch (err) { toast(err.message, true); }
+    };
+
+    $("#btnRefresh").onclick = refresh;
+
+    $("#btnDiscoverState").onclick = async () => {
+      const stateLabel = $("#newStateLabel").value.trim();
+      if (!stateLabel) return toast("State label required (e.g. buy_feature_popup)", true);
+      toast(`AI discovering "${stateLabel}"…`);
+      try {
+        const r = await api("/api/qa/manual/discover-state", {
+          method: "POST", body: { stateLabel },
+        });
+        if (r.ok) {
+          renderStatus(r.status);
+          toast(`Added ${r.addedKeys.length} elements under "${stateLabel}"`);
+          $("#newStateLabel").value = "";
+        } else {
+          toast(`Discover failed: ${r.reason}`, true);
+        }
+      } catch (err) { toast(err.message, true); }
+    };
+
+    $("#btnPickNew").onclick = async () => {
+      const uiKey = $("#newKey").value.trim();
+      if (!uiKey) return toast("uiKey required", true);
+      if (currentStatus?.registry?.[uiKey]) return toast(`'${uiKey}' already exists — use Pick on its row to update, or Remove first`, true);
+      toast(`Now click the ACTUAL button in Playwright Chrome window for "${uiKey}" — 30s timeout`);
+      try {
+        const r = await api("/api/qa/manual/capture-click", {
+          method: "POST", body: { uiKey, timeoutMs: 30000, failIfExists: true },
+        });
+        if (r.ok) {
+          renderStatus(r.status);
+          $("#newKey").value = "";
+          toast(`Captured ${uiKey} @ (${r.coord.x}, ${r.coord.y}) — added & verified`);
+        } else {
+          toast(`Capture failed: ${r.reason}`, true);
+        }
+      } catch (err) { toast(err.message, true); }
+    };
+
+    $("#btnAdd").onclick = async () => {
+      const uiKey = $("#newKey").value.trim();
+      const x = parseInt($("#newX").value, 10);
+      const y = parseInt($("#newY").value, 10);
+      if (!uiKey || !Number.isFinite(x) || !Number.isFinite(y)) return toast("uiKey + x + y required", true);
+      try {
+        const s = await api("/api/qa/manual/add", {
+          method: "POST", body: { uiKey, x, y },
+        });
+        renderStatus(s);
+        $("#newKey").value = ""; $("#newX").value = ""; $("#newY").value = "";
+        toast(`Added ${uiKey} @ (${x}, ${y})`);
+      } catch (err) { toast(err.message, true); }
+    };
+
+    window.doClick = async (uiKey) => {
+      try {
+        const r = await api("/api/qa/manual/click", { method: "POST", body: { uiKey } });
+        toast(`Clicked ${uiKey} at (${r.clickedAt?.x}, ${r.clickedAt?.y}) — watch Chrome`);
+      } catch (err) { toast(err.message, true); }
+    };
+
+    window.doConfirm = async (uiKey) => {
+      try {
+        const s = await api("/api/qa/manual/confirm", { method: "POST", body: { uiKey } });
+        renderStatus(s);
+        toast(`${uiKey} → verified`);
+      } catch (err) { toast(err.message, true); }
+    };
+
+    // Bulk-verify all descendants of a parent element (non-destructive → no confirm dialog).
+    window.doConfirmChildren = async (parentKey) => {
+      try {
+        const r = await api("/api/qa/manual/confirm-children", { method: "POST", body: { parentKey } });
+        if (r.status) renderStatus(r.status);
+        toast(`Verified ${r.count ?? 0} children of ${parentKey}`);
+      } catch (err) { toast(err.message, true); }
+    };
+
+    window.doDiscoverFromButton = async (triggerKey) => {
+      const stateLabel = triggerKey;
+      const depth = triggerKey.split("__").length;
+      const walkInfo = depth > 1
+        ? `walking ${depth} ancestors → click each in sequence`
+        : "single click";
+      toast(`AI: ${walkInfo} → discover children of "${triggerKey}"…`);
+      try {
+        const r = await api("/api/qa/manual/discover-via", {
+          method: "POST", body: { triggerKey, stateLabel },
+        });
+        if (r.ok) {
+          // Auto-expand parent so newly discovered children are visible
+          expandedSet.add(triggerKey);
+          renderStatus(r.status);
+          const path = (r.clickedPath || []).map((p) => p.key).join(" → ");
+          toast(`Clicked ${path} · Added ${r.addedKeys.length} children`);
+        } else {
+          toast(`Discover failed: ${r.reason}`, true);
+        }
+      } catch (err) { toast(err.message, true); }
+    };
+
+    window.doCaptureClick = async (uiKey) => {
+      toast(`Now click the ACTUAL "${uiKey}" button in the Playwright Chrome window — waiting up to 30s…`);
+      try {
+        const r = await api("/api/qa/manual/capture-click", {
+          method: "POST", body: { uiKey, timeoutMs: 30000 },
+        });
+        if (r.ok) {
+          renderStatus(r.status);
+          toast(`Captured (${r.coord.x}, ${r.coord.y}) for ${uiKey} → saved + verified`);
+        } else {
+          toast(`Capture failed: ${r.reason}`, true);
+        }
+      } catch (err) { toast(err.message, true); }
+    };
+
+    // P5 — AI Recover a missing/expected element. Backend AI-vision searches the
+    // current screen for the named element, verifies the crop, and adds it to the
+    // registry as a pending entry for QA to confirm.
+    window.doAiRecover = async (uiKey) => {
+      toast(`AI recovering "${uiKey}" — scanning current screen…`);
+      try {
+        const r = await api("/api/qa/manual/ai-recover", { method: "POST", body: { uiKey } });
+        if (r.status) renderStatus(r.status);
+        if (r.ok && r.proposed) {
+          toast(`AI proposed (${r.proposed.x}, ${r.proposed.y}) for ${uiKey} — Click → Confirm to verify`);
+        } else {
+          toast(`AI Recover failed: ${r.reason || "no coord"}`, true);
+        }
+      } catch (err) { toast(err.message, true); }
+    };
+
+    window.doRemove = async (uiKey) => {
+      if (!confirm(`Remove ${uiKey} from registry?`)) return;
+      try {
+        const s = await api(`/api/qa/manual/element/${encodeURIComponent(uiKey)}`, { method: "DELETE" });
+        renderStatus(s);
+        toast(`Removed ${uiKey}`);
+      } catch (err) { toast(err.message, true); }
+    };
+
+    // Prefill the Add Element form with "<parentKey>__" so QA can append a
+    // child name and Pick. Cursor parked at end ready for typing.
+    window.doAddChild = (parentKey) => {
+      const input = $("#newKey");
+      const prefix = `${parentKey}__`;
+      input.value = prefix;
+      input.focus();
+      input.setSelectionRange(prefix.length, prefix.length);
+      input.scrollIntoView({ behavior: "smooth", block: "center" });
+      toast(`Add child under ${parentKey} — type name & Pick`);
+    };
+
+    // Copy a registry key into the Add Element form so QA can quickly edit
+    // the trailing segment (e.g. autoButton__autospins-10 → ...autospins-25)
+    // and re-pick. Also copies to clipboard for cross-tab use.
+    window.doCopyKey = async (uiKey) => {
+      const input = $("#newKey");
+      input.value = uiKey;
+      input.focus();
+      // Select from after the last "-" (or last "__" if no dash) to end,
+      // so QA can immediately type the new value.
+      const lastDash = uiKey.lastIndexOf("-");
+      const lastDelim = uiKey.lastIndexOf("__");
+      const start = lastDash > lastDelim ? lastDash + 1 : (lastDelim === -1 ? 0 : lastDelim + 2);
+      input.setSelectionRange(start, uiKey.length);
+      try {
+        if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(uiKey);
+      } catch { /* clipboard may be unavailable on http:// — input value is still set */ }
+      // Scroll the form into view so it's obvious where the key went.
+      input.scrollIntoView({ behavior: "smooth", block: "center" });
+      toast(`Copied "${uiKey}" — edit & Pick`);
+    };
+
+    // ============================================================
+    // OCR Regions panel — draw bbox on screenshot, save to registry
+    // ============================================================
+    const OCR_REGION_KEYS = [
+      { key: "balanceArea", label: "Balance widget", color: "#22c55e", hint: "OCR'd at end of each spin → screen.balance + _ocrBalance" },
+      { key: "betArea", label: "Bet widget", color: "#3b82f6", hint: "OCR'd at end of each spin → screen.bet" },
+      { key: "winArea", label: "Win widget", color: "#f59e0b", hint: "OCR'd at end of each spin → screen.last_win" },
+      { key: "freeSpinCounter", label: "Free Spin counter", color: "#ec4899", hint: "Active only during FS state" },
+    ];
+
+    // State for the 2-click bbox drawing flow per region key
+    let ocrDrawMode = { key: null, firstPoint: null, hoverPoint: null };
+    let ocrCurrentRegions = {};
+    let ocrShotNaturalSize = { width: 0, height: 0 };
+
+    function getRegionLabel(key) {
+      return OCR_REGION_KEYS.find((c) => c.key === key)?.label ?? key;
+    }
+
+    function updateDrawUi() {
+      const banner = $("#ocrDrawBanner");
+      const cancelBtn = $("#ocrOcrCancelDraw") || $("#btnOcrCancelDraw");
+      const img = $("#ocrShotImg");
+      if (!ocrDrawMode.key) {
+        banner.style.display = "none";
+        if (cancelBtn) cancelBtn.style.display = "none";
+        if (img) img.style.cursor = "default";
+        $("#ocrDrawHint").textContent = currentStatus?.active
+          ? "Click [Draw] on a row to start defining a bbox"
+          : "(no session)";
+        return;
+      }
+      const cfg = OCR_REGION_KEYS.find((c) => c.key === ocrDrawMode.key);
+      banner.style.display = "block";
+      banner.style.background = ocrDrawMode.firstPoint
+        ? `linear-gradient(90deg, ${cfg.color}, #b45309)`
+        : "linear-gradient(90deg, #d97706, #b45309)";
+      banner.innerHTML = ocrDrawMode.firstPoint
+        ? `📍 <strong>STEP 2/2:</strong> Click the <strong>BOTTOM-RIGHT corner</strong> of the <strong>${cfg.label}</strong> on the screenshot · point 1 marked at (${ocrDrawMode.firstPoint.x}, ${ocrDrawMode.firstPoint.y})`
+        : `📍 <strong>STEP 1/2:</strong> Click the <strong>TOP-LEFT corner</strong> of the <strong>${cfg.label}</strong> on the screenshot below`;
+      if (cancelBtn) cancelBtn.style.display = "inline-block";
+      if (img) img.style.cursor = "crosshair";
+      $("#ocrDrawHint").textContent = "";
+    }
+
+    function cancelDrawing() {
+      ocrDrawMode = { key: null, firstPoint: null, hoverPoint: null };
+      updateDrawUi();
+      drawAllRegionsOnOverlay();
+    }
+
+    async function renderOcrRegions() {
+      if (!currentStatus?.active) return;
+      const r = await api("/api/qa/manual/ocr-regions");
+      ocrCurrentRegions = r.regions ?? {};
+      const rows = OCR_REGION_KEYS.map((cfg) => {
+        const existing = ocrCurrentRegions[cfg.key];
+        const def = existing
+          ? `<code style="color:${cfg.color}">{x:${existing.x}, y:${existing.y}, w:${existing.width}, h:${existing.height}}</code>`
+          : `<span style="color:#5e6772">— not defined —</span>`;
+        const removeBtn = existing
+          ? `<button class="gray" style="font-size:11px;padding:3px 8px;" onclick="removeOcrRegion('${cfg.key}')">Remove</button>`
+          : "";
+        const drawBtn = `<button style="background:${cfg.color};color:#fff;font-size:11px;padding:3px 8px;font-weight:600;" onclick="startDrawRegion('${cfg.key}')">✏️ ${existing ? "Redraw" : "Draw"}</button>`;
+        const testBtn = existing
+          ? `<button class="gray" style="font-size:11px;padding:3px 8px;" onclick="testOcrRegionExisting('${cfg.key}')">🔍 Test OCR</button>`
+          : "";
+        return `<tr>
+          <td style="padding:6px 8px;border-bottom:1px solid #232a35;"><strong style="color:${cfg.color}">${cfg.label}</strong><div style="color:#5e6772;font-size:10px;">${cfg.hint}</div></td>
+          <td style="padding:6px 8px;border-bottom:1px solid #232a35;">${def}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid #232a35;white-space:nowrap;">${drawBtn} ${testBtn} ${removeBtn}</td>
+        </tr>`;
+      }).join("");
+      $("#ocrRegionsTable").innerHTML = `<table style="width:100%;font-size:12px;border-collapse:collapse;">
+        <thead><tr style="background:#161a22;"><th style="text-align:left;padding:6px 8px;">Region</th><th style="text-align:left;padding:6px 8px;">Current bbox</th><th style="text-align:left;padding:6px 8px;width:280px;">Action</th></tr></thead>
+        <tbody>${rows}</tbody></table>`;
+      drawAllRegionsOnOverlay();
+    }
+
+    async function loadOcrScreenshot() {
+      if (!currentStatus?.active) {
+        toast("No active session", true);
+        return;
+      }
+      const img = $("#ocrShotImg");
+      const overlay = $("#ocrShotOverlay");
+      img.onload = () => {
+        ocrShotNaturalSize = { width: img.naturalWidth, height: img.naturalHeight };
+        overlay.width = img.naturalWidth;
+        overlay.height = img.naturalHeight;
+        overlay.style.width = img.clientWidth + "px";
+        overlay.style.height = img.clientHeight + "px";
+        overlay.style.display = "block";
+        drawAllRegionsOnOverlay();
+        img.scrollIntoView({ behavior: "smooth", block: "center" });
+      };
+      img.src = `/api/qa/manual/screenshot?t=${Date.now()}`;
+      img.style.display = "block";
+      img.onclick = handleScreenshotClick;
+      img.onmousemove = handleScreenshotHover;
+      img.onmouseleave = () => { ocrDrawMode.hoverPoint = null; drawAllRegionsOnOverlay(); };
+    }
+
+    function drawAllRegionsOnOverlay() {
+      const overlay = $("#ocrShotOverlay");
+      if (!overlay || overlay.style.display === "none") return;
+      const ctx = overlay.getContext("2d");
+      ctx.clearRect(0, 0, overlay.width, overlay.height);
+      // Existing saved regions
+      for (const cfg of OCR_REGION_KEYS) {
+        const r = ocrCurrentRegions[cfg.key];
+        if (!r) continue;
+        const isActive = ocrDrawMode.key === cfg.key;
+        ctx.strokeStyle = cfg.color;
+        ctx.lineWidth = isActive ? 4 : 3;
+        ctx.setLineDash(isActive ? [8, 4] : []);
+        ctx.strokeRect(r.x, r.y, r.width, r.height);
+        ctx.fillStyle = cfg.color;
+        ctx.font = "bold 16px sans-serif";
+        ctx.fillText(cfg.label, r.x + 4, r.y - 6);
+      }
+      ctx.setLineDash([]);
+      // First click marker
+      if (ocrDrawMode.firstPoint) {
+        const cfg = OCR_REGION_KEYS.find((c) => c.key === ocrDrawMode.key);
+        ctx.fillStyle = cfg?.color ?? "#ffa657";
+        ctx.beginPath();
+        ctx.arc(ocrDrawMode.firstPoint.x, ocrDrawMode.firstPoint.y, 8, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "#fff";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        // Live preview rectangle from firstPoint to hoverPoint
+        if (ocrDrawMode.hoverPoint) {
+          const x = Math.min(ocrDrawMode.firstPoint.x, ocrDrawMode.hoverPoint.x);
+          const y = Math.min(ocrDrawMode.firstPoint.y, ocrDrawMode.hoverPoint.y);
+          const w = Math.abs(ocrDrawMode.hoverPoint.x - ocrDrawMode.firstPoint.x);
+          const h = Math.abs(ocrDrawMode.hoverPoint.y - ocrDrawMode.firstPoint.y);
+          ctx.strokeStyle = cfg?.color ?? "#ffa657";
+          ctx.lineWidth = 2;
+          ctx.setLineDash([6, 4]);
+          ctx.strokeRect(x, y, w, h);
+          ctx.setLineDash([]);
+          ctx.fillStyle = "rgba(217,119,6,0.15)";
+          ctx.fillRect(x, y, w, h);
+        }
+      }
+    }
+
+    function startDrawRegion(key) {
+      if (!currentStatus?.active) return toast("Start a session first", true);
+      ocrDrawMode = { key, firstPoint: null, hoverPoint: null };
+      updateDrawUi();
+      loadOcrScreenshot();
+    }
+
+    function screenshotEventToImgCoord(ev) {
+      const img = $("#ocrShotImg");
+      const rect = img.getBoundingClientRect();
+      const scaleX = img.naturalWidth / rect.width;
+      const scaleY = img.naturalHeight / rect.height;
+      return {
+        x: Math.round((ev.clientX - rect.left) * scaleX),
+        y: Math.round((ev.clientY - rect.top) * scaleY),
+      };
+    }
+
+    function handleScreenshotHover(ev) {
+      if (!ocrDrawMode.key || !ocrDrawMode.firstPoint) return;
+      ocrDrawMode.hoverPoint = screenshotEventToImgCoord(ev);
+      drawAllRegionsOnOverlay();
+    }
+
+    async function handleScreenshotClick(ev) {
+      if (!ocrDrawMode.key) return;
+      const pt = screenshotEventToImgCoord(ev);
+      if (!ocrDrawMode.firstPoint) {
+        ocrDrawMode.firstPoint = pt;
+        updateDrawUi();
+        drawAllRegionsOnOverlay();
+        return;
+      }
+      // Second click → finalize bbox
+      const x0 = Math.min(ocrDrawMode.firstPoint.x, pt.x);
+      const y0 = Math.min(ocrDrawMode.firstPoint.y, pt.y);
+      const x1 = Math.max(ocrDrawMode.firstPoint.x, pt.x);
+      const y1 = Math.max(ocrDrawMode.firstPoint.y, pt.y);
+      const region = { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+      const key = ocrDrawMode.key;
+      ocrDrawMode = { key: null, firstPoint: null, hoverPoint: null };
+      updateDrawUi();
+      if (region.width < 10 || region.height < 10) {
+        toast("Bbox too small (<10px) — try again", true);
+        await renderOcrRegions();
+        return;
+      }
+      const testR = await api("/api/qa/manual/ocr-regions/test", { method: "POST", body: region });
+      $("#ocrTestResult").style.display = "block";
+      const parsedDisplay = testR.parsedValue !== null && testR.parsedValue !== undefined
+        ? `<span style="color:#22c55e;font-size:16px;">${testR.parsedValue}</span>`
+        : `<span style="color:#f0a39e;">(no number parsed)</span>`;
+      $("#ocrTestResult").innerHTML = `<div><strong>${getRegionLabel(key)}</strong> bbox=${region.width}×${region.height}px</div>
+        <div style="margin-top:4px;">OCR text: <code style="color:#c8d0d8;">"${(testR.text ?? "").replace(/</g, "&lt;").slice(0, 200)}"</code></div>
+        <div style="margin-top:4px;">Parsed number: ${parsedDisplay} · ${testR.durationMs}ms</div>`;
+      await api("/api/qa/manual/ocr-regions", { method: "POST", body: { key, ...region } });
+      toast(`Saved ${getRegionLabel(key)}: ${region.width}×${region.height}px`);
+      await renderOcrRegions();
+    }
+
+    async function testOcrRegionExisting(key) {
+      const r = ocrCurrentRegions[key];
+      if (!r) return;
+      const result = await api("/api/qa/manual/ocr-regions/test", { method: "POST", body: { x: r.x, y: r.y, width: r.width, height: r.height } });
+      $("#ocrTestResult").style.display = "block";
+      $("#ocrTestResult").innerHTML = `[${key}] OCR: text=<code>"${(result.text ?? "").replace(/</g, "&lt;").slice(0, 200)}"</code><br>Parsed number: <strong>${result.parsedValue ?? "(none)"}</strong> · ${result.durationMs}ms`;
+    }
+
+    async function removeOcrRegion(key) {
+      await api(`/api/qa/manual/ocr-regions?key=${encodeURIComponent(key)}`, { method: "DELETE" });
+      toast(`Removed ${key}`);
+      await renderOcrRegions();
+    }
+
+    $("#btnOcrRefreshShot").onclick = loadOcrScreenshot;
+    $("#btnOcrCancelDraw").onclick = cancelDrawing;
+    // Allow Escape key to cancel drawing
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape" && ocrDrawMode.key) cancelDrawing();
+    });
+    // Expose to inline onclick handlers
+    window.startDrawRegion = startDrawRegion;
+    window.removeOcrRegion = removeOcrRegion;
+    window.testOcrRegionExisting = testOcrRegionExisting;
+
+    // Initial load
+    refresh();
+  </script>
+</body>
+</html>

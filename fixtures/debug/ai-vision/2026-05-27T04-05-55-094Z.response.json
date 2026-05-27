@@ -1,0 +1,65 @@
+{
+  "text": "{\n  \"elements\": {\n    \"spinButton\": { \"x\": 1140, \"y\": 681, \"confidence\": 0.97 },\n    \"autoButton\": { \"x\": 1140, \"y\": 712, \"confidence\": 0.9 },\n    \"buyBonusButton\": { \"x\": 720, \"y\": 612, \"confidence\": 0.93 },\n    \"paytableButton\": { \"x\": 51, \"y\": 681, \"confidence\": 0.92 },\n    \"menuButton\": { \"x\": 22, \"y\": 681, \"confidence\": 0.92 },\n    \"betPlus\": { \"x\": 1218, \"y\": 681, \"confidence\": 0.94 },\n    \"betMinus\": { \"x\": 1062, \"y\": 681, \"confidence\": 0.94 }\n  },\n  \"suggestions\": [\n    { \"label\": \"sound_toggle\", \"x\": 51, \"y\": 707, \"confidence\": 0.88, \"note\": \"Speaker icon below info button\" },\n    { \"label\": \"bet_amount\", \"x\": 590, \"y\": 600, \"confidence\": 0.8, \"note\": \"BET $0.63 panel - clickable to change bet\" },\n    { \"label\": \"more_scatters_toggle\", \"x\": 590, \"y\": 628, \"confidence\": 0.75, \"note\": \"MORE SCATTERS OFF toggle\" }\n  ]\n}",
+  "parsed": {
+    "elements": {
+      "spinButton": {
+        "x": 1140,
+        "y": 681,
+        "confidence": 0.97
+      },
+      "autoButton": {
+        "x": 1140,
+        "y": 712,
+        "confidence": 0.9
+      },
+      "buyBonusButton": {
+        "x": 720,
+        "y": 612,
+        "confidence": 0.93
+      },
+      "paytableButton": {
+        "x": 51,
+        "y": 681,
+        "confidence": 0.92
+      },
+      "menuButton": {
+        "x": 22,
+        "y": 681,
+        "confidence": 0.92
+      },
+      "betPlus": {
+        "x": 1218,
+        "y": 681,
+        "confidence": 0.94
+      },
+      "betMinus": {
+        "x": 1062,
+        "y": 681,
+        "confidence": 0.94
+      }
+    },
+    "suggestions": [
+      {
+        "label": "sound_toggle",
+        "x": 51,
+        "y": 707,
+        "confidence": 0.88,
+        "note": "Speaker icon below info button"
+      },
+      {
+        "label": "bet_amount",
+        "x": 590,
+        "y": 600,
+        "confidence": 0.8,
+        "note": "BET $0.63 panel - clickable to change bet"
+      },
+      {
+        "label": "more_scatters_toggle",
+        "x": 590,
+        "y": 628,
+        "confidence": 0.75,
+        "note": "MORE SCATTERS OFF toggle"
+      }
+    ]
+  }
+}

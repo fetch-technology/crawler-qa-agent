@@ -1,0 +1,1768 @@
+{
+  "schemaVersion": 1,
+  "sourceHashes": {
+    "uiRegistry": "ef28e0e63f41c03c54bc486cf096189e076f149cd432c0a0e359a287607d7aec",
+    "providerCache": "4a3ff56ac53ce368036944609d4bcc43113f4226827520d37bce1a677136949d",
+    "apiMapping": "92e1fbfd04708628126a2aa46203873126ee97e089ec3173095bfd5ea01b5cdf",
+    "parserCache": "c0fc239327771e6d6865fb27c5f82c07664697c37f07de9cffa42c9b7d9e1f8e"
+  },
+  "compiledAt": "2026-05-21T15:03:24.124Z",
+  "gameSlug": "vs20rnriches",
+  "ui": {
+    "spinButton": {
+      "x": 1014,
+      "y": 656,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T04:19:29.798Z",
+      "verifiedBy": "QA",
+      "status": "verified",
+      "verifiedAt": "2026-05-21T04:19:56.294Z"
+    },
+    "autoButton": {
+      "x": 1014,
+      "y": 698,
+      "strategy": "ai_vision",
+      "confidence": 0.85,
+      "detectedAt": "2026-05-21T04:19:29.798Z",
+      "verifiedBy": "QA",
+      "status": "verified",
+      "verifiedAt": "2026-05-21T04:32:13.920Z"
+    },
+    "betPlus": {
+      "x": 1097,
+      "y": 656,
+      "strategy": "ai_vision",
+      "confidence": 0.92,
+      "detectedAt": "2026-05-21T04:19:29.798Z",
+      "verifiedBy": "QA",
+      "status": "verified",
+      "verifiedAt": "2026-05-21T04:24:06.816Z"
+    },
+    "betMinus": {
+      "x": 911,
+      "y": 652,
+      "strategy": "ai_recover",
+      "confidence": 0.85,
+      "detectedAt": "2026-05-21T04:35:07.400Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T04:35:31.533Z"
+    },
+    "buyBonusButton": {
+      "x": 137,
+      "y": 224,
+      "strategy": "ai_vision",
+      "confidence": 0.95,
+      "detectedAt": "2026-05-21T04:19:29.799Z",
+      "verifiedBy": "QA",
+      "status": "verified",
+      "verifiedAt": "2026-05-21T04:28:25.497Z"
+    },
+    "menuButton": {
+      "x": 141,
+      "y": 654,
+      "strategy": "manual",
+      "confidence": 1,
+      "detectedAt": "2026-05-21T04:46:50.265Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T04:46:50.265Z"
+    },
+    "menu__closeButton": {
+      "x": 1037,
+      "y": 108,
+      "strategy": "ai_vision",
+      "confidence": 0.98,
+      "detectedAt": "2026-05-21T04:49:41.250Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T04:52:47.791Z"
+    },
+    "menu__gameHistoryButton": {
+      "x": 488,
+      "y": 290,
+      "strategy": "ai_vision",
+      "confidence": 0.95,
+      "detectedAt": "2026-05-21T04:49:41.250Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T04:52:21.360Z"
+    },
+    "menu__decreaseBetButton": {
+      "x": 348,
+      "y": 403,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T04:49:41.250Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T04:51:03.956Z"
+    },
+    "menu__increaseBetButton": {
+      "x": 575,
+      "y": 403,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T04:49:41.250Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T04:51:10.584Z"
+    },
+    "menu__batterySaverToggle": {
+      "x": 923,
+      "y": 270,
+      "strategy": "ai_vision",
+      "confidence": 0.96,
+      "detectedAt": "2026-05-21T04:49:41.250Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T04:50:34.341Z"
+    },
+    "menu__ambientMusicToggle": {
+      "x": 923,
+      "y": 345,
+      "strategy": "ai_vision",
+      "confidence": 0.96,
+      "detectedAt": "2026-05-21T04:49:41.250Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T04:50:27.778Z"
+    },
+    "menu__soundFxToggle": {
+      "x": 923,
+      "y": 421,
+      "strategy": "ai_vision",
+      "confidence": 0.96,
+      "detectedAt": "2026-05-21T04:49:41.250Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T04:51:27.902Z"
+    },
+    "bet_plus_state__closeButton": {
+      "x": 1097,
+      "y": 221,
+      "strategy": "ai_vision",
+      "confidence": 0.98,
+      "detectedAt": "2026-05-21T04:57:24.770Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T04:59:14.811Z"
+    },
+    "bet_minus_state__closeButton": {
+      "x": 1097,
+      "y": 222,
+      "strategy": "ai_vision",
+      "confidence": 0.98,
+      "detectedAt": "2026-05-21T05:00:14.794Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:00:48.726Z"
+    },
+    "bet_minus_state__bet-0.20": {
+      "x": 354,
+      "y": 284,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:00:14.794Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:00:19.672Z"
+    },
+    "bet_minus_state__bet-0.30": {
+      "x": 492,
+      "y": 284,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:00:14.794Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:00:20.671Z"
+    },
+    "bet_minus_state__bet-0.40": {
+      "x": 630,
+      "y": 284,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:00:14.794Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:00:21.417Z"
+    },
+    "bet_minus_state__bet-0.50": {
+      "x": 769,
+      "y": 284,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:00:14.794Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:00:22.240Z"
+    },
+    "bet_minus_state__bet-0.60": {
+      "x": 908,
+      "y": 284,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:00:14.794Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:00:23.842Z"
+    },
+    "bet_minus_state__bet-0.70": {
+      "x": 1047,
+      "y": 284,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:00:14.794Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:00:24.512Z"
+    },
+    "bet_minus_state__bet-0.80": {
+      "x": 354,
+      "y": 347,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:00:14.794Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:00:25.130Z"
+    },
+    "bet_minus_state__bet-0.90": {
+      "x": 492,
+      "y": 347,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:00:14.794Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:00:26.373Z"
+    },
+    "bet_minus_state__bet-1.00": {
+      "x": 630,
+      "y": 347,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:00:14.794Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:00:27.074Z"
+    },
+    "bet_minus_state__bet-2.00": {
+      "x": 769,
+      "y": 347,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:00:14.794Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:00:30.594Z"
+    },
+    "bet_minus_state__bet-4.00": {
+      "x": 1047,
+      "y": 347,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:00:14.794Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:00:35.191Z"
+    },
+    "bet_minus_state__bet-5.00": {
+      "x": 354,
+      "y": 410,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:00:14.794Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:00:37.682Z"
+    },
+    "bet_minus_state__bet-6.00": {
+      "x": 492,
+      "y": 410,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:00:14.794Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:00:39.633Z"
+    },
+    "bet_minus_state__bet-7.00": {
+      "x": 630,
+      "y": 410,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:00:14.794Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:00:42.658Z"
+    },
+    "bet_minus_state__bet-8.00": {
+      "x": 769,
+      "y": 410,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:00:14.794Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:00:45.215Z"
+    },
+    "bet_minus_state__bet-9.00": {
+      "x": 908,
+      "y": 410,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:00:14.794Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:00:47.115Z"
+    },
+    "bet_minus_state__bet-10.00": {
+      "x": 1047,
+      "y": 410,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:00:14.794Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:00:28.280Z"
+    },
+    "bet_minus_state__bet-30.00": {
+      "x": 492,
+      "y": 472,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:00:14.794Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:00:34.274Z"
+    },
+    "bet_minus_state__bet-40.00": {
+      "x": 630,
+      "y": 472,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:00:14.794Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:00:36.141Z"
+    },
+    "bet_minus_state__bet-50.00": {
+      "x": 769,
+      "y": 472,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:00:14.794Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:00:38.495Z"
+    },
+    "bet_minus_state__bet-60.00": {
+      "x": 908,
+      "y": 472,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:00:14.794Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:00:40.966Z"
+    },
+    "bet_minus_state__bet-70.00": {
+      "x": 1047,
+      "y": 472,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:00:14.794Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:00:43.649Z"
+    },
+    "bet_minus_state__bet-80.00": {
+      "x": 354,
+      "y": 535,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:00:14.794Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:00:46.099Z"
+    },
+    "bet_minus_state__bet-90.00": {
+      "x": 492,
+      "y": 535,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:00:14.794Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:00:47.879Z"
+    },
+    "bet_minus_state__bet-100.00": {
+      "x": 630,
+      "y": 535,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:00:14.794Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:00:28.973Z"
+    },
+    "buy_feature_popup__closeButton": {
+      "x": 979,
+      "y": 225,
+      "strategy": "manual",
+      "confidence": 1,
+      "detectedAt": "2026-05-21T05:02:25.245Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:02:25.245Z"
+    },
+    "buy_feature_popup__freeSpinsOption": {
+      "x": 365,
+      "y": 322,
+      "strategy": "ai_vision",
+      "confidence": 0.95,
+      "detectedAt": "2026-05-21T05:01:05.090Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:03:31.370Z"
+    },
+    "buy_feature_popup__superFreeSpins1Option": {
+      "x": 624,
+      "y": 322,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:01:05.090Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:03:45.181Z"
+    },
+    "buy_feature_popup__superFreeSpins2Option": {
+      "x": 884,
+      "y": 322,
+      "strategy": "ai_vision",
+      "confidence": 0.95,
+      "detectedAt": "2026-05-21T05:01:05.090Z",
+      "status": "pending"
+    },
+    "buy_feature_popup__decreaseBetButton": {
+      "x": 488,
+      "y": 444,
+      "strategy": "ai_vision",
+      "confidence": 0.96,
+      "detectedAt": "2026-05-21T05:01:05.090Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:01:29.631Z"
+    },
+    "buy_feature_popup__increaseBetButton": {
+      "x": 762,
+      "y": 444,
+      "strategy": "ai_vision",
+      "confidence": 0.96,
+      "detectedAt": "2026-05-21T05:01:05.090Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:01:35.265Z"
+    },
+    "buyBonusButton__closeButton": {
+      "x": 977,
+      "y": 226,
+      "strategy": "ai_vision",
+      "confidence": 0.98,
+      "detectedAt": "2026-05-21T05:16:44.702Z",
+      "status": "pending"
+    },
+    "buyBonusButton__freeSpinsOption": {
+      "x": 351,
+      "y": 322,
+      "strategy": "ai_vision",
+      "confidence": 0.95,
+      "detectedAt": "2026-05-21T05:16:44.702Z",
+      "status": "pending"
+    },
+    "buyBonusButton__superFreeSpins1Option": {
+      "x": 619,
+      "y": 322,
+      "strategy": "ai_vision",
+      "confidence": 0.95,
+      "detectedAt": "2026-05-21T05:16:44.702Z",
+      "status": "pending"
+    },
+    "buyBonusButton__superFreeSpins2Option": {
+      "x": 884,
+      "y": 322,
+      "strategy": "ai_vision",
+      "confidence": 0.95,
+      "detectedAt": "2026-05-21T05:16:44.702Z",
+      "status": "pending"
+    },
+    "buyBonusButton__decreaseBetButton": {
+      "x": 510,
+      "y": 443,
+      "strategy": "ai_vision",
+      "confidence": 0.96,
+      "detectedAt": "2026-05-21T05:16:44.702Z",
+      "status": "pending"
+    },
+    "buyBonusButton__increaseBetButton": {
+      "x": 781,
+      "y": 443,
+      "strategy": "ai_vision",
+      "confidence": 0.96,
+      "detectedAt": "2026-05-21T05:16:44.702Z",
+      "status": "pending"
+    },
+    "buyBonusButton__freeSpinsOption__backButton": {
+      "x": 445,
+      "y": 239,
+      "strategy": "manual",
+      "confidence": 1,
+      "detectedAt": "2026-05-21T05:24:16.887Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:24:16.887Z"
+    },
+    "buyBonusButton__freeSpinsOption__closeButton": {
+      "x": 833,
+      "y": 243,
+      "strategy": "manual",
+      "confidence": 1,
+      "detectedAt": "2026-05-21T05:24:54.805Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:24:54.805Z"
+    },
+    "buyBonusButton__freeSpinsOption__cancelButton": {
+      "x": 535,
+      "y": 475,
+      "strategy": "ai_vision",
+      "confidence": 0.98,
+      "detectedAt": "2026-05-21T05:23:00.170Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:24:34.570Z"
+    },
+    "buyBonusButton__freeSpinsOption__yesButton": {
+      "x": 745,
+      "y": 475,
+      "strategy": "ai_vision",
+      "confidence": 0.98,
+      "detectedAt": "2026-05-21T05:23:00.170Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:25:13.066Z"
+    },
+    "buyBonusButton__superFreeSpins1Option__backButton": {
+      "x": 446,
+      "y": 240,
+      "strategy": "manual",
+      "confidence": 1,
+      "detectedAt": "2026-05-21T05:29:58.591Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:29:58.591Z"
+    },
+    "buyBonusButton__superFreeSpins1Option__closeButton": {
+      "x": 828,
+      "y": 236,
+      "strategy": "manual",
+      "confidence": 1,
+      "detectedAt": "2026-05-21T05:30:34.360Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:30:34.360Z"
+    },
+    "buyBonusButton__superFreeSpins1Option__cancelButton": {
+      "x": 535,
+      "y": 449,
+      "strategy": "ai_vision",
+      "confidence": 0.98,
+      "detectedAt": "2026-05-21T05:29:25.717Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:30:20.716Z"
+    },
+    "buyBonusButton__superFreeSpins1Option__yesButton": {
+      "x": 744,
+      "y": 449,
+      "strategy": "ai_vision",
+      "confidence": 0.98,
+      "detectedAt": "2026-05-21T05:29:25.717Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:31:02.825Z"
+    },
+    "betPlus__closeButton": {
+      "x": 1097,
+      "y": 220,
+      "strategy": "ai_vision",
+      "confidence": 0.98,
+      "detectedAt": "2026-05-21T05:41:03.584Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:41:29.259Z"
+    },
+    "betPlus__bet-0-20": {
+      "x": 353,
+      "y": 284,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:41:03.584Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:41:08.314Z"
+    },
+    "betPlus__bet-0-30": {
+      "x": 492,
+      "y": 284,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:41:03.584Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:41:08.844Z"
+    },
+    "betPlus__bet-0-40": {
+      "x": 631,
+      "y": 284,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:41:03.584Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:41:10.472Z"
+    },
+    "betPlus__bet-0-50": {
+      "x": 770,
+      "y": 284,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:41:03.584Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:41:11.276Z"
+    },
+    "betPlus__bet-0-60": {
+      "x": 909,
+      "y": 284,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:41:03.584Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:41:12.493Z"
+    },
+    "betPlus__bet-0-70": {
+      "x": 1048,
+      "y": 284,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:41:03.584Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:41:13.351Z"
+    },
+    "betPlus__bet-0-80": {
+      "x": 353,
+      "y": 346,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:41:03.584Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:41:14.241Z"
+    },
+    "betPlus__bet-0-90": {
+      "x": 492,
+      "y": 346,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:41:03.584Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:41:15.000Z"
+    },
+    "betPlus__bet-1-00": {
+      "x": 631,
+      "y": 346,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:41:03.584Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:41:15.429Z"
+    },
+    "betPlus__bet-2-00": {
+      "x": 770,
+      "y": 346,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:41:03.584Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:41:17.875Z"
+    },
+    "betPlus__bet-3-00": {
+      "x": 909,
+      "y": 346,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:41:03.584Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:41:19.272Z"
+    },
+    "betPlus__bet-4-00": {
+      "x": 1048,
+      "y": 346,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:41:03.584Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:41:21.569Z"
+    },
+    "betPlus__bet-5-00": {
+      "x": 353,
+      "y": 409,
+      "strategy": "ai_vision",
+      "confidence": 0.98,
+      "detectedAt": "2026-05-21T05:41:03.584Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:41:22.726Z"
+    },
+    "betPlus__bet-6-00": {
+      "x": 492,
+      "y": 409,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:41:03.584Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:41:24.643Z"
+    },
+    "betPlus__bet-7-00": {
+      "x": 631,
+      "y": 409,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:41:03.584Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:41:26.232Z"
+    },
+    "betPlus__bet-8-00": {
+      "x": 770,
+      "y": 409,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:41:03.584Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:41:27.197Z"
+    },
+    "betPlus__bet-9-00": {
+      "x": 909,
+      "y": 409,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:41:03.584Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:41:28.334Z"
+    },
+    "betPlus__bet-10-00": {
+      "x": 1048,
+      "y": 409,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:41:03.584Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:41:15.968Z"
+    },
+    "betPlus__bet-20-00": {
+      "x": 353,
+      "y": 471,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:41:03.584Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:41:18.192Z"
+    },
+    "betPlus__bet-30-00": {
+      "x": 492,
+      "y": 471,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:41:03.584Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:41:19.636Z"
+    },
+    "betPlus__bet-40-00": {
+      "x": 631,
+      "y": 471,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:41:03.584Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:41:21.882Z"
+    },
+    "betPlus__bet-50-00": {
+      "x": 770,
+      "y": 471,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:41:03.584Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:41:23.188Z"
+    },
+    "betPlus__bet-60-00": {
+      "x": 909,
+      "y": 471,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:41:03.584Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:41:25.136Z"
+    },
+    "betPlus__bet-70-00": {
+      "x": 1048,
+      "y": 471,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:41:03.584Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:41:26.593Z"
+    },
+    "betPlus__bet-80-00": {
+      "x": 353,
+      "y": 533,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:41:03.584Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:41:27.625Z"
+    },
+    "betPlus__bet-90-00": {
+      "x": 492,
+      "y": 533,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:41:03.584Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:41:28.736Z"
+    },
+    "betPlus__bet-100-00": {
+      "x": 631,
+      "y": 533,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:41:03.584Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:41:16.405Z"
+    },
+    "betMinus__closeButton": {
+      "x": 1097,
+      "y": 222,
+      "strategy": "ai_vision",
+      "confidence": 0.98,
+      "detectedAt": "2026-05-21T05:42:09.046Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:42:40.839Z"
+    },
+    "betMinus__bet-0.20": {
+      "x": 353,
+      "y": 284,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:42:09.046Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:42:19.753Z"
+    },
+    "betMinus__bet-0.30": {
+      "x": 492,
+      "y": 284,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:42:09.046Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:42:20.335Z"
+    },
+    "betMinus__bet-0.40": {
+      "x": 631,
+      "y": 284,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:42:09.046Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:42:20.709Z"
+    },
+    "betMinus__bet-0.50": {
+      "x": 770,
+      "y": 284,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:42:09.046Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:42:21.231Z"
+    },
+    "betMinus__bet-0.60": {
+      "x": 909,
+      "y": 284,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:42:09.046Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:42:23.543Z"
+    },
+    "betMinus__bet-0.70": {
+      "x": 1048,
+      "y": 284,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:42:09.046Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:42:22.507Z"
+    },
+    "betMinus__bet-0.80": {
+      "x": 353,
+      "y": 347,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:42:09.046Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:42:25.543Z"
+    },
+    "betMinus__bet-0.90": {
+      "x": 492,
+      "y": 347,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:42:09.046Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:42:25.967Z"
+    },
+    "betMinus__bet-1.00": {
+      "x": 631,
+      "y": 347,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:42:09.046Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:42:26.685Z"
+    },
+    "betMinus__bet-2.00": {
+      "x": 770,
+      "y": 347,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:42:09.046Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:42:28.295Z"
+    },
+    "betMinus__bet-3.00-selected": {
+      "x": 909,
+      "y": 347,
+      "strategy": "ai_vision",
+      "confidence": 0.98,
+      "detectedAt": "2026-05-21T05:42:09.046Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:42:29.176Z"
+    },
+    "betMinus__bet-4.00": {
+      "x": 1048,
+      "y": 347,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:42:09.046Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:42:32.298Z"
+    },
+    "betMinus__bet-5.00": {
+      "x": 353,
+      "y": 410,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:42:09.046Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:42:34.745Z"
+    },
+    "betMinus__bet-6.00": {
+      "x": 492,
+      "y": 410,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:42:09.046Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:42:35.895Z"
+    },
+    "betMinus__bet-7.00": {
+      "x": 631,
+      "y": 410,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:42:09.046Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:42:37.040Z"
+    },
+    "betMinus__bet-8.00": {
+      "x": 770,
+      "y": 410,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:42:09.046Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:42:38.581Z"
+    },
+    "betMinus__bet-9.00": {
+      "x": 909,
+      "y": 410,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:42:09.046Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:42:39.511Z"
+    },
+    "betMinus__bet-10.00": {
+      "x": 1048,
+      "y": 410,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:42:09.046Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:42:27.024Z"
+    },
+    "betMinus__bet-20.00": {
+      "x": 353,
+      "y": 472,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:42:09.046Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:42:28.794Z"
+    },
+    "betMinus__bet-30.00": {
+      "x": 492,
+      "y": 472,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:42:09.046Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:42:29.730Z"
+    },
+    "betMinus__bet-40.00": {
+      "x": 631,
+      "y": 472,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:42:09.046Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:42:32.652Z"
+    },
+    "betMinus__bet-50.00": {
+      "x": 770,
+      "y": 472,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:42:09.046Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:42:35.149Z"
+    },
+    "betMinus__bet-60.00": {
+      "x": 909,
+      "y": 472,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:42:09.046Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:42:36.306Z"
+    },
+    "betMinus__bet-70.00": {
+      "x": 1048,
+      "y": 472,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:42:09.046Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:42:37.434Z"
+    },
+    "betMinus__bet-80.00": {
+      "x": 353,
+      "y": 534,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:42:09.046Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:42:38.041Z"
+    },
+    "betMinus__bet-90.00": {
+      "x": 492,
+      "y": 534,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:42:09.046Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:42:40.398Z"
+    },
+    "betMinus__bet-100.00": {
+      "x": 631,
+      "y": 534,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:42:09.046Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:42:27.650Z"
+    },
+    "menuButton__closeButton": {
+      "x": 1038,
+      "y": 108,
+      "strategy": "ai_vision",
+      "confidence": 0.98,
+      "detectedAt": "2026-05-21T05:43:01.165Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:44:16.213Z"
+    },
+    "menuButton__gameHistoryButton": {
+      "x": 595,
+      "y": 289,
+      "strategy": "ai_vision",
+      "confidence": 0.95,
+      "detectedAt": "2026-05-21T05:43:01.165Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:44:33.153Z"
+    },
+    "menuButton__decreaseBetButton": {
+      "x": 348,
+      "y": 403,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:43:01.165Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:43:34.199Z"
+    },
+    "menuButton__increaseBetButton": {
+      "x": 575,
+      "y": 403,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:43:01.165Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:43:40.391Z"
+    },
+    "menuButton__batterySaverToggle": {
+      "x": 924,
+      "y": 270,
+      "strategy": "ai_vision",
+      "confidence": 0.96,
+      "detectedAt": "2026-05-21T05:43:01.165Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:43:18.549Z"
+    },
+    "menuButton__ambientMusicToggle": {
+      "x": 924,
+      "y": 345,
+      "strategy": "ai_vision",
+      "confidence": 0.96,
+      "detectedAt": "2026-05-21T05:43:01.165Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:43:12.420Z"
+    },
+    "menuButton__soundFxToggle": {
+      "x": 924,
+      "y": 421,
+      "strategy": "ai_vision",
+      "confidence": 0.96,
+      "detectedAt": "2026-05-21T05:43:01.165Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:43:48.418Z"
+    },
+    "autoButton__autospins-20": {
+      "x": 488,
+      "y": 387,
+      "strategy": "manual",
+      "confidence": 1,
+      "detectedAt": "2026-05-21T09:58:56.467Z",
+      "verifiedBy": "QA",
+      "status": "verified",
+      "verifiedAt": "2026-05-21T09:58:56.467Z"
+    },
+    "autoButton__autospins-30": {
+      "x": 532,
+      "y": 386,
+      "strategy": "manual",
+      "confidence": 1,
+      "detectedAt": "2026-05-21T10:01:13.214Z",
+      "verifiedBy": "QA",
+      "status": "verified",
+      "verifiedAt": "2026-05-21T10:01:13.214Z"
+    },
+    "autoButton__autospins-50": {
+      "x": 578,
+      "y": 382,
+      "strategy": "manual",
+      "confidence": 1,
+      "detectedAt": "2026-05-21T10:01:32.373Z",
+      "verifiedBy": "QA",
+      "status": "verified",
+      "verifiedAt": "2026-05-21T10:01:32.373Z"
+    },
+    "autoButton__autospins-70": {
+      "x": 621,
+      "y": 382,
+      "strategy": "manual",
+      "confidence": 1,
+      "detectedAt": "2026-05-21T10:01:49.608Z",
+      "verifiedBy": "QA",
+      "status": "verified",
+      "verifiedAt": "2026-05-21T10:01:49.608Z"
+    },
+    "autoButton__autospins-100": {
+      "x": 667,
+      "y": 384,
+      "strategy": "manual",
+      "confidence": 1,
+      "detectedAt": "2026-05-21T10:02:10.172Z",
+      "verifiedBy": "QA",
+      "status": "verified",
+      "verifiedAt": "2026-05-21T10:02:10.172Z"
+    },
+    "autoButton__autospins-500": {
+      "x": 703,
+      "y": 389,
+      "strategy": "manual",
+      "confidence": 1,
+      "detectedAt": "2026-05-21T10:02:30.640Z",
+      "verifiedBy": "QA",
+      "status": "verified",
+      "verifiedAt": "2026-05-21T10:02:30.640Z"
+    },
+    "autoButton__autospins-1000": {
+      "x": 749,
+      "y": 382,
+      "strategy": "manual",
+      "confidence": 1,
+      "detectedAt": "2026-05-21T10:05:48.456Z",
+      "verifiedBy": "QA",
+      "status": "verified",
+      "verifiedAt": "2026-05-21T10:05:48.456Z"
+    },
+    "autoButton__closeButton": {
+      "x": 872,
+      "y": 144,
+      "strategy": "ai_vision",
+      "confidence": 0.98,
+      "detectedAt": "2026-05-21T04:53:40.569Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T04:56:54.290Z"
+    },
+    "autoButton__turboSpinToggle": {
+      "x": 461,
+      "y": 251,
+      "strategy": "ai_vision",
+      "confidence": 0.95,
+      "detectedAt": "2026-05-21T04:53:40.569Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T04:55:24.335Z"
+    },
+    "autoButton__quickSpinToggle": {
+      "x": 595,
+      "y": 251,
+      "strategy": "ai_vision",
+      "confidence": 0.95,
+      "detectedAt": "2026-05-21T04:53:40.569Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T04:54:40.485Z"
+    },
+    "autoButton__skipScreensToggle": {
+      "x": 750,
+      "y": 255,
+      "strategy": "manual",
+      "confidence": 1,
+      "detectedAt": "2026-05-21T04:54:59.721Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T04:54:59.721Z"
+    },
+    "autoButton__startAutoplayButton": {
+      "x": 655,
+      "y": 535,
+      "strategy": "ai_vision",
+      "confidence": 0.98,
+      "detectedAt": "2026-05-21T04:53:40.569Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T04:55:43.349Z"
+    },
+    "betPlus__bet-0.20": {
+      "x": 353,
+      "y": 284,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T04:57:24.770Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T04:57:48.746Z"
+    },
+    "betPlus__bet-0.30": {
+      "x": 492,
+      "y": 284,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T04:57:24.770Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T04:57:52.207Z"
+    },
+    "betPlus__bet-0.40": {
+      "x": 631,
+      "y": 284,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T04:57:24.770Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T04:57:55.229Z"
+    },
+    "betPlus__bet-0.50": {
+      "x": 770,
+      "y": 284,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T04:57:24.770Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T04:57:58.413Z"
+    },
+    "betPlus__bet-0.60": {
+      "x": 909,
+      "y": 284,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T04:57:24.770Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T04:58:05.379Z"
+    },
+    "betPlus__bet-0.70": {
+      "x": 1048,
+      "y": 284,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T04:57:24.770Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T04:58:13.003Z"
+    },
+    "betPlus__bet-0.80": {
+      "x": 353,
+      "y": 347,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T04:57:24.770Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T04:58:19.002Z"
+    },
+    "betPlus__bet-0.90": {
+      "x": 492,
+      "y": 347,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T04:57:24.770Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T04:58:21.484Z"
+    },
+    "betPlus__bet-1.00": {
+      "x": 631,
+      "y": 347,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T04:57:24.770Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T04:58:23.033Z"
+    },
+    "betPlus__bet-2.00": {
+      "x": 770,
+      "y": 347,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T04:57:24.770Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T04:58:25.938Z"
+    },
+    "betPlus__bet-3.00": {
+      "x": 909,
+      "y": 347,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T04:57:24.770Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T04:58:34.533Z"
+    },
+    "betPlus__bet-4.00-selected": {
+      "x": 1048,
+      "y": 347,
+      "strategy": "ai_vision",
+      "confidence": 0.98,
+      "detectedAt": "2026-05-21T04:57:24.770Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T04:58:36.094Z"
+    },
+    "betPlus__bet-5.00": {
+      "x": 353,
+      "y": 410,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T04:57:24.770Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T04:59:02.013Z"
+    },
+    "betPlus__bet-6.00": {
+      "x": 492,
+      "y": 410,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T04:57:24.770Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T04:59:04.270Z"
+    },
+    "betPlus__bet-7.00": {
+      "x": 631,
+      "y": 410,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T04:57:24.770Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T04:59:07.377Z"
+    },
+    "betPlus__bet-8.00": {
+      "x": 770,
+      "y": 410,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T04:57:24.770Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T04:59:09.522Z"
+    },
+    "betPlus__bet-9.00": {
+      "x": 909,
+      "y": 410,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T04:57:24.770Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T04:59:11.896Z"
+    },
+    "betPlus__bet-10.00": {
+      "x": 1048,
+      "y": 410,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T04:57:24.770Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T04:58:23.810Z"
+    },
+    "betPlus__bet-20.00": {
+      "x": 353,
+      "y": 472,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T04:57:24.770Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T04:58:26.639Z"
+    },
+    "betPlus__bet-30.00": {
+      "x": 492,
+      "y": 472,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T04:57:24.770Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T04:58:35.310Z"
+    },
+    "betPlus__bet-40.00": {
+      "x": 631,
+      "y": 472,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T04:57:24.770Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T04:59:01.233Z"
+    },
+    "betPlus__bet-50.00": {
+      "x": 770,
+      "y": 472,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T04:57:24.770Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T04:59:03.377Z"
+    },
+    "betPlus__bet-60.00": {
+      "x": 909,
+      "y": 472,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T04:57:24.770Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T04:59:04.834Z"
+    },
+    "betPlus__bet-70.00": {
+      "x": 1048,
+      "y": 472,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T04:57:24.770Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T04:59:08.506Z"
+    },
+    "betPlus__bet-80.00": {
+      "x": 353,
+      "y": 534,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T04:57:24.770Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T04:59:10.213Z"
+    },
+    "betPlus__bet-90.00": {
+      "x": 492,
+      "y": 534,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T04:57:24.770Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T04:59:13.367Z"
+    },
+    "betPlus__bet-100.00": {
+      "x": 631,
+      "y": 534,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T04:57:24.770Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T04:58:25.239Z"
+    },
+    "betMinus__bet-3.00": {
+      "x": 908,
+      "y": 347,
+      "strategy": "ai_vision",
+      "confidence": 0.97,
+      "detectedAt": "2026-05-21T05:00:14.794Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:00:32.319Z"
+    },
+    "betMinus__bet-20.00-selected": {
+      "x": 354,
+      "y": 472,
+      "strategy": "ai_vision",
+      "confidence": 0.98,
+      "detectedAt": "2026-05-21T05:00:14.794Z",
+      "status": "verified",
+      "verifiedBy": "QA",
+      "verifiedAt": "2026-05-21T05:00:31.592Z"
+    },
+    "autoButton__autospins-10": {
+      "x": 447,
+      "y": 386,
+      "strategy": "manual",
+      "confidence": 1,
+      "detectedAt": "2026-05-21T09:35:53.117Z",
+      "verifiedBy": "QA",
+      "status": "verified",
+      "verifiedAt": "2026-05-21T09:35:53.117Z"
+    }
+  },
+  "provider": {
+    "provider": "Pragmatic",
+    "gameName": "vs20rnriches",
+    "platform": "HTML5",
+    "iframeCount": 0,
+    "canvasCount": 1,
+    "detectedAt": "2026-05-21T07:32:48.498Z"
+  },
+  "api": {
+    "spinApi": {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST"
+    }
+  },
+  "fields": null,
+  "parser": {
+    "parser": "PragmaticParser",
+    "version": 1
+  },
+  "mechanics": null,
+  "timing": {
+    "spinResponseTimeoutMs": 15000,
+    "postActionSettleMs": 10000,
+    "actionTimeoutMs": 30000,
+    "hardCapMs": 300000,
+    "popupCheckDelayMs": 2500,
+    "dismissInterClickMs": 800,
+    "dismissPreWaitMs": 10000,
+    "maxSpinRetries": 2
+  },
+  "betControls": {
+    "minBetClicks": 20,
+    "maxBetClicks": 20,
+    "stepDelayMs": 80
+  },
+  "popupKeywords": {
+    "interstitial": [
+      "press anywhere",
+      "to continue",
+      "click to continue",
+      "tap to continue",
+      "congratulations",
+      "you have won",
+      "you won",
+      "you've won",
+      "free spins",
+      "big win",
+      "huge win",
+      "mega win",
+      "max win",
+      "bonus complete"
+    ],
+    "substate": [
+      "paytable",
+      "pay table",
+      "buy feature",
+      "buy bonus",
+      "buy free spins",
+      "purchase",
+      "history",
+      "settings",
+      "autoplay",
+      "auto play",
+      "number of spins",
+      "loss limit",
+      "single win limit",
+      "rules",
+      "game info",
+      "how to play"
+    ]
+  },
+  "subStateHints": {
+    "buyBonusButton": {
+      "stateLabel": "buy_feature_popup",
+      "description": "Buy Feature popup"
+    },
+    "paytableButton": {
+      "stateLabel": "paytable",
+      "description": "Paytable / info screen"
+    },
+    "menuButton": {
+      "stateLabel": "menu",
+      "description": "Main menu drawer"
+    },
+    "historyButton": {
+      "stateLabel": "history_popup",
+      "description": "Game history popup"
+    },
+    "settingsButton": {
+      "stateLabel": "settings",
+      "description": "Settings panel"
+    },
+    "betPlus": {
+      "stateLabel": "bet_plus_state",
+      "description": "After clicking betPlus (bet multiplier popup or value change)"
+    },
+    "betMinus": {
+      "stateLabel": "bet_minus_state",
+      "description": "After clicking betMinus"
+    },
+    "spinButton": {
+      "stateLabel": "spin_in_progress",
+      "description": "Spin animation state (STOP button, etc.)"
+    },
+    "autoButton": {
+      "stateLabel": "autoplay_popup",
+      "description": "Autoplay configuration popup"
+    },
+    "turboButton": {
+      "stateLabel": "turbo_state",
+      "description": "Turbo toggled"
+    }
+  },
+  "derived": {
+    "betLadder": [],
+    "betFormulaDescription": "c × l (naive)"
+  },
+  "warnings": [],
+  "errors": []
+}

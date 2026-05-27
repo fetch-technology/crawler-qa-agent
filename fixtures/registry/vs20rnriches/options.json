@@ -1,0 +1,118 @@
+{
+  "game": "vs20rnriches",
+  "provider": "Pragmatic Play",
+  "capturedAt": "2026-05-25T19:06:26.368Z",
+  "optionsCount": 12,
+  "synthesized": true,
+  "source": "step4-extract-rules",
+  "options": [
+    {
+      "name": "Bet Size",
+      "category": "control",
+      "type": "button",
+      "current_value": "4.00",
+      "possible_values": null,
+      "description": null,
+      "location_hint": "bet control on play screen"
+    },
+    {
+      "name": "Buy Feature — BUY FEATURE - 3 OPTIONS",
+      "category": "game",
+      "type": "button",
+      "current_value": null,
+      "possible_values": null,
+      "description": null,
+      "location_hint": "buy feature panel"
+    },
+    {
+      "name": "Special Bet — SPECIAL BETS - 2 OPTIONS",
+      "category": "control",
+      "type": "toggle",
+      "current_value": "off",
+      "possible_values": null,
+      "description": null,
+      "location_hint": "special bets area"
+    },
+    {
+      "name": "Spin",
+      "category": "ui",
+      "type": "button",
+      "current_value": "ready",
+      "possible_values": null,
+      "description": null,
+      "location_hint": "bottom-right center"
+    },
+    {
+      "name": "Autoplay",
+      "category": "control",
+      "type": "button",
+      "current_value": null,
+      "possible_values": null,
+      "description": null,
+      "location_hint": "below spin button"
+    },
+    {
+      "name": "Bet Decrease (-)",
+      "category": "ui",
+      "type": "button",
+      "current_value": null,
+      "possible_values": null,
+      "description": null,
+      "location_hint": "left of spin button"
+    },
+    {
+      "name": "Bet Increase (+)",
+      "category": "ui",
+      "type": "button",
+      "current_value": null,
+      "possible_values": null,
+      "description": null,
+      "location_hint": "right of spin button"
+    },
+    {
+      "name": "Menu",
+      "category": "ui",
+      "type": "button",
+      "current_value": null,
+      "possible_values": null,
+      "description": null,
+      "location_hint": "bottom-left"
+    },
+    {
+      "name": "Info",
+      "category": "ui",
+      "type": "button",
+      "current_value": null,
+      "possible_values": null,
+      "description": null,
+      "location_hint": "bottom-left (below menu)"
+    },
+    {
+      "name": "Sound",
+      "category": "ui",
+      "type": "toggle",
+      "current_value": null,
+      "possible_values": null,
+      "description": null,
+      "location_hint": "bottom-left (below info)"
+    },
+    {
+      "name": "Buy Feature",
+      "category": "ui",
+      "type": "button",
+      "current_value": "3 OPTIONS",
+      "possible_values": null,
+      "description": null,
+      "location_hint": "left side of reels"
+    },
+    {
+      "name": "Special Bets",
+      "category": "ui",
+      "type": "toggle",
+      "current_value": "2 OPTIONS, toggle off",
+      "possible_values": null,
+      "description": null,
+      "location_hint": "left side, below Buy Feature"
+    }
+  ]
+}

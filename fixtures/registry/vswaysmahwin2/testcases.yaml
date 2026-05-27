@@ -1,0 +1,58 @@
+game: vswaysmahwin2
+generatedAt: 2026-05-27T07:09:28.685Z
+testcases:
+  - id: core.smoke-load
+    title: Game loads successfully
+    category: smoke
+    priority: high
+    steps:
+      - Open game URL
+      - Wait until network idle
+    expected: Canvas/iframe present, no console errors
+  - id: core.balance-deduct
+    title: Balance deducts on normal spin
+    category: balance
+    priority: high
+    steps:
+      - Capture before-balance
+      - Click (991,651)
+      - "Wait response https://pp.dev.revenge-games.com/gs2c/v3/gameService"
+      - Capture after-balance
+    expected: after === before - bet + win
+  - id: freeSpin.no-deduct
+    title: Free spin must not deduct balance
+    category: free-spin
+    priority: high
+    steps:
+      - Trigger free spin (via scatter or buy)
+      - Wait FREE_SPIN state
+      - Capture before-balance
+      - Click (991,651)
+      - Capture after-balance
+    expected: after === before + win (no bet deducted)
+  - id: multiplier.applied
+    title: Multiplier applied to win
+    category: multiplier
+    priority: medium
+    steps:
+      - Spin until multiplier triggers
+      - Read win value
+      - Compare to base × multiplier
+    expected: win === baseWin × multiplier
+  - id: autoSpin.stop
+    title: Auto spin stops when player clicks stop
+    category: auto-spin
+    priority: low
+    steps:
+      - Click (993,707)
+      - Pick count
+      - Click stop mid-way
+    expected: auto stops cleanly, no extra spins fired
+  - id: rtp.range
+    title: RTP within expected range over N spins
+    category: rtp
+    priority: high
+    steps:
+      - Run 10000 API-mode spins
+      - Aggregate totalWin/totalBet
+    expected: 0.94 <= RTP <= 0.98

@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-05-25T19:04:44.908Z",
+  "gameSlug": "vs20rnriches",
+  "initialWaitMs": 4000,
+  "clicks": [
+    {
+      "x": 640,
+      "y": 360,
+      "label": "center",
+      "delayBeforeMs": 4015,
+      "delayAfterMs": 1212
+    },
+    {
+      "x": 192,
+      "y": 288,
+      "label": "left-mid",
+      "delayBeforeMs": 1207,
+      "delayAfterMs": 1209
+    },
+    {
+      "x": 1088,
+      "y": 288,
+      "label": "right-mid",
+      "delayBeforeMs": 1216,
+      "delayAfterMs": 1214
+    }
+  ],
+  "finalSettleMs": 2000,
+  "baselineFile": "baseline.png"
+}

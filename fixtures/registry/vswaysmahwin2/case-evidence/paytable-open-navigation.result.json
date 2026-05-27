@@ -1,0 +1,351 @@
+{
+  "caseId": "paytable-open-navigation",
+  "name": "Paytable popup — open and navigate pages",
+  "category": "options",
+  "severity": "minor",
+  "status": "pass",
+  "actionsExecuted": 7,
+  "assertions": [
+    {
+      "id": "no-spins-during-paytable",
+      "description": "No spins were triggered during paytable navigation (spin_count=0)",
+      "pass": true,
+      "outcome": "PASS_LOW",
+      "confidence": 0.55,
+      "signals": [
+        {
+          "name": "api",
+          "value": true,
+          "weight": 0.35,
+          "source": "parser/captured-spin",
+          "observed": 0
+        },
+        {
+          "name": "network",
+          "value": false,
+          "weight": 0.1
+        },
+        {
+          "name": "ui_ocr",
+          "value": false,
+          "weight": 0.25
+        },
+        {
+          "name": "state",
+          "value": false,
+          "weight": 0.1
+        },
+        {
+          "name": "rule",
+          "value": true,
+          "weight": 0.2,
+          "source": "assertion:no-spins-during-paytable",
+          "observed": "predicate=true"
+        }
+      ]
+    },
+    {
+      "id": "no-error-warnings",
+      "description": "Paytable popup open/close emitted no error warnings",
+      "pass": true,
+      "outcome": "PASS_LOW",
+      "confidence": 0.3,
+      "signals": [
+        {
+          "name": "api",
+          "value": false,
+          "weight": 0.35
+        },
+        {
+          "name": "network",
+          "value": true,
+          "weight": 0.1,
+          "source": "page.on(response)",
+          "observed": 0
+        },
+        {
+          "name": "ui_ocr",
+          "value": false,
+          "weight": 0.25
+        },
+        {
+          "name": "state",
+          "value": false,
+          "weight": 0.1
+        },
+        {
+          "name": "rule",
+          "value": true,
+          "weight": 0.2,
+          "source": "assertion:no-error-warnings",
+          "observed": "predicate=true"
+        }
+      ]
+    },
+    {
+      "id": "no-unexpected-interrupts",
+      "description": "No engine interrupts fired during informational popup navigation",
+      "pass": true,
+      "outcome": "PASS_LOW",
+      "confidence": 0.1,
+      "signals": [
+        {
+          "name": "api",
+          "value": false,
+          "weight": 0.35
+        },
+        {
+          "name": "network",
+          "value": false,
+          "weight": 0.1
+        },
+        {
+          "name": "ui_ocr",
+          "value": false,
+          "weight": 0.25
+        },
+        {
+          "name": "state",
+          "value": true,
+          "weight": 0.1,
+          "source": "stateTimeline/interrupts",
+          "observed": "1 transitions"
+        },
+        {
+          "name": "rule",
+          "value": false,
+          "weight": 0.2,
+          "source": "assertion:no-unexpected-interrupts",
+          "observed": "predicate=true"
+        }
+      ]
+    },
+    {
+      "id": "_auto_screen_changed_after_open",
+      "description": "Screen visually changes after opening UI popup (pixel diff 59.53% > 1%)",
+      "pass": true,
+      "outcome": "PASS_LOW",
+      "confidence": 0.3,
+      "signals": [
+        {
+          "name": "screenshot",
+          "value": true,
+          "weight": 0.1,
+          "source": "page.screenshot()",
+          "observed": "diffRatio=0.5953",
+          "expected": ">0.01"
+        },
+        {
+          "name": "rule",
+          "value": true,
+          "weight": 0.2,
+          "source": "pixel-diff-rule",
+          "observed": "popup-opened"
+        }
+      ]
+    },
+    {
+      "id": "_auto_returned_to_main_after_close",
+      "description": "State observer reports MAIN after closing popup (pixel diff 4.60% vs baseline, state=MAIN)",
+      "pass": true,
+      "outcome": "PASS_LOW",
+      "confidence": 0.4,
+      "signals": [
+        {
+          "name": "screenshot",
+          "value": true,
+          "weight": 0.1,
+          "source": "page.screenshot()",
+          "observed": "diffRatio=0.0460",
+          "expected": "<0.25"
+        },
+        {
+          "name": "state",
+          "value": true,
+          "weight": 0.1,
+          "source": "state-observer",
+          "observed": "MAIN",
+          "expected": "MAIN"
+        },
+        {
+          "name": "rule",
+          "value": true,
+          "weight": 0.2,
+          "source": "return-to-main-rule",
+          "observed": "ok"
+        }
+      ]
+    }
+  ],
+  "spin": null,
+  "durationMs": 31288,
+  "spinsCount": 0,
+  "screenshotPath": "fixtures/registry/vswaysmahwin2/case-evidence/paytable-open-navigation.png",
+  "ocrSnapshots": [
+    {
+      "region": "balance",
+      "bbox": {
+        "x": 292,
+        "y": 651,
+        "width": 207,
+        "height": 27
+      },
+      "text": "$99,995,807.05 FI VL",
+      "parsed": 99995807.05,
+      "durationMs": 95,
+      "bboxScreenshotPath": "fixtures/registry/vswaysmahwin2/case-evidence/paytable-open-navigation.balance.png"
+    },
+    {
+      "region": "bet",
+      "bbox": {
+        "x": 292,
+        "y": 671,
+        "width": 103,
+        "height": 25
+      },
+      "text": "$0.50",
+      "parsed": 0.5,
+      "durationMs": 43,
+      "bboxScreenshotPath": "fixtures/registry/vswaysmahwin2/case-evidence/paytable-open-navigation.bet.png"
+    },
+    {
+      "region": "last_win",
+      "bbox": {
+        "x": 628,
+        "y": 627,
+        "width": 165,
+        "height": 54
+      },
+      "text": "OR TURBO S|",
+      "parsed": null,
+      "durationMs": 53,
+      "bboxScreenshotPath": "fixtures/registry/vswaysmahwin2/case-evidence/paytable-open-navigation.last_win.png"
+    }
+  ],
+  "actionLog": [
+    {
+      "kind": "click",
+      "target": "paytableButton",
+      "durationMs": 663,
+      "success": true
+    },
+    {
+      "kind": "wait_ms",
+      "target": "1500ms",
+      "durationMs": 1501,
+      "success": true
+    },
+    {
+      "kind": "click",
+      "target": "paytableButton__nextPageButton",
+      "durationMs": 658,
+      "success": true
+    },
+    {
+      "kind": "wait_ms",
+      "target": "1000ms",
+      "durationMs": 1002,
+      "success": true
+    },
+    {
+      "kind": "click",
+      "target": "paytableButton__prevPageButton",
+      "durationMs": 657,
+      "success": true
+    },
+    {
+      "kind": "wait_ms",
+      "target": "1000ms",
+      "durationMs": 1002,
+      "success": true
+    },
+    {
+      "kind": "click",
+      "target": "paytableButton__closeButton",
+      "durationMs": 659,
+      "success": true
+    }
+  ],
+  "signalRollup": [
+    {
+      "signal": "api",
+      "pass": true,
+      "checks": [
+        {
+          "field": "spin captured",
+          "expected": "at least 1 spin",
+          "actual": 0,
+          "match": true,
+          "source": "parser/captured-spin",
+          "note": "no spin response captured during case"
+        }
+      ],
+      "detail": "no spin captured — api signal cannot verify response fields"
+    },
+    {
+      "signal": "ui_ocr",
+      "pass": true,
+      "checks": [],
+      "detail": "no-data: no OCR regions configured for this game (configure on dashboard)"
+    },
+    {
+      "signal": "network",
+      "pass": true,
+      "checks": [
+        {
+          "field": "captured spins",
+          "expected": "0 (UI-only case)",
+          "actual": 0,
+          "match": true,
+          "source": "page.on(response)"
+        },
+        {
+          "field": "no error warnings",
+          "expected": "0 errors/failures/debounced clicks",
+          "actual": 0,
+          "match": true,
+          "source": "case-executor warnings"
+        }
+      ]
+    },
+    {
+      "signal": "state",
+      "pass": true,
+      "checks": [
+        {
+          "field": "stayed on MAIN (or allowed interrupts)",
+          "expected": "all transitions to MAIN | allowed",
+          "actual": "all clean",
+          "match": true,
+          "source": "stateTimeline"
+        }
+      ]
+    },
+    {
+      "signal": "rule",
+      "pass": true,
+      "checks": [
+        {
+          "field": "balance arithmetic",
+          "expected": "n/a (no spin captured)",
+          "actual": "n/a",
+          "match": true,
+          "source": "balanceAfter == balanceBefore - bet + win",
+          "note": "no spin captured"
+        }
+      ]
+    }
+  ],
+  "networkLogPath": "fixtures/registry/vswaysmahwin2/case-evidence/paytable-open-navigation.network.jsonl",
+  "networkSummary": [
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/reloadBalance.do?mgckey=demo@SFTIqmxdilH7qHteQ8Fij529_USD",
+      "method": "GET",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": false
+    }
+  ],
+  "outcome": "PASS_LOW",
+  "confidence": 1
+}

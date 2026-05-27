@@ -1,568 +1,588 @@
-# Slot Game Automation Testing Architecture
+# Slot Game Automation Testing – Best Practice Architecture
 
-# 1. Mục tiêu hệ thống
+## Overview
 
-Tool dùng để test:
+Mục tiêu:
+
+Tự động test slot game chỉ từ URL game, bao gồm:
+
+- UI testing
+- API testing
+- Financial verification
+- Game logic verification
+- RTP/statistical verification
+- Feature testing
+- Report generation
+
+AI chỉ đóng vai trò hỗ trợ phân tích, KHÔNG thay thế deterministic validation.
+
+---
+
+# High Level Architecture
 
 ```text
-1. Logic game
-2. RTP / thống kê
-3. Balance
-4. API/WebSocket response
-5. UI hiển thị
-6. API ↔ UI consistency
-7. Bug report tự động bằng AI
+Game URL
+   ↓
+Automation Engine (Playwright)
+   ↓
+Network Interceptor
+   ↓
+Provider Detector
+   ↓
+Protocol Parser
+   ↓
+Rule Engine
+   ↓
+Statistical Engine
+   ↓
+AI Analysis Layer
+   ↓
+HTML/PDF Report
 ```
 
 ---
 
-# 2. Kiến trúc tổng thể
+# Testing Flow
 
-```text
-                    ┌────────────────────┐
-                    │ Test Scheduler      │
-                    └─────────┬──────────┘
-                              │
-                              ▼
-                    ┌────────────────────┐
-                    │ Playwright Bot      │
-                    └─────────┬──────────┘
-                              │
-        ┌─────────────────────┴─────────────────────┐
-        ▼                                           ▼
-┌────────────────────┐                    ┌────────────────────┐
-│ Network Capture    │                    │ UI Capture          │
-│ API/WebSocket      │                    │ Screenshot/DOM      │
-└─────────┬──────────┘                    └─────────┬──────────┘
-          ▼                                           ▼
-┌────────────────────┐                    ┌────────────────────┐
-│ Spin Parser         │                    │ UI Validator        │
-│ QueryString → JSON  │                    │ Visual/UI check     │
-└─────────┬──────────┘                    └─────────┬──────────┘
-          ▼                                           ▼
-┌────────────────────┐                    ┌────────────────────┐
-│ Game Adapter        │                    │ AI Vision Analyzer  │
-│ per game logic      │                    │ optional            │
-└─────────┬──────────┘                    └─────────┬──────────┘
-          ▼                                           ▼
-┌────────────────────┐                    ┌────────────────────┐
-│ Rule Engine         │                    │ UI/API Consistency  │
-│ payout/balance      │                    │ compare result      │
-└─────────┬──────────┘                    └─────────┬──────────┘
-          └─────────────────────┬─────────────────────┘
-                                ▼
-                       ┌────────────────────┐
-                       │ Storage             │
-                       │ PostgreSQL / S3     │
-                       └─────────┬──────────┘
-                                 ▼
-                       ┌────────────────────┐
-                       │ Dashboard / Report  │
-                       └────────────────────┘
-```
+## Step 1 — Crawl Game From URL
 
----
+Mục tiêu:
 
-# 3. Modules chi tiết
-
-## 3.1 Test Scheduler
-
-Nhiệm vụ:
-
-```text
-- tạo test run
-- cấu hình số spin
-- cấu hình bet
-- chọn game
-- chạy nhiều worker
-- retry khi lỗi
-```
-
-Ví dụ config:
-
-```json
-{
-  "gameCode": "vswayscyhecity",
-  "url": "https://game-url.com",
-  "totalSpins": 100000,
-  "betPerLine": 0.04,
-  "lines": 25,
-  "viewport": {
-    "width": 1440,
-    "height": 900
-  },
-  "mode": "demo"
-}
-```
-
----
-
-## 3.2 Playwright Bot
-
-Nhiệm vụ:
-
-```text
-- mở game URL
-- đợi game load
-- click nút Spin
-- đổi bet nếu cần
-- chạy auto spin
-- capture request/response
-- capture screenshot khi lỗi
-```
-
-Pseudo flow:
-
-```ts
-for (let i = 0; i < totalSpins; i++) {
-  await clickSpin();
-  const spinResult = await waitForSpinResponse();
-  await saveSpinResult(spinResult);
-}
-```
-
----
-
-## 3.3 Network Capture
-
-Nhiệm vụ:
-
-```text
-- bắt request action=doSpin
-- bắt response chứa kết quả reels
-- bắt WebSocket message nếu game dùng socket
-- lưu raw request + raw response
-```
-
-Request mẫu:
-
-```text
-action=doSpin&symbol=vswayscyhecity&c=0.04&l=25&sInfo=n&bl=0&index=7&counter=2&repeat=0&mgckey=...
-```
-
-Response mẫu:
-
-```text
-tw=0.32&rs_iw=0.32&reel_set=0&na=c&rs_t=1&bl=0&sa=eaihh&sb=igdia&rs_win=0.00&sh=3&st=rect&c=0.04&sw=5&sver=6&ntp=0&l=25&s=eaihhbeffbafgah&w=0.00&balance=999986.47
-```
-
-Không lưu nguyên `mgckey`, chỉ lưu masked token.
-
----
-
-## 3.4 Spin Parser
-
-Parser chuyển querystring thành object chuẩn.
-
-Input:
-
-```text
-s=eaihhbeffbafgah&sw=5&sh=3&c=0.04&l=25&w=0.00&tw=0.32
-```
+- Open game
+- Wait assets load
+- Detect iframe
+- Detect canvas/webgl
+- Detect provider
 
 Output:
 
 ```json
 {
-  "gameCode": "vswayscyhecity",
-  "betPerLine": 0.04,
-  "lines": 25,
-  "totalBet": 1,
-  "width": 5,
-  "height": 3,
-  "symbols": "eaihhbeffbafgah",
-  "reels": [
-    ["e", "a", "i"],
-    ["h", "h", "b"],
-    ["e", "f", "f"],
-    ["b", "a", "f"],
-    ["g", "a", "h"]
-  ],
-  "win": 0,
-  "totalWin": 0.32,
-  "balance": 999986.47
+  "provider": "JILI",
+  "gameName": "Candy Blitz",
+  "platform": "HTML5"
 }
 ```
 
 ---
 
-# 4. Logic Test cần kiểm tra
+## Step 2 — Detect Spin Button
 
-## 4.1 Bet validation
+Techniques:
 
-```text
-totalBet = c * l
+- DOM analysis
+- OCR
+- Computer vision
+- AI vision detection
+
+Detect:
+
+- Spin
+- Auto
+- Turbo
+- Buy Bonus
+- History
+- Bet controls
+
+Output:
+
+```json
+{
+  "spinButton": "#spin-btn"
+}
 ```
 
-Ví dụ:
+NOTE:
+
+Đây KHÔNG phải testing.
+Chỉ là discovery step.
+
+---
+
+## Step 3 — Run Smoke Spins
+
+Run:
+
+- 5–10 spins
+
+Purpose:
+
+- Ensure game functional
+- Ensure no immediate crash
+- Ensure APIs active
+
+Verify:
+
+- Spin clickable
+- Spin returns response
+- UI not frozen
+
+---
+
+## Step 4 — Capture Entire Network
+
+Capture:
+
+- XHR
+- websocket
+- fetch
+- protobuf
+- binary packets
+
+Store:
 
 ```text
-0.04 * 25 = 1.00
-```
-
-Check:
-
-```text
-- c hợp lệ không
-- l hợp lệ không
-- totalBet đúng không
-- balance có bị trừ đúng không
+request
+response
+headers
+timing
 ```
 
 ---
 
-## 4.2 Reels validation
+## Step 5 — AI Detects Spin API
 
-Check field `s`.
+AI analyzes:
+
+- Request frequency
+- Payload patterns
+- Balance changes
+- Reel data
+
+AI suggests:
 
 ```text
-sw = 5
-sh = 3
-s length = 15
+Possible spin API:
+POST /game/spin
 ```
 
-Điều kiện đúng:
+Human/rule confirmation still required.
 
-```text
-s.length === sw * sh
-```
+---
 
-Check thêm:
+## Step 6 — Parse Game Data
 
-```text
-- symbol có hợp lệ không
-- có symbol lạ không
-- matrix parse đúng không
+Extract:
+
+- bet
+- win
+- balance
+- reels
+- symbols
+- paylines
+- feature state
+- free spin count
+
+Example:
+
+```json
+{
+  "bet": 10,
+  "win": 25,
+  "balance": 1015
+}
 ```
 
 ---
 
-## 4.3 Win validation
-
-Tool tự tính:
-
-```text
-calculatedWin = ruleEngine.calculate(reels, bet, paylines)
-```
-
-So sánh:
-
-```text
-calculatedWin === serverWin
-```
-
-Nếu lệch:
-
-```text
-PAYOUT_MISMATCH
-```
+# REAL TESTING STARTS HERE
 
 ---
 
-## 4.4 Balance validation
+# Step 7 — Rule Engine Verification
 
-Công thức:
-
-```text
-expectedBalance = balanceBefore - totalBet + totalWin
-```
-
-Check:
-
-```text
-expectedBalance === balanceAfter
-```
-
-Nếu đang free spin:
-
-```text
-expectedBalance = balanceBefore + totalWin
-```
+This is REAL testing.
 
 ---
 
-## 4.5 RTP validation
+## Financial Verification
 
-Sau nhiều spin:
+Verify:
 
 ```text
-RTP = totalWin / totalBet
+expected_balance =
+before_balance
+- bet
++ win
 ```
 
-Metrics:
+Compare:
 
 ```text
-- total spins
-- total bet
-- total win
+expected vs actual
+```
+
+Possible checks:
+
+- incorrect deduct
+- incorrect payout
+- duplicated payout
+- missing payout
+
+---
+
+## Free Spin Verification
+
+Verify:
+
+- free spin does not deduct balance
+- free spin count decreases correctly
+- retrigger adds spins correctly
+
+---
+
+## Buy Bonus Verification
+
+Verify:
+
+- exact cost deducted
+- feature triggered
+- bonus state entered
+
+---
+
+## Jackpot Verification
+
+Verify:
+
+- jackpot amount correct
+- jackpot persisted
+- jackpot added once only
+
+---
+
+# Step 8 — Massive Spin Simulation
+
+Run:
+
+```text
+1,000
+10,000
+100,000
+1,000,000
+```
+
+Collect:
+
 - RTP
 - hit rate
-- max win
-- average win
 - volatility
+- feature frequency
+
+---
+
+# Step 9 — Statistical Verification
+
+## RTP
+
+Formula:
+
+```text
+RTP = total_win / total_bet
+```
+
+Verify:
+
+```text
+Expected RTP = 96.2%
+Actual RTP = 96.1%
+PASS
 ```
 
 ---
 
-## 4.6 Feature validation
+## Hit Rate
 
-Check:
+Verify:
 
 ```text
-- free spin trigger
-- bonus trigger
+winning_spins / total_spins
+```
+
+---
+
+## Feature Frequency
+
+Verify:
+
+- free spin trigger frequency
+- jackpot frequency
+- bonus frequency
+
+---
+
+# Step 10 — Report Generation
+
+Generate:
+
+- HTML report
+- PDF report
+- Screenshots
+- Failure logs
+- Replay links
+
+Example:
+
+```text
+PASS: balance validation
+PASS: RTP validation
+FAIL: buy bonus deduct mismatch
+```
+
+---
+
+# What Can Be Verified?
+
+---
+
+# LEVEL 1 — UI Verification
+
+Verify:
+
+- button exists
+- popup opens
+- animation works
+- history visible
+- no freeze
+- no visual corruption
+
+---
+
+# LEVEL 2 — API Verification
+
+Verify:
+
+- request valid
+- response valid
+- session token valid
+- unique round id
+- no duplicated request
+
+---
+
+# LEVEL 3 — Financial Verification
+
+Verify:
+
+- balance exact
+- payout exact
+- free spin no deduct
+- buy bonus exact deduct
+
+---
+
+# LEVEL 4 — Game Logic Verification
+
+Verify:
+
+- paylines
+- scatter trigger
+- wild logic
 - multiplier
-- scatter
-- wild
 - retrigger
-- bonus total win
-```
+- bonus state
 
 ---
 
-# 5. UI Test cần kiểm tra
+# LEVEL 5 — Statistical Verification
 
-## 5.1 DOM/UI State
+Verify:
 
-Check:
-
-```text
-- nút Spin click được
-- nút Spin disabled khi reels đang quay
-- balance text update đúng
-- win text update đúng
-- bet text đúng
-- popup bonus hiện đúng
-- free spin counter đúng
-```
-
----
-
-## 5.2 Screenshot / Visual Test
-
-Check lỗi:
-
-```text
-- black screen
-- missing image
-- symbol bị lệch
-- popup vỡ layout
-- reel đứng hình
-- animation freeze
-- text overlap
-```
-
----
-
-## 5.3 API ↔ UI Consistency
-
-So sánh:
-
-```text
-API balance === UI balance
-API win === UI win
-API reels === UI rendered reels
-```
-
-Nếu khác:
-
-```text
-UI_API_MISMATCH
-```
-
----
-
-# 6. Game Adapter
-
-Mỗi game có rule khác nhau nên cần adapter.
-
-```ts
-interface GameAdapter {
-  gameCode: string;
-
-  parseRequest(raw: string): SpinRequest;
-
-  parseResponse(raw: string): SpinResponse;
-
-  decodeReels(symbols: string, width: number, height: number): string[][];
-
-  calculateWin(input: CalculateWinInput): number;
-
-  validateFeature(input: SpinResponse): ValidationError[];
-}
-```
-
----
-
-# 7. Database Design
-
-## test_runs
-
-```sql
-id
-game_code
-url
-status
-total_spins
-completed_spins
-bet_per_line
-lines
-started_at
-ended_at
-created_at
-```
-
-## spin_results
-
-```sql
-id
-test_run_id
-round_index
-counter
-game_code
-bet_per_line
-lines
-total_bet
-server_win
-total_win
-balance_before
-balance_after
-symbols
-reels_json
-raw_request
-raw_response
-created_at
-```
-
-## validation_errors
-
-```sql
-id
-test_run_id
-spin_result_id
-error_type
-severity
-expected_value
-actual_value
-message
-screenshot_url
-created_at
-```
-
-## stat_reports
-
-```sql
-id
-test_run_id
-total_spins
-total_bet
-total_win
-rtp
-hit_rate
-max_win
-average_win
-volatility
-created_at
-```
-
----
-
-# 8. Dashboard
-
-Dashboard nên có:
-
-```text
-1. Test Runs
-2. Spin Results
-3. Validation Errors
-4. RTP Report
-5. UI/API Mismatch
-6. Screenshots/Videos
-```
-
----
-
-# 9. AI áp dụng ở đâu?
-
-```text
-1. Bug summary
-2. Phân loại lỗi
-3. Sinh bug report
-4. Phân tích pattern bất thường
-5. Vision check screenshot
-```
-
----
-
-# 10. Stack khuyên dùng
-
-```text
-Language: TypeScript
-Automation: Playwright
-Backend: NestJS
-Queue: Redis + BullMQ
-Database: PostgreSQL
-ORM: Prisma
-Dashboard: Next.js
-Storage: S3 / MinIO
-AI: OpenAI API
-```
-
----
-
-# 11. Roadmap build MVP
-
-## Phase 1 — Network Capture
-
-```text
-- Playwright mở game
-- click spin
-- capture doSpin request
-- capture response
-- lưu raw request/response
-```
-
-## Phase 2 — Parser
-
-```text
-- parse querystring
-- decode s thành reels
-- tính totalBet
-- lưu spin_results
-```
-
-## Phase 3 — RTP Report
-
-```text
-- chạy 1k / 10k / 100k spin
-- tính total bet
-- total win
 - RTP
 - hit rate
-```
+- volatility
+- feature frequency
 
-## Phase 4 — Logic Validation
+---
+
+# Test Case Generation
+
+## Generic Test Cases
+
+Examples:
+
+| Category | Test Case |
+|---|---|
+| Spin | Spin successful |
+| Balance | Balance deduct correct |
+| Free Spin | No deduct during free spin |
+| Buy Bonus | Exact price deducted |
+| History | History persists after refresh |
+| RTP | RTP within expected range |
+| Auto Spin | Auto stops correctly |
+
+---
+
+## AI Generated Test Cases
+
+AI analyzes:
+
+- paytable
+- UI
+- symbols
+- feature menus
+- network traffic
+
+AI generates:
 
 ```text
-- check balance
-- check reels length
-- check symbol hợp lệ
-- check payout nếu có paytable
+1. Verify buy bonus deducts correct amount
+2. Verify free spin retrigger
+3. Verify gamble feature payout
+4. Verify history replay
 ```
 
-## Phase 5 — UI Validation
+---
+
+# State Machine Concept
+
+Slot game is NOT CRUD app.
+
+It is a state machine.
+
+Example:
 
 ```text
-- check spin button
-- check balance text
-- check win text
-- screenshot khi lỗi
+NORMAL
+  ↓
+BUY BONUS
+  ↓
+FREE SPIN
+  ↓
+MULTIPLIER
+  ↓
+RETRIGGER
+  ↓
+END BONUS
 ```
 
-## Phase 6 — AI Analyzer
+Framework must understand state transitions.
+
+---
+
+# Feature Support
+
+---
+
+## Buy Free Spin
+
+Verify:
+
+- popup appears
+- deduct correct
+- enters bonus mode
+
+---
+
+## Special Spin
+
+Verify:
+
+- correct mode request
+- correct payout logic
+- no crash
+
+---
+
+## Gamble / Double
+
+Verify:
+
+- probability flow
+- win/lose logic
+- backend sync
+
+---
+
+## History
+
+Verify:
+
+- round stored
+- replay correct
+- persists after refresh
+
+---
+
+# Recommended Tech Stack
+
+| Layer | Tech |
+|---|---|
+| Automation | Playwright |
+| Language | TypeScript |
+| Queue | BullMQ + Redis |
+| DB | PostgreSQL |
+| Storage | S3/GCS |
+| AI | OpenAI / Claude |
+| Dashboard | Next.js |
+| Reporting | HTML/PDF |
+
+---
+
+# Provider Adapter Pattern
+
+Each provider uses different protocol.
+
+Recommended structure:
 
 ```text
-- tự tóm tắt bug
-- sinh report
-- phân loại lỗi
+BaseParser
+ ├── PGSoftParser
+ ├── JILIParser
+ ├── PragmaticParser
+ ├── EvolutionParser
 ```
+
+Each parser handles:
+
+- encryption
+- symbols
+- reels
+- state format
+- response structure
+
+---
+
+# AI Responsibilities
+
+AI SHOULD:
+
+- detect features
+- analyze logs
+- generate testcase
+- explain failures
+- detect anomalies
+
+AI SHOULD NOT:
+
+- verify financial correctness
+- calculate RTP officially
+- replace deterministic validation
+
+---
+
+# Best Practice Summary
+
+Best practice architecture:
+
+```text
+Automation
++
+Network Capture
++
+Protocol Parsing
++
+Rule Engine
++
+Statistical Engine
++
+AI Assistance
+```
+
+NOT:
+
+```text
+AI nhìn màn hình rồi tự kết luận PASS/FAIL
+```
+
+Deterministic rule validation vẫn là core của slot game automation testing.

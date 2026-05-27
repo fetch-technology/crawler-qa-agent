@@ -1,0 +1,2 @@
+{"ranAt":"2026-05-27T08:38:39.874Z","outcome":"FAIL_LOW","confidence":1,"status":"fail","durationMs":169194,"spinsCount":29,"reason":"No spin response exceeded the engine timeout window"}
+{"ranAt":"2026-05-27T17:39:24.305Z","outcome":"PASS_LOW","confidence":1,"status":"pass","durationMs":102317,"spinsCount":20}

@@ -1,12 +1,12 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { askClaude, extractJsonFromText } from "./claude.js";
+import { extractJsonFromText } from "./claude.js";
+import { catalogCall, chunkStubs, mergeExpandedBatches, mapLimit } from "./catalog-llm.js";
 import type { GameSpec } from "./authoring.js";
 import { extractStructuredFromConfig, structuredConfigToMarkdown } from "./config-extract.js";
 import {
   validateCatalog,
   formatValidationReport,
-  buildValidationFeedback,
   type ValidationReport,
 } from "./catalog-validator.js";
 import { evaluateCoverage } from "./catalog-coverage-rules.js";
@@ -73,6 +73,33 @@ export type TestCase = {
     description: string;
     check_code: string;                 // JS expr, `collector` and spin vars available
   }>;
+
+  // Phase 8.4 — adaptive runner support
+  /** Observed states (e.g., FREE_SPIN_TRIGGERED, BIG_WIN_POPUP) that may
+   *  interrupt this case but should NOT cause failure. Runner dispatches
+   *  matching interrupt handler, then resumes main flow. Default: all
+   *  popup states (free spin, big win, paytable, etc.) allowed. */
+  allowed_interruptions?: string[];
+
+  /** What runner does when an allowed_interruption fires:
+   *   - "handle_and_continue" (default): run handler, continue main scenario
+   *   - "skip_and_rerun": mark INCONCLUSIVE, schedule rerun
+   *   - "fail": treat interrupt as test failure */
+  on_feature_triggered?: "handle_and_continue" | "skip_and_rerun" | "fail";
+
+  /** Optional retry policy when case yields INCONCLUSIVE / FAIL_LOW. */
+  retry_policy?: {
+    maxRetries?: number;                 // Default 3
+    retryWhen?: string[];                // Outcome values that trigger retry
+  };
+
+  /** Minimum evidence requirement — used by confidence scorer. */
+  minimum_evidence?: {
+    required?: string[];                 // signal names that MUST be present
+    optional?: string[];                 // signals that boost confidence
+    passConfidenceThreshold?: number;    // default 0.85
+    failConfidenceThreshold?: number;    // default 0.85
+  };
 };
 
 export type TestCaseCatalog = {
@@ -96,11 +123,12 @@ export type TestCaseCatalog = {
   };
 };
 
-const SYSTEM_PLAN =
-  "You are a senior QA engineer specializing in slot games. You design comprehensive test plans by analyzing rules, config, and observed behavior. Output ONLY valid JSON.";
-
-const SYSTEM_EXPAND =
-  "You are a senior QA engineer specializing in slot games. You expand test plan stubs into fully detailed test cases with precise setup_instructions and runnable assertion expressions. Output ONLY valid JSON.";
+// Shared system preamble for BOTH PLAN and EXPAND so the cached prefix
+// (preamble + sourceBlock) is byte-identical across all catalog calls →
+// PLAN primes the cache, every EXPAND batch reads it. Task-specific framing
+// (plan vs expand) lives in the user directive.
+const SYSTEM_PREAMBLE =
+  "You are a senior QA engineer specializing in slot games. You analyze rules, config, and observed behavior to design and expand comprehensive test cases with precise setup_instructions and runnable assertion expressions. Output ONLY valid JSON — no prose, no markdown fences.";
 
 type CaseStub = {
   id: string;
@@ -180,16 +208,138 @@ function normalizeAssertionsForRngIndependence(cases: TestCase[]): TestCase[] {
   return out;
 }
 
+type OptionLike = {
+  name?: string;
+  category?: string;
+  current_value?: unknown;
+  possible_values?: unknown;
+  description?: string | null;
+};
+
+function parseOptionsFromJson(optionsJson: string | null): OptionLike[] {
+  if (!optionsJson) return [];
+  try {
+    const parsed = JSON.parse(optionsJson) as { options?: OptionLike[] };
+    return Array.isArray(parsed?.options) ? parsed.options : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseNumericToken(s: string): number | null {
+  const cleaned = s.replace(/[^0-9.,-]/g, "").replace(/,/g, "");
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : null;
+}
+
+function extractSpecialBetAmounts(options: OptionLike[]): number[] {
+  const out: number[] = [];
+  for (const o of options) {
+    const name = String(o.name ?? "");
+    if (!/special\s*bet|ante|super\s*spin|double\s*chance/i.test(name)) continue;
+    const desc = String(o.description ?? "");
+    const m = desc.match(/([0-9][0-9,]*(?:\.[0-9]+)?)/g) ?? [];
+    for (const token of m) {
+      const n = parseNumericToken(token);
+      if (n != null && n > 0) out.push(n);
+    }
+  }
+  return Array.from(new Set(out)).sort((a, b) => a - b);
+}
+
+function extractBaseBetMax(options: OptionLike[]): number | null {
+  for (const o of options) {
+    const name = String(o.name ?? "");
+    if (!/bet\s*size|bet$/i.test(name)) continue;
+    if (!Array.isArray(o.possible_values)) continue;
+    const vals = (o.possible_values as unknown[])
+      .map((v) => (typeof v === "number" ? v : parseNumericToken(String(v))))
+      .filter((n): n is number => n != null && n > 0);
+    if (vals.length > 0) return Math.max(...vals);
+  }
+  return null;
+}
+
+function annotateSpecialBetSetupHints(cases: TestCase[], optionsJson: string | null): TestCase[] {
+  const options = parseOptionsFromJson(optionsJson);
+  const specialAmts = extractSpecialBetAmounts(options);
+  const baseMax = extractBaseBetMax(options);
+  if (specialAmts.length === 0 || baseMax == null) return cases;
+
+  return cases.map((c) => {
+    const expected = typeof c.expected_bet === "number" ? c.expected_bet : null;
+    if (expected == null || expected <= baseMax) return c;
+    const matchesSpecial = specialAmts.some((v) => Math.abs(v - expected) <= Math.max(0.06, expected * 0.005));
+    if (!matchesSpecial) return c;
+
+    const lower = `${c.setup_instructions ?? ""}`.toLowerCase();
+    if (lower.includes("special bet") || lower.includes("ante") || lower.includes("super spin")) {
+      return c;
+    }
+    const extra =
+      ` Special-bet context: target ${expected} is above base bet max ${baseMax}. ` +
+      `Open the Special Bets/Ante panel and choose the option priced ${expected}, then verify that special mode is active before spin.`;
+    const setup = `${c.setup_instructions ?? ""}${extra}`.trim();
+    const expectedConfig = {
+      ...(c.expected_config ?? {}),
+      requires_special_bet_mode: true,
+      special_bet_target: expected,
+      base_bet_max_observed: baseMax,
+    } as Record<string, unknown>;
+    return { ...c, setup_instructions: setup, expected_config: expectedConfig };
+  });
+}
+
 const ASSERTION_VARS_DOC = `Variables available in check_code expressions:
-- spin (current SpinResponse): normalized fields ONLY: betAmount, winAmount, endingBalance, startingBalance, updatedBalance, status, id, round, currency, totalBet, isFreeSpin, isEndRound, matrix, result.
-- collector (SpinCollector): { spins: SpinResponse[] }
-- spinIndex (number): 0-based loop index
-- balanceBefore (number): wallet balance captured BEFORE the test's first spin (for buy-feature deduction checks)
-- detectBuyFeatureDeduction(spins, startIndex, balanceBefore): helper returning {ratio, costPaid} or null
-- getRoundEndSpins(spins): helper returning only spins where isEndRound=true
-- getCurrentBalance(collector): convenience to read latest balance
-- screen (ScreenValues, ONLY inside ui_consistency cases): { balance, bet, last_win, total_win, currency, free_spins_remaining, multiplier } — vision-OCR'd values from play screen.
-- DO NOT reference _raw or provider-specific fields like "tw", "w", "c", "sa", "sb"`;
+
+DATA (always bound):
+- spin: current SpinResponse (or null for UI-only cases). Normalized fields ONLY: betAmount, winAmount, endingBalance, startingBalance, status, id, round, currency, isFreeSpin, isEndRound, matrix, state, freeSpinsRemaining.
+- previousSpin: null (placeholder, unused — use collector.spins[i-1] if you need previous).
+- collector: { spins: SpinResponse[] } — ALL captured spins of this case (post cascade-dedup).
+- spinIndex: number — collector.spins.length - 1 (last spin index).
+- balanceBefore: number | null — wallet balance captured BEFORE the test's first spin.
+
+HELPERS (always bound, pure):
+- getRoundEndSpins(spins): filter spins to round-end frames only. Strategy:
+  isEndRound=true → those; else group by round/roundId/id → last per group; else all.
+- getCurrentBalance(collector): number | null — latest endingBalance from collector, or null.
+- detectBuyFeatureDeduction(spins, startIndex, balanceBefore):
+  returns { deduction, baseBet, ratio, spin } or null. Use for buy-feature cost checks.
+  Example: \`(() => { const d = detectBuyFeatureDeduction(collector.spins, 0, balanceBefore); return d != null && d.ratio >= 50; })()\`
+
+UI / OCR (Phase 11.2 — bound for ALL categories, not just ui_consistency):
+- screen: { balance: number|null, bet: number|null, last_win: number|null, total_win: number|null }.
+  Each field can be null if OCR didn't read it for this case. ALWAYS null-guard before using.
+  Example: \`screen.bet === null || Math.abs(screen.bet - 0.20) <= 0.01\`
+
+ENGINE STATE (Phase 11.2 — observe runtime behavior):
+- stateTimeline: Array<{ at: ISO, from?: string, to: string, via?: string }>.
+  Each entry = state transition observed by the state-machine runner.
+  Example "stayed on MAIN throughout": \`stateTimeline.every(t => t.to === 'MAIN')\`
+  Example "free spin triggered + handled": \`stateTimeline.some(t => t.to === 'FREE_SPIN_TRIGGERED')\`
+- warnings: string[] — non-fatal warnings emitted during the run (popup retries,
+  spin-count mismatches, "no response within Xs" timeouts, debounced clicks).
+  Example "no setup errors": \`warnings.filter(w => /error|fail/i.test(w)).length === 0\`
+  Example "no lost spins": \`warnings.filter(w => /debounced|popup may have blocked|likely debounced/i.test(w)).length === 0\`
+- interrupts: { count: number, handled: string[] }.
+  count = how many allowed interruptions the runner dispatched.
+  handled = ["MAIN→FREE_SPIN_TRIGGERED", ...] short transition labels.
+  Example: \`interrupts.count === 0\` (assert NO interrupts during a strict-normal case)
+- networkBalance: number | null — balance read from the network response field
+  (alternative source vs spin.endingBalance for cross-check).
+
+FORBIDDEN:
+- _raw or provider-specific fields like "tw", "w", "c", "sa", "sb"
+- Mutating any bound variable (read-only contract).
+
+ASSERTION DESIGN PRINCIPLES (multi-aspect):
+- Each assertion should check ONE specific aspect; aim for 3-5 assertions per case
+  covering DIFFERENT aspects: server data + UI consistency + state transition +
+  engine warnings + arithmetic. The runtime confidence engine attaches signals
+  based on which vars your check_code references (api/ui_ocr/state/network/rule).
+- Avoid redundancy: don't ship two assertions that both check \`spin.betAmount\`.
+  Prefer one bet check + one balance check + one screen.bet check + one warnings
+  check + one stateTimeline check.`;
 
 function buildSourceBlock(args: {
   gameSpec: GameSpec;
@@ -198,8 +348,22 @@ function buildSourceBlock(args: {
   configResponse: unknown | null;
   paytableMarkdown: string | null;
   sampleSpinResponses: unknown[];
+  auxiliarySources?: {
+    paytableMd: string | null;
+    infoMd: string | null;
+    buyOptionsMd: string | null;
+    specialBetsMd: string | null;
+    paytableJson: unknown | null;
+    rulesJson: unknown | null;
+  } | null;
+  ocrCoverage?: {
+    balanceArea: boolean;
+    betArea: boolean;
+    winArea: boolean;
+    freeSpinCounter: boolean;
+  } | null;
 }): { block: string; meta: TestCaseCatalog["generation_meta"] } {
-  const { gameSpec, rulesMarkdown, optionsJson, configResponse, paytableMarkdown, sampleSpinResponses } = args;
+  const { gameSpec, rulesMarkdown, optionsJson, configResponse, paytableMarkdown, sampleSpinResponses, auxiliarySources, ocrCoverage } = args;
 
   const inputs_used: string[] = [];
   const parts: string[] = [];
@@ -247,11 +411,48 @@ function buildSourceBlock(args: {
   parts.push(rulesMarkdown);
   inputs_used.push("rules_md");
 
-  // --- Paytable pages (in-session vision capture) ---
-  if (paytableMarkdown) {
+  // --- Deep-extracted INFO popup (in-game rules / RTP / mechanics — Vision +
+  //     OCR from infoButton popup). TRUSTED — direct from game's official spec.
+  if (auxiliarySources?.infoMd) {
+    parts.push("\n=== IN-GAME INFO POPUP (Vision+OCR transcription — AUTHORITATIVE) ===");
+    parts.push(auxiliarySources.infoMd);
+    inputs_used.push("deep_info_md");
+  }
+  if (auxiliarySources?.rulesJson) {
+    parts.push("\n=== IN-GAME RULES (structured JSON from info popup) ===");
+    parts.push(JSON.stringify(auxiliarySources.rulesJson, null, 2));
+    inputs_used.push("deep_rules_json");
+  }
+
+  // --- Paytable pages: prefer deep-extracted (in-game paytable popup) over
+  //     legacy fallback paytableMarkdown. Auxiliary takes precedence.
+  if (auxiliarySources?.paytableMd) {
+    parts.push("\n=== PAYTABLE POPUP (Vision+OCR transcription — AUTHORITATIVE) ===");
+    parts.push(auxiliarySources.paytableMd);
+    inputs_used.push("deep_paytable_md");
+  } else if (paytableMarkdown) {
     parts.push("\n=== PAYTABLE PAGES (transcribed from in-game info modal) ===");
     parts.push(paytableMarkdown);
     inputs_used.push("paytable_pages");
+  }
+  if (auxiliarySources?.paytableJson) {
+    parts.push("\n=== PAYTABLE (structured JSON — symbol id → multiplier table) ===");
+    parts.push(JSON.stringify(auxiliarySources.paytableJson, null, 2));
+    inputs_used.push("deep_paytable_json");
+  }
+
+  // --- Buy bonus options (cost + effect per option) ---
+  if (auxiliarySources?.buyOptionsMd) {
+    parts.push("\n=== BUY FEATURE OPTIONS (Vision+OCR from buy popup — cost & effect per option) ===");
+    parts.push(auxiliarySources.buyOptionsMd);
+    inputs_used.push("deep_buy_options_md");
+  }
+
+  // --- Special bets (ante / double chance / etc.) ---
+  if (auxiliarySources?.specialBetsMd) {
+    parts.push("\n=== SPECIAL BETS (Vision+OCR — ante / double-chance / etc.) ===");
+    parts.push(auxiliarySources.specialBetsMd);
+    inputs_used.push("deep_special_bets_md");
   }
 
   // --- Options catalog ---
@@ -259,6 +460,17 @@ function buildSourceBlock(args: {
     parts.push("\n=== OPTIONS CATALOG (UI controls extracted from play screen) ===");
     parts.push(optionsJson);
     inputs_used.push("options_json");
+  }
+
+  // --- OCR Coverage for this game (per-game runtime capability) ---
+  // Tells AI which `screen.X` fields actually have OCR bbox configured.
+  // Without this, AI defensively emits null-guarded `screen.X` assertions
+  // for every UI consistency case; for unconfigured regions, these assertions
+  // silent-pass at runtime (provide no real coverage). With this block, AI
+  // can focus UI assertions on REAL coverage and skip the rest.
+  if (ocrCoverage) {
+    parts.push("\n" + renderOcrCoverageBlock(ocrCoverage));
+    inputs_used.push("ocr_coverage");
   }
 
   // --- Spin samples (cap 30KB total) ---
@@ -300,6 +512,72 @@ function buildSourceBlock(args: {
   };
 }
 
+/**
+ * Render per-game OCR coverage as a markdown block for the EXPAND prompt.
+ * Exposed for invariant tests.
+ *
+ * The output tells AI which `screen.X` fields actually have OCR bbox saved
+ * in registry/ocr-regions.json — so it doesn't generate `screen.bet`
+ * assertions for a game without a betArea bbox (those would silent-pass at
+ * runtime, polluting catalog with no-op assertions).
+ */
+export function renderOcrCoverageBlock(
+  coverage: { balanceArea: boolean; betArea: boolean; winArea: boolean; freeSpinCounter: boolean },
+): string {
+  const map: Array<{ key: keyof typeof coverage; field: string; configured: boolean }> = [
+    { key: "balanceArea", field: "screen.balance", configured: coverage.balanceArea },
+    { key: "betArea", field: "screen.bet", configured: coverage.betArea },
+    { key: "winArea", field: "screen.last_win", configured: coverage.winArea },
+    { key: "freeSpinCounter", field: "screen.free_spins (informational)", configured: coverage.freeSpinCounter },
+  ];
+  const lines: string[] = [];
+  lines.push("=== OCR COVERAGE FOR THIS GAME ===");
+  lines.push("");
+  lines.push("Tells you which `screen.X` runtime variables actually receive OCR data");
+  lines.push("for this specific game. The list below reflects whether a bbox is");
+  lines.push("currently saved in fixtures/registry/<slug>/ocr-regions.json.");
+  lines.push("");
+  for (const m of map) {
+    const icon = m.configured ? "✓" : "✗";
+    const note = m.configured
+      ? "→ OCR runs at end of each spin; `${field}` will be a number"
+      : "→ no bbox saved; `${field}` will ALWAYS be null at runtime";
+    lines.push(`- ${icon} ${m.key} (binds ${m.field}): ${note.replace("${field}", m.field)}`);
+  }
+  const anyConfigured = map.some((m) => m.configured);
+  const allConfigured = map.every((m) => m.configured);
+  lines.push("");
+  lines.push("CRITICAL RULES (apply to assertion generation):");
+  if (!anyConfigured) {
+    lines.push("1. NO OCR regions configured for this game. Do NOT generate any");
+    lines.push("   `screen.X` assertions — they would silent-pass via null-guard");
+    lines.push("   and provide zero coverage. Use server-data assertions only");
+    lines.push("   (spin.betAmount, spin.endingBalance, etc.).");
+    lines.push("2. Skip the `ui_consistency` category entirely for this game (no");
+    lines.push("   OCR data available to verify UI display drift).");
+  } else if (allConfigured) {
+    lines.push("1. ALL key OCR regions configured. For `ui_consistency` cases AND");
+    lines.push("   `bet_variation`/`bet_boundary`/`base_game` cases, INCLUDE at least");
+    lines.push("   ONE `screen.X` assertion per case. The null-guard pattern is");
+    lines.push("   still required (OCR may transiently fail), but the assertion");
+    lines.push("   WILL credit ui_ocr signal at runtime → higher confidence.");
+    lines.push("2. Spread across the 3 widgets: balance check (most cases), bet");
+    lines.push("   check (bet_variation/bet_boundary), win check (cases where a");
+    lines.push("   win is expected). Don't ship 3 screen.X assertions per case");
+    lines.push("   — diminishing returns and bloats catalog.");
+  } else {
+    const configured = map.filter((m) => m.configured).map((m) => m.field).join(", ");
+    const missing = map.filter((m) => !m.configured).map((m) => m.field).join(", ");
+    lines.push(`1. PARTIAL coverage: ${configured} configured, ${missing} NOT.`);
+    lines.push(`2. ONLY emit assertions referencing the CONFIGURED fields:`);
+    lines.push(`   ${configured}.`);
+    lines.push("3. NEVER reference the unconfigured fields in check_code — they");
+    lines.push("   would silent-pass at runtime via null-guard and pollute the");
+    lines.push("   catalog with no-op UI assertions.");
+  }
+  return lines.join("\n");
+}
+
 function runFullValidation(args: {
   cases: TestCase[];
   gameSpec: GameSpec;
@@ -335,6 +613,24 @@ export async function generateTestCaseCatalog(args: {
   sampleSpinResponses: unknown[];
   configResponse?: unknown | null;
   paytableMarkdown?: string | null;
+  auxiliarySources?: {
+    paytableMd: string | null;
+    infoMd: string | null;
+    buyOptionsMd: string | null;
+    specialBetsMd: string | null;
+    paytableJson: unknown | null;
+    rulesJson: unknown | null;
+  } | null;
+  /** Per-game OCR coverage. When provided, EXPAND prompt gets a block listing
+   *  which screen fields (balance/bet/last_win/freeSpinCounter) actually have
+   *  bbox configured, so AI doesn't generate `screen.X` assertions for
+   *  unconfigured fields (they would silent-pass at runtime). */
+  ocrCoverage?: {
+    balanceArea: boolean;
+    betArea: boolean;
+    winArea: boolean;
+    freeSpinCounter: boolean;
+  } | null;
 }): Promise<TestCaseCatalog> {
   const { gameSpec } = args;
   const t0 = Date.now();
@@ -346,6 +642,8 @@ export async function generateTestCaseCatalog(args: {
     configResponse: args.configResponse ?? null,
     paytableMarkdown: args.paytableMarkdown ?? null,
     sampleSpinResponses: args.sampleSpinResponses,
+    auxiliarySources: args.auxiliarySources ?? null,
+    ocrCoverage: args.ocrCoverage ?? null,
   });
 
   // ===== STEP 1: PLAN =====
@@ -355,9 +653,9 @@ export async function generateTestCaseCatalog(args: {
 You will produce ONLY case stubs (id, name, category, severity, brief description, spin_count, expected_feature, rationale).
 Setup instructions and assertion code will be expanded in a SECOND pass.
 
-${sourceBlock}
+(Game sources — best practices, spec, config, paytable, options, OCR coverage, spin samples — are provided in the SYSTEM context above. Refer to them as "the sources".)
 
-RECOMMENDED COVERAGE (skip a category only if game truly does not have that feature based on sources above):
+RECOMMENDED COVERAGE (skip a category only if game truly does not have that feature based on the sources):
 
 CORE COVERAGE (universal):
 1. **base_game**: 2-3 cases at default bet → balance conservation, response shape, multi-spin integrity
@@ -433,30 +731,40 @@ Each task in this system represents ONE game URL = ONE currency = ONE environmen
 
 Output ONLY the JSON.`;
 
-  const planRaw = await askClaude({
-    content: [{ type: "text", text: planPrompt }],
-    system: SYSTEM_PLAN,
-    maxTurns: 1,
+  const planRes = await catalogCall({
+    // sourceBlock cached → primes the prefix reused by every EXPAND batch.
+    system: [{ text: SYSTEM_PREAMBLE }, { text: sourceBlock, cache: true }],
+    user: [{ text: planPrompt }],
+    maxTokens: Number(process.env.QA_CATALOG_PLAN_MAX_TOKENS ?? 16_384),
     label: "catalog/PLAN",
-    // PLAN prompt can exceed 20k tokens in dashboard runs.
-    timeoutMs: Number(process.env.QA_CATALOG_PLAN_TIMEOUT_MS ?? process.env.QA_CLAUDE_TIMEOUT_MS ?? 240_000),
+    timeoutMs: Number(process.env.QA_CATALOG_PLAN_TIMEOUT_MS ?? process.env.QA_CLAUDE_TIMEOUT_MS ?? 360_000),
   });
-  const plan = extractJsonFromText<PlanResponse>(planRaw);
+  const plan = extractJsonFromText<PlanResponse>(planRes.text);
   if (!plan || !Array.isArray(plan.cases) || plan.cases.length === 0) {
-    throw new Error(`generateTestCaseCatalog: PLAN step parse failed. Raw:\n${planRaw.slice(0, 500)}`);
+    throw new Error(`generateTestCaseCatalog: PLAN step parse failed. Raw:\n${planRes.text.slice(0, 500)}`);
   }
   console.log(`[catalog] Step 1/2 ✔ ${plan.cases.length} case stubs planned`);
   const planCategories = Array.from(new Set(plan.cases.map((c) => c.category)));
   if (meta) meta.plan_categories = planCategories;
 
-  // ===== STEP 2: EXPAND =====
-  console.log(`[catalog] Step 2/2: expanding stubs into full cases with setup_instructions + assertions...`);
-  const expandPrompt = `Expand the following test PLAN into full test cases for "${gameSpec.game_display_name}".
+  // ===== STEP 2: EXPAND (chunked + parallel) =====
+  // Phase 11.3 — per-category assertion templates injected per batch (only the
+  // categories present in that batch). Phase: chunked EXPAND — instead of one
+  // call expanding all 30-40 stubs (attention dilution + truncation risk), nở
+  // theo batch nhỏ song song. sourceBlock + static rules are cached
+  // (catalog-llm cache_control) so re-sending per batch is cheap.
+  const { buildTemplateBlockForPlan } = await import("./assertion-templates.js");
+  const BATCH_SIZE = Math.max(1, Number(process.env.QA_CATALOG_BATCH_SIZE ?? 7));
+  // Default 2: when caching is unavailable (OAuth-only → askClaude subprocess
+  // fallback), high parallelism spawns many Claude Code subprocesses at once
+  // and risks rate-limits. With a real ANTHROPIC_API_KEY you can raise this.
+  const CONCURRENCY = Math.max(1, Number(process.env.QA_CATALOG_CONCURRENCY ?? 2));
+  const EXPAND_MAX_TOKENS = Number(process.env.QA_CATALOG_EXPAND_MAX_TOKENS ?? 8_192);
+  const EXPAND_TIMEOUT_MS = Number(process.env.QA_CATALOG_EXPAND_TIMEOUT_MS ?? process.env.QA_CLAUDE_TIMEOUT_MS ?? 300_000);
 
-${sourceBlock}
-
-=== PLAN (case stubs to expand) ===
-${JSON.stringify(plan.cases, null, 2)}
+  // Static EXPAND rules — identical across all batches → cached breakpoint so
+  // only the per-batch templates + stubs are fresh tokens.
+  const expandRules = `Expand each stub in the PLAN (provided in the user message) into a full test case for "${gameSpec.game_display_name}". Game sources are in the SYSTEM context above.
 
 For EACH stub, produce a full TestCase with this shape:
 {
@@ -485,6 +793,7 @@ CRITICAL RULES for setup_instructions (DETAILED — output is read by AI driver 
 - Cite UI element NAMES from options.json (e.g. "the '-' button labeled in options as 'Bet Decrease'").
 - Include explicit TOLERANCE for stepper actions: "within ±1 ladder step" or "within ±10% of target".
 - **MUST NOT include spinning** the main Spin button. Setup ends BEFORE the test loop starts spinning (spin_count handled separately).
+- If target bet is ABOVE base-bet ladder max from options.json but matches a Special Bet price, setup MUST use Special Bets/Ante panel instead of base +/- controls.
 - **EXCEPTION category="autoplay"**: include FULL configure+start flow ending with "Step N: Press the START button — verify reels begin spinning." Test runner uses waitForAutoplayRounds.
 - **EXCEPTION category="buy_feature" / "free_spins-buy"**: include FULL purchase flow ending with "Step N: Click Confirm/Buy — verify purchase popup closes and reels start spinning." Runner uses waitForFeatureComplete.
 - For pure observational cases (base_game default bet, organic feature watch), setup_instructions = "" (empty string) — the test runs at current state.
@@ -514,11 +823,32 @@ ${ASSERTION_VARS_DOC}
 - For free spins watch cases: \`collector.spins.filter(s => s.isFreeSpin === true).every(s => typeof s.id === 'string' && s.id.length > 0)\`
 - For round chain: \`getRoundEndSpins(collector.spins).length >= 1\`
 - **For numeric checks, ALWAYS guard against undefined/NaN first**: instead of \`spin.winAmount >= 0\`, write \`typeof spin.winAmount === 'number' && spin.winAmount >= 0\`. Same for betAmount, endingBalance, startingBalance. This makes failures debuggable when network mapping is wrong (otherwise you get useless "received: false" with no clue why).
+- **For per-spin balance conservation checks, ALWAYS skip when startingBalance is null**: the first spin in any session has \`startingBalance === null\` (no previous spin). Write \`spin.startingBalance == null || Math.abs(spin.endingBalance - (spin.startingBalance - spin.betAmount + spin.winAmount)) <= 0.01\`. NEVER write \`spin.endingBalance === spin.startingBalance - spin.betAmount + spin.winAmount\` directly — it will FAIL on the first spin because \`null - number = NaN\` and \`NaN === number\` is false. This is the most common false-positive in catalog assertions.
 - **For ui_consistency cases**, custom_assertions can reference \`screen\` (vision-OCR'd values). Examples:
   - \`screen.balance !== null && Math.abs(screen.balance - spin.endingBalance) <= 0.01\` (balance UI matches API)
   - \`screen.bet !== null && Math.abs(screen.bet - spin.betAmount) <= 0.01\` (bet UI matches)
   - \`screen.last_win === null || Math.abs(screen.last_win - spin.winAmount) <= 0.01\` (allow null, fail on mismatch)
   Always check \`!== null\` first because OCR may return null if UI doesn't display the field.
+- **OCR coverage gate** (read the "OCR COVERAGE FOR THIS GAME" block in sources above, if present):
+  - If a region is marked ✗ (not configured), DO NOT reference its bound \`screen.X\` field. The assertion would silent-pass at runtime via null-guard, providing zero coverage and polluting the catalog with no-op assertions.
+  - If a region is marked ✓ (configured), feel free to include the assertion — it WILL run real OCR + compare against API, and the runtime confidence engine attaches a ui_ocr signal.
+  - When OCR coverage is fully missing (all ✗), skip the entire ui_consistency category and DO NOT add \`screen.X\` assertions to any other category — focus on server-data assertions.
+  - When the OCR COVERAGE block is ABSENT from sources, assume optimistic full coverage (legacy behavior) and emit defensive null-guarded assertions.
+- **NEVER hallucinate matrix/reel grid dimensions.** Read the EXACT values from
+  \`gameSpec.grid_dimensions\` (if present, source="observed") and use those
+  literals. Common past bug: AI generated \`matrix[0].length === 4\` for a 5x5
+  game → assertion permanent-fails. If gameSpec.grid_dimensions is missing or
+  source="default", write the assertion as a shape invariant WITHOUT a specific
+  row/col literal: \`collector.spins.filter(s => Array.isArray(s.matrix) && s.matrix.length > 0).every(s => s.matrix.every(reel => Array.isArray(reel) && reel.length > 0))\`.
+- **NEVER guess bet-ladder step counts in setup_instructions math.** When the
+  setup needs to navigate from default bet to a target (e.g. "step from 10 down
+  to 0.50"), read \`gameSpec.bet_mechanics.bet_sizes\` (sorted ascending) and
+  COUNT the actual ladder positions between default and target. If default=10
+  is at ladder[N-1] and target=0.50 is at ladder[K], the click count is
+  \`(N-1) - K\` for betMinus (or the reverse for betPlus). Cite the count
+  explicitly in setup_instructions: "Step 3: Press betMinus N times (default
+  10 is ladder[11], target 0.50 is ladder[3] → 11-3=8 betMinus clicks)". DO
+  NOT eyeball — bet ladders are non-linear (e.g. 0.20, 0.40, 0.50, 1, 2, 5, 10).
 
 CRITICAL RULES for invariant_ids:
 - Empty array [] = use ALL critical+major invariants from gameSpec (default — preferred).
@@ -533,36 +863,79 @@ CRITICAL RULES for "expected_bet" and "expected_config":
 - Set expected_bet whenever category targets a specific bet (bet_variation, bet_level, autoplay, base_game with default). NULL only when bet is genuinely "whatever current state is".
 - Set expected_config with concrete numeric values: \`{ "betSize": 0.01, "betLevel": 1 }\` — NOT \`{ "bet": "minimum" }\`.
 - expected_bet MUST equal baseBet × betSize × betLevel from expected_config (consistency check).
+- **CRITICAL: expected_bet MUST be NULL for menu-only / settings / paytable / history / info-popup cases.** These cases don't touch bet — adding expected_bet for them is "AI overreach" that causes a precheck failure when the previous case left bet at a different value. Cases that genuinely don't care about bet should set expected_bet=null AND avoid \`Math.abs(spin.betAmount - X) <= 0.01\` assertions against literal X. If you want to verify bet didn't change during the test, use \`collector.spins.every(s => s.betAmount === collector.spins[0].betAmount)\` (compares first vs rest) instead of pinning to a literal.
+- Categories that should ALWAYS have expected_bet=null: \`options\`, \`settings\`, \`paytable\`, \`history\`, \`info\`, \`menu\`, \`turbo_spin\` (toggling turbo doesn't fix bet), any \`other\` case whose setup_instructions doesn't say "set bet to N".
 
 Return ONLY JSON:
 {
-  "cases": [ /* one full TestCase per stub, SAME order */ ]
+  "cases": [ /* one full TestCase per stub in the user message, SAME order */ ]
 }
 
 Output ONLY the JSON.`;
 
-  const expandRaw = await askClaude({
-    content: [{ type: "text", text: expandPrompt }],
-    system: SYSTEM_EXPAND,
-    maxTurns: 1,
-    label: "catalog/EXPAND",
-    timeoutMs: Number(process.env.QA_CATALOG_EXPAND_TIMEOUT_MS ?? process.env.QA_CLAUDE_TIMEOUT_MS ?? 300_000),
-  });
-  const expanded = extractJsonFromText<{ cases: TestCase[] }>(expandRaw);
-  if (!expanded || !Array.isArray(expanded.cases)) {
-    throw new Error(`generateTestCaseCatalog: EXPAND step parse failed. Raw:\n${expandRaw.slice(0, 500)}`);
-  }
-  console.log(`[catalog] Step 2/2 ✔ ${expanded.cases.length} cases expanded`);
+  // Expand an arbitrary set of stubs (one batch OR a repair set) → TestCase[].
+  // sourceBlock + expandRules are cached; only per-batch templates + stubs are
+  // fresh tokens. Parse failure returns [] (lose ≤1 batch, not the whole mẻ).
+  // Never throws — a batch that errors (rate limit, timeout, parse) returns []
+  // so one bad batch loses ≤BATCH_SIZE cases instead of the whole catalog.
+  const expandStubs = async (stubs: CaseStub[], label: string): Promise<TestCase[]> => {
+    if (stubs.length === 0) return [];
+    const templates = buildTemplateBlockForPlan(stubs.map((c) => c.category));
+    try {
+      const res = await catalogCall({
+        system: [{ text: SYSTEM_PREAMBLE }, { text: sourceBlock, cache: true }],
+        user: [
+          { text: expandRules, cache: true },
+          { text: `${templates}\n\n=== PLAN (case stubs to expand) ===\n${JSON.stringify(stubs, null, 2)}` },
+        ],
+        maxTokens: EXPAND_MAX_TOKENS,
+        label,
+        timeoutMs: EXPAND_TIMEOUT_MS,
+      });
+      const parsed = extractJsonFromText<{ cases: TestCase[] }>(res.text);
+      if (!parsed || !Array.isArray(parsed.cases)) {
+        console.warn(`[${label}] parse failed (raw head: ${res.text.slice(0, 200)})`);
+        return [];
+      }
+      return parsed.cases;
+    } catch (err) {
+      console.warn(`[${label}] expand failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+      return [];
+    }
+  };
 
-  // Sanity: stub count vs expanded count
-  if (expanded.cases.length !== plan.cases.length) {
+  const batches = chunkStubs(plan.cases, BATCH_SIZE);
+  console.log(`[catalog] Step 2/2: expanding ${plan.cases.length} stubs in ${batches.length} batch(es) of ≤${BATCH_SIZE} (concurrency ${CONCURRENCY})...`);
+  const batchResults = await mapLimit(batches, CONCURRENCY, (batch, i) =>
+    expandStubs(batch, `catalog/EXPAND[${i + 1}/${batches.length}]`),
+  );
+  let rawCases = mergeExpandedBatches(batchResults);
+
+  // Completion pass: if any planned stub is missing from the merged result
+  // (its batch failed), re-expand just the missing stubs once.
+  const present = new Set(rawCases.map((c) => c.id));
+  const missingStubs = plan.cases.filter((s) => !present.has(s.id));
+  if (missingStubs.length > 0) {
+    console.warn(`[catalog] ${missingStubs.length} stub(s) missing after batches — re-expanding once`);
+    const recovered = await expandStubs(missingStubs, "catalog/EXPAND-complete");
+    rawCases = mergeExpandedBatches([rawCases, recovered]);
+  }
+
+  if (rawCases.length === 0) {
+    throw new Error(`generateTestCaseCatalog: EXPAND produced 0 cases across ${batches.length} batch(es)`);
+  }
+  console.log(`[catalog] Step 2/2 ✔ ${rawCases.length} cases expanded (from ${plan.cases.length} stubs)`);
+  if (rawCases.length !== plan.cases.length) {
     console.warn(
-      `[catalog] ⚠ EXPAND returned ${expanded.cases.length} cases but PLAN had ${plan.cases.length}. Continuing anyway.`,
+      `[catalog] ⚠ EXPAND produced ${rawCases.length} cases but PLAN had ${plan.cases.length} (some batch may have failed/deduped).`,
     );
   }
 
-  // ===== STEP 3: VALIDATE (with 1 retry on errors) =====
-  let cases = normalizeAssertionsForRngIndependence(expanded.cases);
+  // ===== STEP 3: VALIDATE (with targeted repair of failing cases) =====
+  let cases = annotateSpecialBetSetupHints(
+    normalizeAssertionsForRngIndependence(rawCases),
+    args.optionsJson,
+  );
   let report = runFullValidation({
     cases,
     gameSpec,
@@ -570,33 +943,38 @@ Output ONLY the JSON.`;
     coverageNotes: plan.coverage_notes ?? [],
   });
   if (!report.ok) {
-    console.warn(
-      `[catalog] Step 3 ⚠ ${report.errors.length} validation error(s) — retrying EXPAND once with feedback`,
+    // Targeted repair: re-expand ONLY the cases with failing assertions (errors
+    // carrying a case_id) instead of regenerating the whole catalog. Cheaper +
+    // doesn't regress the cases that already passed. Catalog-level errors
+    // (case_id null, e.g. dup-id / missing universal category) originate from
+    // PLAN and can't be fixed by re-EXPAND — they surface in the final throw.
+    const failingIds = Array.from(
+      new Set(report.errors.map((e) => e.case_id).filter((id): id is string => Boolean(id))),
     );
-    const feedback = buildValidationFeedback(report);
-    const fixPrompt = `${expandPrompt}
-
-═══ VALIDATION FAILURES FROM PREVIOUS ATTEMPT ═══
-The previous expansion failed validation. Issues found:
-${feedback}
-
-Re-emit the FULL JSON with ALL cases, fixing the issues above. Same shape, same case ids where possible. Output ONLY the JSON.`;
-    const fixRaw = await askClaude({
-      content: [{ type: "text", text: fixPrompt }],
-      system: SYSTEM_EXPAND,
-      maxTurns: 1,
-      label: "catalog/EXPAND-retry",
-      timeoutMs: Number(process.env.QA_CATALOG_FIX_TIMEOUT_MS ?? process.env.QA_CLAUDE_TIMEOUT_MS ?? 300_000),
-    });
-    const fixed = extractJsonFromText<{ cases: TestCase[] }>(fixRaw);
-    if (fixed && Array.isArray(fixed.cases)) {
-      cases = normalizeAssertionsForRngIndependence(fixed.cases);
-      report = runFullValidation({
-        cases,
-        gameSpec,
-        optionsJson: args.optionsJson,
-        coverageNotes: plan.coverage_notes ?? [],
-      });
+    const stubsToFix = plan.cases.filter((s) => failingIds.includes(s.id));
+    if (stubsToFix.length > 0) {
+      console.warn(
+        `[catalog] Step 3 ⚠ ${report.errors.length} error(s) across ${failingIds.length} case(s) — re-expanding ONLY those (targeted repair)`,
+      );
+      const refixed = await expandStubs(stubsToFix, "catalog/EXPAND-repair");
+      if (refixed.length > 0) {
+        const fixedById = new Map(refixed.filter((c) => typeof c.id === "string").map((c) => [c.id, c]));
+        rawCases = rawCases.map((c) => fixedById.get(c.id) ?? c);
+        cases = annotateSpecialBetSetupHints(
+          normalizeAssertionsForRngIndependence(rawCases),
+          args.optionsJson,
+        );
+        report = runFullValidation({
+          cases,
+          gameSpec,
+          optionsJson: args.optionsJson,
+          coverageNotes: plan.coverage_notes ?? [],
+        });
+      }
+    } else {
+      console.warn(
+        `[catalog] Step 3 ⚠ ${report.errors.length} catalog-level error(s) (no case_id) — cannot target-repair`,
+      );
     }
   }
   console.log(`[catalog] Step 3/3 validation:\n${formatValidationReport(report)}`);

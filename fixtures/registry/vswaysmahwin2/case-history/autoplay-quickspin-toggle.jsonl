@@ -1,0 +1,5 @@
+{"ranAt":"2026-05-27T09:34:59.755Z","outcome":"PASS_LOW","confidence":1,"status":"pass","durationMs":45109,"spinsCount":10}
+{"ranAt":"2026-05-27T14:34:30.393Z","outcome":"PASS_LOW","confidence":1,"status":"fail","durationMs":156068,"spinsCount":43,"reason":"Per-spin balance arithmetic holds even under quick spin"}
+{"ranAt":"2026-05-27T15:17:49.754Z","outcome":"PASS_LOW","confidence":1,"status":"pass","durationMs":40682,"spinsCount":10}
+{"ranAt":"2026-05-27T16:24:34.660Z","outcome":"PASS_LOW","confidence":1,"status":"pass","durationMs":47553,"spinsCount":10}
+{"ranAt":"2026-05-27T16:53:44.318Z","outcome":"PASS_LOW","confidence":1,"status":"pass","durationMs":59655,"spinsCount":10}

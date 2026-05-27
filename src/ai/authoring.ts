@@ -191,6 +191,17 @@ export type GameSpec = {
   cluster_min_size?: number;
   /** Paylines layout if "paylines" mechanic. Each line = array of row indices, length = reel count. */
   paylines?: number[][];
+  /** Observed reel grid dimensions from captured spins. Used by the catalog
+   *  EXPAND prompt so AI doesn't hallucinate matrix.length / matrix[0].length
+   *  values in assertions (common bug — Phase 11.3 follow-up).
+   *  - width = number of reels (cols), e.g. 5
+   *  - height = symbols per reel (rows), e.g. 5 for 5x5 ways games
+   *  - source = how this was derived: "observed" (from sample spin reels) or "default" */
+  grid_dimensions?: {
+    width: number;
+    height: number;
+    source: "observed" | "default";
+  };
 };
 
 const UNDERSTAND_SYSTEM =

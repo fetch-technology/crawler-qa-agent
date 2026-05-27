@@ -366,6 +366,10 @@ function parseHistoryRows(text: string): HistoryRow[] {
 
 function findHistoryTemplate(entries: HttpEntry[]): SpinTemplate | null {
   const openReqs = new Map<string, HttpEntry[]>();
+  const candidates: Array<{
+    template: SpinTemplate;
+    score: number;
+  }> = [];
   for (const e of entries) {
     const key = `${e.method ?? "GET"} ${e.url}`;
     if (e.phase === "request") {
@@ -383,15 +387,26 @@ function findHistoryTemplate(entries: HttpEntry[]): SpinTemplate | null {
       const parsedRows = parseHistoryRows(trimmed);
       const looksJson = trimmed.startsWith("{") || trimmed.startsWith("[");
       if (!looksJson && parsedRows.length === 0 && trimmed.length < 2) continue;
-      return {
-        url: req.url,
-        method: ((req.method as "GET" | "POST") ?? "POST"),
-        headers: sanitizeRequestHeaders(req.headers ?? {}),
-        postData: req.postData ?? null,
-      };
+      let score = 0;
+      if (/\/history\/api\/history\/v2\/play-session\/last-items\?/i.test(req.url)) score += 100;
+      if (/(?:^|[?&])(?:a|action)=do(History|GameHistory|GetHistory|HistoryList)/i.test(`${req.url}&${req.postData ?? ""}`)) score += 80;
+      if (parsedRows.length > 0) score += 30;
+      if (/^post$/i.test(req.method ?? "")) score += 15;
+      if (/\/history\/\?symbol=/i.test(req.url) && /<(?:!doctype|html|body)\b/i.test(trimmed)) score -= 120;
+      candidates.push({
+        template: {
+          url: req.url,
+          method: ((req.method as "GET" | "POST") ?? "POST"),
+          headers: sanitizeRequestHeaders(req.headers ?? {}),
+          postData: req.postData ?? null,
+        },
+        score,
+      });
     }
   }
-  return null;
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => b.score - a.score);
+  return candidates[0]!.template;
 }
 
 /**
@@ -707,6 +722,25 @@ async function fireOnce(
         cur = next.parsed;
       }
     }
+    // Normalize per-spin win for stats.
+    // Prefer final `tw` (total win for the spin chain). Some providers (PP)
+    // report `w` as frame-local and can be 0 while `tw` is positive.
+    // Fallback to sum(frame.w) only when `tw` is unavailable.
+    let hasFiniteFrameWin = false;
+    const chainWin = cascadeFrameData.reduce((acc, frame) => {
+      const w = Number((frame as Record<string, unknown>).w ?? NaN);
+      if (Number.isFinite(w)) {
+        hasFiniteFrameWin = true;
+        return acc + w;
+      }
+      return acc;
+    }, 0);
+    const finalTw = Number((parsed as Record<string, unknown>).tw ?? NaN);
+    if (Number.isFinite(finalTw)) {
+      (parsed as Record<string, unknown>).winAmount = finalTw;
+    } else if (hasFiniteFrameWin) {
+      (parsed as Record<string, unknown>).winAmount = chainWin;
+    }
     return { ok: true, parsed, status: res.status, errorMessage: null, rawBody: text, sentBody, cascadeFrames, cascadeFrameData, durationMs: fireDurationMs };
   } catch (err) {
     return { ok: false, parsed: null, status: null, errorMessage: (err as Error).message, rawBody: "", sentBody, cascadeFrames: 0, cascadeFrameData: [], durationMs: 0 };
@@ -808,15 +842,38 @@ async function discoverFreeSpinChain(
 }
 
 export async function simulate(opts: SimulateOpts): Promise<SimulateResult> {
+  // Source resolution order (Phase legacy-cleanup):
+  //   1. Legacy `fixtures/recordings/<slug>__<ts>/http.jsonl` — for games
+  //      that were recorded via the old `npm run record` flow.
+  //   2. Pipeline `fixtures/registry/<slug>/network/network.jsonl` — for
+  //      games that were captured via the new pipeline (step3 capture-network).
+  // The pipeline capture is flattened into the legacy HttpEntry shape by
+  // adaptPipelineCaptureToEntries so the rest of simulate() stays unchanged.
+  let entries: HttpEntry[] = [];
+  let sourceLabel = "";
   const recording = latestRecording(opts.slug);
-  if (!recording) {
-    throw new Error(`No recording found for slug "${opts.slug}" in ${RECORDINGS_DIR}/`);
+  if (recording) {
+    entries = readEntries(recording);
+    sourceLabel = recording;
+  } else {
+    const { adaptPipelineCaptureToEntries, pipelineCapturePath } =
+      await import("./pipeline-network-source.js");
+    entries = adaptPipelineCaptureToEntries(opts.slug);
+    sourceLabel = pipelineCapturePath(opts.slug) ?? "";
   }
-  console.log(`[simulate] Using template from: ${recording}`);
+  if (entries.length === 0) {
+    throw new Error(
+      `No spin capture found for slug "${opts.slug}". Looked in:\n` +
+      `  - ${RECORDINGS_DIR}/${opts.slug}__* (legacy)\n` +
+      `  - fixtures/registry/${opts.slug}/network/network.jsonl (pipeline)\n` +
+      `Run a pipeline capture-network step or re-run the manual session to populate.`,
+    );
+  }
+  console.log(`[simulate] Using template from: ${sourceLabel} (${entries.length} entries)`);
 
-  const template = findSpinTemplate(readEntries(recording));
+  const template = findSpinTemplate(entries);
   if (!template) {
-    throw new Error(`Could not find spin request template in ${recording}/http.jsonl`);
+    throw new Error(`Could not find spin request template in ${sourceLabel}`);
   }
   const contentType = detectContentType(template.postData);
   // Identify counter fields present in template (for log + diagnostic)
@@ -865,7 +922,7 @@ export async function simulate(opts: SimulateOpts): Promise<SimulateResult> {
     }
   }
 
-  const concurrency = opts.concurrency ?? 4;
+  let concurrency = opts.concurrency ?? 4;
   const throttle = opts.throttleMs ?? 10;
   const progressEvery = opts.progressEvery ?? 100;
   const startedAt = Date.now();
@@ -950,8 +1007,14 @@ export async function simulate(opts: SimulateOpts): Promise<SimulateResult> {
   const fetchCascade = Boolean(opts.spec?.cascade);
   if (fetchCascade) {
     console.log(`[simulate] Cascade chain mode ON (spec.cascade=true) — each spin fetches full cascade tier chain via doCollect`);
+    if (concurrency !== 1) {
+      console.log(`[simulate] forcing concurrency=1 for cascade game to preserve session order`);
+      concurrency = 1;
+    }
   }
   let totalCascadeFrames = 0;
+  const canInferWinFromBalance = concurrency === 1;
+  let lastEndingBalanceForRtp: number | null = null;
 
   const worker = async () => {
     while (true) {
@@ -978,6 +1041,17 @@ export async function simulate(opts: SimulateOpts): Promise<SimulateResult> {
             join(dumpDir, `spin-${idxStr}-response-${r.status ?? "err"}-${hash}.txt`),
             r.rawBody || `(error: ${r.errorMessage ?? "unknown"})`,
           );
+          // Sidecar: final parsed state after cascade-tail collection. For
+          // cascade games the initial response body shows pre-tail values
+          // (balance/tw); `r.parsed` is mutated to cumulative final state at
+          // end of fireOnce(). Pipeline reads this for accurate per-spin
+          // balance equation.
+          if (r.parsed) {
+            writeFileSyncForDump(
+              join(dumpDir, `spin-${idxStr}-final.json`),
+              JSON.stringify(r.parsed),
+            );
+          }
         } catch (err) {
           console.warn(`[simulate] dump failed for spin ${idx}:`, (err as Error).message);
         }
@@ -1007,10 +1081,30 @@ export async function simulate(opts: SimulateOpts): Promise<SimulateResult> {
             : coin > 0 && lines > 0
               ? coin * lines
               : coin;
-        const win =
-          numOrZero(r.parsed.winAmount) ||
-          numOrZero((r.parsed as any).tw) ||
-          numOrZero(r.parsed.win);
+        let win =
+          firstFinite([
+            r.parsed.winAmount,
+            (r.parsed as any).tw,
+            r.parsed.win,
+          ]) ?? 0;
+        const endingBalance =
+          firstFinite([
+            (r.parsed as any).balance,
+            (r.parsed as any).balance_cash,
+            (r.parsed as any).endingBalance,
+            (r.parsed as any).updatedBalance,
+          ]) ?? null;
+        // In sequential mode, balance delta is the most robust source of truth
+        // across provider-specific win fields (`tw`, `w`, `winAmount`).
+        if (canInferWinFromBalance && endingBalance != null) {
+          if (lastEndingBalanceForRtp != null) {
+            const inferredWin = endingBalance - lastEndingBalanceForRtp + bet;
+            if (Number.isFinite(inferredWin) && inferredWin >= -0.02) {
+              win = Math.max(0, inferredWin);
+            }
+          }
+          lastEndingBalanceForRtp = endingBalance;
+        }
         totalBet += bet;
         totalWin += win;
         if (win > 0) hits++;
@@ -1022,6 +1116,7 @@ export async function simulate(opts: SimulateOpts): Promise<SimulateResult> {
         if (opts.historyAudit) {
           const balance =
             numOrZero((r.parsed as any).balance) ||
+            numOrZero((r.parsed as any).balance_cash) ||
             numOrZero((r.parsed as any).endingBalance) ||
             numOrZero((r.parsed as any).updatedBalance);
           const roundId = (() => {
@@ -1279,7 +1374,8 @@ export async function simulate(opts: SimulateOpts): Promise<SimulateResult> {
       historyAuditResult = {
         enabled: true,
         fetched: false,
-        reason: "No history endpoint found in recording (action=doHistory / /history/ URL)",
+        reason:
+          "History audit skipped: no history REQUEST captured in recording (action=doHistory or /history API call). Note: /history string in bootstrap HTML/config is not an API call.",
         rowsReturned: 0,
         matched: 0,
         missing: simSpinRecords.length,
@@ -1315,15 +1411,45 @@ export async function simulate(opts: SimulateOpts): Promise<SimulateResult> {
           let matched = 0;
           let fieldMismatches = 0;
           const examples: Array<{ field: string; expected: number; actual: number; spinIndex: number }> = [];
+          const TOL = 0.01;
+
+          // `last-items` endpoints usually return only a capped tail window
+          // (e.g. 100/200 rows), so audit only the comparable tail from this run.
+          const comparable = Math.min(simSpinRecords.length, rows.length);
+          const simWindow = simSpinRecords.slice(simSpinRecords.length - comparable);
+
           const byRoundId = new Map<string, typeof rows[0]>();
-          for (const r of rows) {
-            if (r.roundId) byRoundId.set(r.roundId, r);
+          for (const r of rows) if (r.roundId) byRoundId.set(r.roundId, r);
+
+          // Fallback matcher for providers where spin response lacks roundId
+          // (PP gs2c). Use ending balance as primary key within auditable tail.
+          const byBalance = new Map<string, Array<typeof simWindow[number]>>();
+          for (const s of simWindow) {
+            if (!(s.balance > 0)) continue;
+            const key = s.balance.toFixed(2);
+            const arr = byBalance.get(key) ?? [];
+            arr.push(s);
+            byBalance.set(key, arr);
           }
-          for (const sim of simSpinRecords) {
-            const histRow = sim.roundId ? byRoundId.get(sim.roundId) : undefined;
-            if (!histRow) continue;
+
+          for (const histRow of rows) {
+            let sim: (typeof simWindow)[number] | undefined;
+            if (histRow.roundId) {
+              const candidate = byRoundId.get(histRow.roundId);
+              if (candidate) {
+                // Resolve back to sim row for field compare via roundId.
+                sim = simWindow.find((s) => s.roundId === histRow.roundId);
+              }
+            }
+            if (!sim && histRow.balance > 0) {
+              const key = histRow.balance.toFixed(2);
+              const pool = byBalance.get(key);
+              if (pool && pool.length > 0) {
+                sim = pool.shift();
+              }
+            }
+            if (!sim) continue;
             matched++;
-            const TOL = 0.01;
             if (Math.abs(histRow.bet - sim.bet) > TOL) {
               fieldMismatches++;
               if (examples.length < 10) examples.push({ field: "bet", expected: sim.bet, actual: histRow.bet, spinIndex: sim.spinIndex });
@@ -1343,7 +1469,7 @@ export async function simulate(opts: SimulateOpts): Promise<SimulateResult> {
             reason: null,
             rowsReturned: rows.length,
             matched,
-            missing: simSpinRecords.length - matched,
+            missing: comparable - matched,
             fieldMismatches,
             examples,
           };
@@ -1496,6 +1622,14 @@ function numOrZero(v: unknown): number {
     if (Number.isFinite(n)) return n;
   }
   return 0;
+}
+
+function firstFinite(values: unknown[]): number | null {
+  for (const v of values) {
+    const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
 }
 
 export function formatReport(r: SimulateResult): string {

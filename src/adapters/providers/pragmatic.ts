@@ -76,9 +76,39 @@ function ppParseResponse(parsed: Record<string, unknown>): SpinResponse {
       // sa not column-major same dims → skip; cluster adapter will handle.
     }
   }
-  // PP: `fs` field tracks free-spin counter
+
+  // PP-specific: `bb` field holds balanceBefore. Generic parser only reads
+  // `balancebefore` (PP doesn't emit that) → base.balanceBefore stays null.
+  // Adapter reads bb directly so downstream balance-decreased checks work.
+  // 2026-05-26 third pass — root cause of buy-feature detection failure.
+  if (base.balanceBefore == null) {
+    const bbRaw = parsed["bb"];
+    const bbValue = bbRaw != null ? Number(bbRaw) : NaN;
+    if (Number.isFinite(bbValue)) base.balanceBefore = bbValue;
+  }
+
+  // PP: `fs` field tracks free-spin counter. Setting isFreeSpin requires
+  // BOTH (fs > 0) AND (balance didn't decrease this response). Reason:
+  //   - BUY transaction response also has `fs > 0` (server signals
+  //     "you'll get N free spins") BUT balance DECREASES (= buy cost).
+  //   - FS frames have `fs > 0` AND balance STABLE (no deduction) or
+  //     INCREASE (last frame credits chain win).
   const fs = Number(parsed["fs"]);
-  if (Number.isFinite(fs)) base.freeSpinsRemaining = fs;
+  if (Number.isFinite(fs)) {
+    base.freeSpinsRemaining = fs;
+    if (fs > 0) {
+      const bb = base.balanceBefore;
+      const ba = base.balanceAfter;
+      const balanceDecreased =
+        typeof bb === "number" && Number.isFinite(ba) && bb - ba > 0.01;
+      const balanceUnknown = typeof bb !== "number" || !Number.isFinite(ba);
+      // Only flag FS when balance demonstrably DIDN'T decrease. When balance
+      // is unknown (no `bb` field), default to NOT FS — conservative choice
+      // that avoids mis-flagging BUY as FS. Real FS frames in PP always have
+      // bb field anyway.
+      if (!balanceDecreased && !balanceUnknown) base.isFreeSpin = true;
+    }
+  }
   return base;
 }
 

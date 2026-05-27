@@ -1,0 +1,626 @@
+{
+  "caseId": "free-spins-result-shape",
+  "name": "Free Spins result shape — bet=0 during chain",
+  "category": "free_spins",
+  "severity": "critical",
+  "status": "fail",
+  "actionsExecuted": 8,
+  "assertions": [
+    {
+      "id": "fs-result-no-bet-deduction",
+      "description": "Free-spin frames do NOT deduct bet (endingBalance >= startingBalance, allowing for win-only flow)",
+      "pass": true,
+      "outcome": "PASS_LOW",
+      "confidence": 0.8,
+      "signals": [
+        {
+          "name": "api",
+          "value": true,
+          "weight": 0.35,
+          "observed": 99995677.9,
+          "expected": 99995677.89999999,
+          "source": "parser/balanceAfter"
+        },
+        {
+          "name": "rule",
+          "value": true,
+          "weight": 0.2,
+          "observed": "balance formula",
+          "expected": "balanceAfter == bb - bet + win"
+        },
+        {
+          "name": "ui_ocr",
+          "value": true,
+          "weight": 0.25,
+          "observed": 99995677.9,
+          "expected": 99995677.9,
+          "source": "ocr/balanceArea"
+        }
+      ]
+    },
+    {
+      "id": "fs-result-bet-amount-zero-or-base",
+      "description": "Free-spin betAmount is either 0 (no charge) or unchanged base bet display",
+      "pass": true,
+      "outcome": "PASS_LOW",
+      "confidence": 0.65,
+      "signals": [
+        {
+          "name": "api",
+          "value": true,
+          "weight": 0.35,
+          "source": "parser/captured-spin",
+          "observed": 26
+        },
+        {
+          "name": "network",
+          "value": true,
+          "weight": 0.1,
+          "source": "page.on(response)",
+          "observed": 26
+        },
+        {
+          "name": "ui_ocr",
+          "value": false,
+          "weight": 0.25
+        },
+        {
+          "name": "state",
+          "value": false,
+          "weight": 0.1
+        },
+        {
+          "name": "rule",
+          "value": true,
+          "weight": 0.2,
+          "source": "assertion:fs-result-bet-amount-zero-or-base",
+          "observed": "predicate=true"
+        }
+      ]
+    },
+    {
+      "id": "fs-result-win-non-negative",
+      "description": "Every free-spin frame has a valid non-negative winAmount",
+      "pass": true,
+      "outcome": "PASS_LOW",
+      "confidence": 0.65,
+      "signals": [
+        {
+          "name": "api",
+          "value": true,
+          "weight": 0.35,
+          "source": "parser/captured-spin",
+          "observed": 26
+        },
+        {
+          "name": "network",
+          "value": true,
+          "weight": 0.1,
+          "source": "page.on(response)",
+          "observed": 26
+        },
+        {
+          "name": "ui_ocr",
+          "value": false,
+          "weight": 0.25
+        },
+        {
+          "name": "state",
+          "value": false,
+          "weight": 0.1
+        },
+        {
+          "name": "rule",
+          "value": true,
+          "weight": 0.2,
+          "source": "assertion:fs-result-win-non-negative",
+          "observed": "predicate=true"
+        }
+      ]
+    },
+    {
+      "id": "fs-result-counter-monotonic",
+      "description": "freeSpinsRemaining counter decreases monotonically across free spin chain",
+      "pass": false,
+      "detail": "FAIL | collector: count=26 | first.startingBalance=99995672.8 | last.endingBalance=99995677.9 | sumBet=0.5 | sumWin=656.2500000000001 | expected (start − sumBet + sumWin) = 99996328.55 | diff (actual − expected) = -650.6499999910593 | per-spin: #1 bet=0.5 win=0 bb=99995672.8 ba=99995628.8 drop=44.00 expected=0.50 ⚠ | #2 bet=0 win=0.1 bb=99995628.8 ba=99995628.8 drop=0.00 expected=-0.10 ⚠ | #3 bet=0 win=2.9 bb=99995628.8 ba=99995628.8 drop=0.00 expected=-2.90 ⚠ | #4 bet=0 win=2.9 bb=99995628.8 ba=99995628.8 drop=0.00 expected=-2.90 ⚠ | #5 bet=0 win=5.9 bb=99995628.8 ba=99995628.8 drop=0.00 expected=-5.90 ⚠ | #6 bet=0 win=7.7 bb=99995628.8 ba=99995628.8 drop=0.00 expected=-7.70 ⚠ | #7 bet=0 win=7.7 bb=99995628.8 ba=99995628.8 drop=0.00 expected=-7.70 ⚠ | #8 bet=0 win=7.7 bb=99995628.8 ba=99995628.8 drop=0.00 expected=-7.70 ⚠ | #9 bet=0 win=9.1 bb=99995628.8 ba=99995628.8 drop=0.00 expected=-9.10 ⚠ | #10 bet=0 win=11.5 bb=99995628.8 ba=99995628.8 drop=0.00 expected=-11.50 ⚠ | #11 bet=0 win=13 bb=99995628.8 ba=99995628.8 drop=0.00 expected=-13.00 ⚠ | #12 bet=0 win=13 bb=99995628.8 ba=99995628.8 drop=0.00 expected=-13.00 ⚠ | #13 bet=0 win=13.75 bb=99995628.8 ba=99995628.8 drop=0.00 expected=-13.75 ⚠ | #14 bet=0 win=39.85 bb=99995628.8 ba=99995628.8 drop=0.00 expected=-39.85 ⚠ | #15 bet=0 win=39.85 bb=99995628.8 ba=99995628.8 drop=0.00 expected=-39.85 ⚠ | #16 bet=0 win=39.9 bb=99995628.8 ba=99995628.8 drop=0.00 expected=-39.90 ⚠ | #17 bet=0 win=40 bb=99995628.8 ba=99995628.8 drop=0.00 expected=-40.00 ⚠ | #18 bet=0 win=40 bb=99995628.8 ba=99995628.8 drop=0.00 expected=-40.00 ⚠ | #19 bet=0 win=40 bb=99995628.8 ba=99995628.8 drop=0.00 expected=-40.00 ⚠ | #20 bet=0 win=40.3 bb=99995628.8 ba=99995628.8 drop=0.00 expected=-40.30 ⚠",
+      "outcome": "FAIL_LOW",
+      "confidence": 0,
+      "signals": [
+        {
+          "name": "api",
+          "value": false,
+          "weight": 0.35,
+          "source": "parser/captured-spin",
+          "observed": 26
+        },
+        {
+          "name": "network",
+          "value": false,
+          "weight": 0.1,
+          "source": "page.on(response)",
+          "observed": 26
+        },
+        {
+          "name": "ui_ocr",
+          "value": false,
+          "weight": 0.25
+        },
+        {
+          "name": "state",
+          "value": false,
+          "weight": 0.1
+        },
+        {
+          "name": "rule",
+          "value": false,
+          "weight": 0.2,
+          "source": "assertion:fs-result-counter-monotonic",
+          "observed": "predicate=false"
+        }
+      ]
+    },
+    {
+      "id": "fs-result-id-shape",
+      "description": "Every free-spin frame has a valid id string",
+      "pass": true,
+      "outcome": "PASS_LOW",
+      "confidence": 0.65,
+      "signals": [
+        {
+          "name": "api",
+          "value": true,
+          "weight": 0.35,
+          "source": "parser/captured-spin",
+          "observed": 26
+        },
+        {
+          "name": "network",
+          "value": true,
+          "weight": 0.1,
+          "source": "page.on(response)",
+          "observed": 26
+        },
+        {
+          "name": "ui_ocr",
+          "value": false,
+          "weight": 0.25
+        },
+        {
+          "name": "state",
+          "value": false,
+          "weight": 0.1
+        },
+        {
+          "name": "rule",
+          "value": true,
+          "weight": 0.2,
+          "source": "assertion:fs-result-id-shape",
+          "observed": "predicate=true"
+        }
+      ]
+    },
+    {
+      "id": "_auto_ui_balance_matches_api",
+      "description": "UI-displayed balance matches API-settled balance (OCR cross-check)",
+      "pass": true,
+      "outcome": "PASS_LOW",
+      "confidence": 0.8,
+      "signals": [
+        {
+          "name": "ui_ocr",
+          "value": true,
+          "weight": 0.25
+        },
+        {
+          "name": "api",
+          "value": true,
+          "weight": 0.35
+        },
+        {
+          "name": "rule",
+          "value": true,
+          "weight": 0.2
+        }
+      ]
+    }
+  ],
+  "spin": {
+    "bet": 0,
+    "win": 49.1,
+    "balanceBefore": 99995628.8,
+    "balanceAfter": 99995677.9,
+    "state": "FREE_SPIN",
+    "roundId": "req-1114-2"
+  },
+  "durationMs": 132088,
+  "spinsCount": 26,
+  "screenshotPath": "fixtures/registry/vswaysmahwin2/case-evidence/free-spins-result-shape.png",
+  "ocrSnapshots": [
+    {
+      "region": "balance",
+      "bbox": {
+        "x": 292,
+        "y": 651,
+        "width": 207,
+        "height": 27
+      },
+      "text": "$99,995,677.90",
+      "parsed": 99995677.9,
+      "durationMs": 81,
+      "bboxScreenshotPath": "fixtures/registry/vswaysmahwin2/case-evidence/free-spins-result-shape.balance.png"
+    },
+    {
+      "region": "bet",
+      "bbox": {
+        "x": 292,
+        "y": 671,
+        "width": 103,
+        "height": 25
+      },
+      "text": "$0.50",
+      "parsed": 0.5,
+      "durationMs": 42,
+      "bboxScreenshotPath": "fixtures/registry/vswaysmahwin2/case-evidence/free-spins-result-shape.bet.png"
+    },
+    {
+      "region": "last_win",
+      "bbox": {
+        "x": 628,
+        "y": 627,
+        "width": 165,
+        "height": 54
+      },
+      "text": "49.10",
+      "parsed": 49.1,
+      "durationMs": 48,
+      "bboxScreenshotPath": "fixtures/registry/vswaysmahwin2/case-evidence/free-spins-result-shape.last_win.png"
+    }
+  ],
+  "actionLog": [
+    {
+      "kind": "set_bet_to_value",
+      "target": "0.5",
+      "durationMs": 3269,
+      "success": true
+    },
+    {
+      "kind": "wait_ms",
+      "target": "500ms",
+      "durationMs": 501,
+      "success": true
+    },
+    {
+      "kind": "click",
+      "target": "buyBonusButton",
+      "durationMs": 660,
+      "success": true
+    },
+    {
+      "kind": "wait_ms",
+      "target": "1500ms",
+      "durationMs": 1502,
+      "success": true
+    },
+    {
+      "kind": "click",
+      "target": "buyBonusButton__confirmButton",
+      "durationMs": 657,
+      "success": true
+    },
+    {
+      "kind": "wait_ms",
+      "target": "500ms",
+      "durationMs": 503,
+      "success": true
+    },
+    {
+      "kind": "dismiss",
+      "durationMs": 12610,
+      "success": true
+    },
+    {
+      "kind": "wait_until_state",
+      "target": "MAIN",
+      "durationMs": 907,
+      "success": true
+    }
+  ],
+  "signalRollup": [
+    {
+      "signal": "api",
+      "pass": true,
+      "checks": [
+        {
+          "field": "spin captured",
+          "expected": "non-empty roundId",
+          "actual": "req-1114-2",
+          "match": true,
+          "source": "parser/captured-spin"
+        },
+        {
+          "field": "bet",
+          "expected": "0 (FS — no deduction)",
+          "actual": 0,
+          "match": true,
+          "source": "parser/spin.bet"
+        },
+        {
+          "field": "win",
+          "expected": ">= 0 (non-negative)",
+          "actual": 49.1,
+          "match": true,
+          "source": "parser/spin.win"
+        },
+        {
+          "field": "balanceAfter",
+          "expected": "finite number",
+          "actual": 99995677.9,
+          "match": true,
+          "source": "parser/spin.balanceAfter"
+        }
+      ]
+    },
+    {
+      "signal": "ui_ocr",
+      "pass": true,
+      "checks": [
+        {
+          "field": "balance",
+          "expected": 99995677.9,
+          "actual": 99995677.9,
+          "match": true,
+          "source": "ocr/balanceArea ↔ parser/balanceAfter"
+        },
+        {
+          "field": "bet",
+          "expected": "n/a (FS — UI shows stake choice, API shows deduction=0)",
+          "actual": 0.5,
+          "match": true,
+          "source": "ocr/betArea ↔ parser/spin.bet (skipped for FS)",
+          "note": "Different semantics: UI=stake, API=deduction. Comparison skipped."
+        },
+        {
+          "field": "win",
+          "expected": 49.1,
+          "actual": 49.1,
+          "match": true,
+          "source": "ocr/winArea ↔ parser/spin.win"
+        }
+      ],
+      "detail": "3/3 UI widgets match API"
+    },
+    {
+      "signal": "network",
+      "pass": true,
+      "checks": [
+        {
+          "field": "captured spins",
+          "expected": ">= 1 (buy-feature → FS chain)",
+          "actual": 26,
+          "match": true,
+          "source": "page.on(response)"
+        },
+        {
+          "field": "no error warnings",
+          "expected": "0 errors/failures/debounced clicks",
+          "actual": 0,
+          "match": true,
+          "source": "case-executor warnings"
+        }
+      ]
+    },
+    {
+      "signal": "state",
+      "pass": true,
+      "checks": [
+        {
+          "field": "stayed on MAIN (or allowed interrupts)",
+          "expected": "all transitions to MAIN | allowed",
+          "actual": "all clean",
+          "match": true,
+          "source": "stateTimeline"
+        }
+      ]
+    },
+    {
+      "signal": "rule",
+      "pass": true,
+      "checks": [
+        {
+          "field": "balance arithmetic",
+          "expected": 99995677.89999999,
+          "actual": 99995677.9,
+          "match": true,
+          "source": "balanceAfter == balanceBefore - bet + win"
+        }
+      ]
+    }
+  ],
+  "networkLogPath": "fixtures/registry/vswaysmahwin2/case-evidence/free-spins-result-shape.network.jsonl",
+  "networkSummary": [
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/reloadBalance.do?mgckey=demo@SFTIqmxdilH7qHteQ8Fij529_USD",
+      "method": "GET",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": false
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/saveSettings.do",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": false
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": true
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/saveSettings.do",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": false
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": true
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/announcements/unread/?symbol=vswaysmahwin2&mgckey=demo@SFTIqmxdilH7qHteQ8Fij529_USD",
+      "method": "GET",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": false
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/promo/active/?symbol=vswaysmahwin2&mgckey=demo@SFTIqmxdilH7qHteQ8Fij529_USD",
+      "method": "GET",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": false
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": true
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": true
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": true
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": true
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": true
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": true
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": true
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": true
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": true
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": true
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": true
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": true
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": true
+    }
+  ],
+  "parserDiagnostic": {
+    "parserKind": "PragmaticParser",
+    "betMultiplier": 20,
+    "requestFields": {
+      "action": "doSpin",
+      "symbol": "vswaysmahwin2",
+      "c": 0.025,
+      "l": 1024,
+      "sInfo": "t",
+      "bl": 0,
+      "pur": 0,
+      "index": 1089,
+      "counter": 2,
+      "repeat": 0,
+      "mgckey": "demo@SFTIqmxdilH7qHteQ8Fij529_USD"
+    },
+    "formulaUsed": "c × M = 0.025 × 20",
+    "parsedBet": 0,
+    "expectedBet": 0.5,
+    "mismatch": true
+  },
+  "warnings": [
+    "buy-feature detected (deduction ratio 88.0×) — extending settle window to 45000ms for FS chain"
+  ],
+  "stateTimeline": [
+    {
+      "at": "2026-05-27T17:42:24.772Z",
+      "to": "MAIN"
+    },
+    {
+      "at": "2026-05-27T17:44:36.720Z",
+      "from": "MAIN",
+      "to": "FREE_SPIN_TRIGGERED",
+      "via": "synth-buy-feature-detected"
+    },
+    {
+      "at": "2026-05-27T17:44:36.720Z",
+      "from": "FREE_SPIN_TRIGGERED",
+      "to": "FREE_SPIN",
+      "via": "synth-from-isFreeSpin-frames"
+    }
+  ],
+  "outcome": "FAIL_LOW",
+  "confidence": 1
+}

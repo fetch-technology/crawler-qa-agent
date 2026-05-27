@@ -16,12 +16,19 @@ export type ValidationReport = {
   warnings: ValidationIssue[];
 };
 
+// Must mirror the variables bound at runtime in case-executor
+// evaluateAssertions() (the `new Function(...)` arg list). Keep in sync.
 const ALLOWED_TOP_LEVEL_IDENTIFIERS = new Set<string>([
   "spin",
+  "previousSpin",
   "collector",
   "screen",
   "balanceBefore",
+  "networkBalance",
   "spinIndex",
+  "stateTimeline",
+  "warnings",
+  "interrupts",
   "detectBuyFeatureDeduction",
   "getRoundEndSpins",
   "getCurrentBalance",
@@ -80,6 +87,25 @@ const FORBIDDEN_TOP_LEVEL = new Set<string>([
   "__filename",
 ]);
 
+// JS statement/expression keywords — never flag as "unrecognized identifier".
+// (IIFE-style assertions like `(() => { const d = ...; return ... })()` use
+// these legitimately.)
+const JS_KEYWORDS = new Set<string>([
+  "const", "let", "var", "function", "return", "if", "else", "for", "while",
+  "do", "switch", "case", "default", "break", "continue", "try", "catch",
+  "finally", "throw", "typeof", "instanceof", "in", "of", "new", "void",
+  "delete", "yield", "await", "async", "this", "class", "extends", "super",
+  "true", "false", "null", "undefined",
+]);
+
+function lastNonSpace(s: string): string {
+  for (let k = s.length - 1; k >= 0; k--) {
+    const c = s[k] ?? "";
+    if (!/\s/.test(c)) return c;
+  }
+  return "";
+}
+
 function stripStringsAndComments(code: string): string {
   let out = "";
   let i = 0;
@@ -124,6 +150,30 @@ function stripStringsAndComments(code: string): string {
       }
       continue;
     }
+    // Regex literal — strip so words inside (e.g. /debounced|popup/i) aren't
+    // mistaken for identifiers. Heuristic: a `/` is a regex (not division)
+    // unless the previous significant char is value-producing (ident / ) ]).
+    if (ch === "/") {
+      const prev = lastNonSpace(out);
+      const isDivision = prev !== "" && /[a-zA-Z0-9_$)\]]/.test(prev);
+      if (!isDivision) {
+        out += " ";
+        i++;
+        let inClass = false;
+        while (i < n) {
+          const c = code[i]!;
+          if (c === "\\" && i + 1 < n) { out += "  "; i += 2; continue; }
+          if (c === "[") inClass = true;
+          else if (c === "]") inClass = false;
+          else if (c === "/" && !inClass) break;
+          out += c === "\n" ? "\n" : " ";
+          i++;
+        }
+        if (i < n && code[i] === "/") { out += " "; i++; }       // closing /
+        while (i < n && /[a-z]/i.test(code[i]!)) { out += " "; i++; } // flags
+        continue;
+      }
+    }
     out += ch;
     i++;
   }
@@ -136,24 +186,39 @@ type IdentifierUse = {
   isProperty: boolean;
 };
 
-function collectArrowBindings(stripped: string): Set<string> {
+/** Collect identifiers DECLARED locally within the expression so their uses
+ *  aren't flagged as unknown: arrow/function params + const/let/var declarations
+ *  (incl. simple destructuring) + for-loop vars + catch params. */
+function collectLocalBindings(stripped: string): Set<string> {
   const bindings = new Set<string>();
-  for (const m of stripped.matchAll(/\b([a-zA-Z_$][\w$]*)\s*=>/g)) {
-    bindings.add(m[1] as string);
-  }
-  for (const m of stripped.matchAll(/\(([^()]*)\)\s*=>/g)) {
-    const inside = m[1] as string;
+  const addList = (inside: string) => {
     for (const part of inside.split(",")) {
-      const trimmed = part.trim().split(/[\s=:]/)[0] ?? "";
+      const trimmed = part.trim().replace(/^\.\.\./, "").split(/[\s=:]/)[0] ?? "";
       if (/^[a-zA-Z_$][\w$]*$/.test(trimmed)) bindings.add(trimmed);
     }
+  };
+  // arrow params: `x =>` and `(a, b) =>`
+  for (const m of stripped.matchAll(/\b([a-zA-Z_$][\w$]*)\s*=>/g)) bindings.add(m[1] as string);
+  for (const m of stripped.matchAll(/\(([^()]*)\)\s*=>/g)) addList(m[1] as string);
+  // const/let/var single declarations
+  for (const m of stripped.matchAll(/\b(?:const|let|var)\s+([a-zA-Z_$][\w$]*)/g)) bindings.add(m[1] as string);
+  // const/let/var destructuring: `const { a, b } = ` / `const [a, b] = `
+  for (const m of stripped.matchAll(/\b(?:const|let|var)\s*[{[]([^}\]]*)[}\]]/g)) addList(m[1] as string);
+  // function declarations + params: `function foo(a, b)`
+  for (const m of stripped.matchAll(/\bfunction\b\s*([a-zA-Z_$][\w$]*)?\s*\(([^()]*)\)/g)) {
+    if (m[1]) bindings.add(m[1]);
+    addList(m[2] as string);
   }
+  // for-loop init vars: `for (const x of ...)` / `for (let i = ...)`
+  for (const m of stripped.matchAll(/\bfor\s*\(\s*(?:const|let|var)\s+([a-zA-Z_$][\w$]*)/g)) bindings.add(m[1] as string);
+  // catch (e)
+  for (const m of stripped.matchAll(/\bcatch\s*\(\s*([a-zA-Z_$][\w$]*)/g)) bindings.add(m[1] as string);
   return bindings;
 }
 
 function extractIdentifiers(code: string): { ids: IdentifierUse[]; bindings: Set<string> } {
   const stripped = stripStringsAndComments(code);
-  const bindings = collectArrowBindings(stripped);
+  const bindings = collectLocalBindings(stripped);
   const out: IdentifierUse[] = [];
   const re = /[a-zA-Z_$][a-zA-Z0-9_$]*/g;
   let m: RegExpExecArray | null;
@@ -185,7 +250,7 @@ function validateExpressionSyntax(code: string): string | null {
   }
 }
 
-function validateCheckCodeIdentifiers(code: string): { errors: string[]; warnings: string[] } {
+export function validateCheckCodeIdentifiers(code: string): { errors: string[]; warnings: string[] } {
   const errors: string[] = [];
   const warnings: string[] = [];
   const { ids, bindings } = extractIdentifiers(code);
@@ -204,6 +269,7 @@ function validateCheckCodeIdentifiers(code: string): { errors: string[]; warning
       continue;
     }
     if (/^\d/.test(u.name)) continue;
+    if (JS_KEYWORDS.has(u.name)) continue;
     if (ALLOWED_TOP_LEVEL_IDENTIFIERS.has(u.name)) continue;
     if (bindings.has(u.name)) continue;
     if (/^[A-Z][a-zA-Z]*Error$/.test(u.name)) continue;

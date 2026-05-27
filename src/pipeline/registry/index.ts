@@ -1,0 +1,16 @@
+export * from "./types.js";
+export * from "./paths.js";
+export { uiRegistry, updateElement as updateUiElement } from "./ui-registry.js";
+export { providerCache } from "./provider-cache.js";
+export { apiMapping } from "./api-mapping.js";
+export { fieldMapping } from "./field-mapping.js";
+export { parserCache } from "./parser-cache.js";
+export { ocrRegions } from "./ocr-regions.js";
+export { stateSignatures } from "./state-signatures.js";
+export { paytable } from "./paytable.js";
+export { popupRegions } from "./popup-regions.js";
+export { meta, initMeta, touchValidated } from "./meta.js";
+export { testcases } from "./testcases.js";
+export { featureRegistry } from "./feature-registry-store.js";
+export { validateAll } from "./validate-all.js";
+export { registryExists } from "./exists.js";

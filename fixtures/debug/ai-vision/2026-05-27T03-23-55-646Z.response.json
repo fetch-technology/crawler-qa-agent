@@ -1,0 +1,69 @@
+{
+  "text": "{\n  \"elements\": {\n    \"spinButton\": { \"x\": 1147, \"y\": 680, \"confidence\": 0.97 },\n    \"autoButton\": { \"x\": 1147, \"y\": 718, \"confidence\": 0.85 },\n    \"turboButton\": { \"x\": 640, \"y\": 685, \"confidence\": 0.4, \"note\": \"no clear icon, only 'HOLD SPACE FOR TURBO SPIN' text\" },\n    \"buyBonusButton\": { \"x\": 700, \"y\": 595, \"confidence\": 0.93 },\n    \"historyButton\": { \"x\": 60, \"y\": 658, \"confidence\": 0.4 },\n    \"paytableButton\": { \"x\": 87, \"y\": 658, \"confidence\": 0.9 },\n    \"menuButton\": { \"x\": 60, \"y\": 633, \"confidence\": 0.92 },\n    \"betPlus\": { \"x\": 1233, \"y\": 680, \"confidence\": 0.95 },\n    \"betMinus\": { \"x\": 1060, \"y\": 680, \"confidence\": 0.95 }\n  },\n  \"suggestions\": [\n    { \"label\": \"sound_toggle\", \"x\": 87, \"y\": 683, \"confidence\": 0.85, \"note\": \"speaker icon below info\" },\n    { \"label\": \"more_scatters_toggle\", \"x\": 553, \"y\": 605, \"confidence\": 0.85, \"note\": \"BET $0.63 ON/OFF MORE SCATTERS ante bet toggle\" }\n  ]\n}",
+  "parsed": {
+    "elements": {
+      "spinButton": {
+        "x": 1147,
+        "y": 680,
+        "confidence": 0.97
+      },
+      "autoButton": {
+        "x": 1147,
+        "y": 718,
+        "confidence": 0.85
+      },
+      "turboButton": {
+        "x": 640,
+        "y": 685,
+        "confidence": 0.4,
+        "note": "no clear icon, only 'HOLD SPACE FOR TURBO SPIN' text"
+      },
+      "buyBonusButton": {
+        "x": 700,
+        "y": 595,
+        "confidence": 0.93
+      },
+      "historyButton": {
+        "x": 60,
+        "y": 658,
+        "confidence": 0.4
+      },
+      "paytableButton": {
+        "x": 87,
+        "y": 658,
+        "confidence": 0.9
+      },
+      "menuButton": {
+        "x": 60,
+        "y": 633,
+        "confidence": 0.92
+      },
+      "betPlus": {
+        "x": 1233,
+        "y": 680,
+        "confidence": 0.95
+      },
+      "betMinus": {
+        "x": 1060,
+        "y": 680,
+        "confidence": 0.95
+      }
+    },
+    "suggestions": [
+      {
+        "label": "sound_toggle",
+        "x": 87,
+        "y": 683,
+        "confidence": 0.85,
+        "note": "speaker icon below info"
+      },
+      {
+        "label": "more_scatters_toggle",
+        "x": 553,
+        "y": 605,
+        "confidence": 0.85,
+        "note": "BET $0.63 ON/OFF MORE SCATTERS ante bet toggle"
+      }
+    ]
+  }
+}

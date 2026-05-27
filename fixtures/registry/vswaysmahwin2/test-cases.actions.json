@@ -1,0 +1,2752 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-05-27T09:33:57.931Z",
+  "cases": {
+    "base-default-bet-single-spin": {
+      "caseId": "base-default-bet-single-spin",
+      "actions": [
+        {
+          "kind": "set_bet_to_value",
+          "value": 0.5,
+          "reason": "set bet to 0.50 default per case"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        }
+      ]
+    },
+    "base-game-default-bet-single-spin": {
+      "caseId": "base-game-default-bet-single-spin",
+      "actions": [
+        {
+          "kind": "set_bet_to_value",
+          "value": 0.5,
+          "reason": "set bet to default 0.50"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        }
+      ]
+    },
+    "base-game-multi-spin-balance-integrity": {
+      "caseId": "base-game-multi-spin-balance-integrity",
+      "actions": [
+        {
+          "kind": "set_bet_to_value",
+          "value": 0.5,
+          "reason": "set bet to 0.50 per setup"
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        }
+      ]
+    },
+    "base-game-response-field-validation": {
+      "caseId": "base-game-response-field-validation",
+      "actions": [
+        {
+          "kind": "set_bet_to_value",
+          "value": 0.5,
+          "reason": "set bet to 0.50"
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        }
+      ]
+    },
+    "bet-variation-min-0.20": {
+      "caseId": "bet-variation-min-0.20",
+      "actions": [
+        {
+          "kind": "click",
+          "uiKey": "betMinus",
+          "reason": "open bet selector"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1500
+        },
+        {
+          "kind": "click",
+          "uiKey": "betMinus__betAmount-0.20",
+          "reason": "select 0.20 rung"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 500
+        },
+        {
+          "kind": "click",
+          "uiKey": "betMinus__closeButton",
+          "reason": "close bet selector"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        }
+      ]
+    },
+    "bet-variation-low-0.50": {
+      "caseId": "bet-variation-low-0.50",
+      "actions": [
+        {
+          "kind": "set_bet_to_value",
+          "value": 0.5,
+          "reason": "set bet to 0.50"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1000
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        }
+      ]
+    },
+    "bet-variation-mid-5.00": {
+      "caseId": "bet-variation-mid-5.00",
+      "actions": [
+        {
+          "kind": "click",
+          "uiKey": "betPlus",
+          "reason": "open bet selector"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1500
+        },
+        {
+          "kind": "click",
+          "uiKey": "betPlus__betAmount-5.00",
+          "reason": "select 5.00 rung"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1500
+        },
+        {
+          "kind": "click",
+          "uiKey": "betPlus__closeButton",
+          "reason": "dismiss bet selector"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        }
+      ]
+    },
+    "bet-variation-high-30.00": {
+      "caseId": "bet-variation-high-30.00",
+      "actions": [
+        {
+          "kind": "click",
+          "uiKey": "betPlus",
+          "reason": "open bet selector"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1500
+        },
+        {
+          "kind": "click",
+          "uiKey": "betPlus__betAmount-30.00",
+          "reason": "select 30.00 rung"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 500
+        },
+        {
+          "kind": "click",
+          "uiKey": "betPlus__closeButton",
+          "reason": "dismiss bet selector"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        }
+      ]
+    },
+    "bet-variation-max-100.00": {
+      "caseId": "bet-variation-max-100.00",
+      "actions": [
+        {
+          "kind": "click",
+          "uiKey": "betPlus",
+          "reason": "open bet selector panel"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1500
+        },
+        {
+          "kind": "click",
+          "uiKey": "betPlus__betAmount-100.00",
+          "reason": "select 100.00 max rung"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 500
+        },
+        {
+          "kind": "click",
+          "uiKey": "betPlus__closeButton",
+          "reason": "close bet selector"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        }
+      ]
+    },
+    "bet-boundary-above-max": {
+      "caseId": "bet-boundary-above-max",
+      "actions": [
+        {
+          "kind": "click",
+          "uiKey": "betPlus",
+          "reason": "open bet selector panel"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1500
+        },
+        {
+          "kind": "click",
+          "uiKey": "betPlus__betAmount-100.00",
+          "reason": "set bet to max 100.00"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1500
+        },
+        {
+          "kind": "click",
+          "uiKey": "betPlus__closeButton",
+          "reason": "close bet panel"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1500
+        },
+        {
+          "kind": "click",
+          "uiKey": "betPlus",
+          "times": 5,
+          "reason": "attempt overshoot above max"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        }
+      ]
+    },
+    "bet-boundary-below-min": {
+      "caseId": "bet-boundary-below-min",
+      "actions": [
+        {
+          "kind": "click",
+          "uiKey": "betMinus",
+          "reason": "open bet selector panel"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1500
+        },
+        {
+          "kind": "click",
+          "uiKey": "betMinus__betAmount-0.20",
+          "reason": "select minimum bet 0.20"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1000
+        },
+        {
+          "kind": "click",
+          "uiKey": "betMinus__closeButton",
+          "reason": "close bet panel"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1000
+        },
+        {
+          "kind": "click",
+          "uiKey": "betMinus",
+          "times": 5,
+          "reason": "attempt to undershoot below min five times"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1000
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        }
+      ]
+    },
+    "autoplay-10-rounds": {
+      "caseId": "autoplay-10-rounds",
+      "actions": [
+        {
+          "kind": "click",
+          "uiKey": "autoButton",
+          "reason": "open autoplay popup"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1500
+        },
+        {
+          "kind": "click",
+          "uiKey": "autoButton__autoCountSlide-10",
+          "reason": "select 10 rounds"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 500
+        },
+        {
+          "kind": "click",
+          "uiKey": "autoButton__startAutoplayButton",
+          "reason": "start autoplay batch"
+        },
+        {
+          "kind": "wait_until_no_spin_response",
+          "quietMs": 5000,
+          "maxMs": 180000,
+          "reason": "wait autoplay batch of 10 to complete"
+        }
+      ]
+    },
+    "autoplay-30-rounds": {
+      "caseId": "autoplay-30-rounds",
+      "actions": [
+        {
+          "kind": "click",
+          "uiKey": "autoButton",
+          "reason": "open autoplay configuration popup"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1500
+        },
+        {
+          "kind": "click",
+          "uiKey": "autoButton__autoCountSlide-30",
+          "reason": "select 30 rounds batch"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 500
+        },
+        {
+          "kind": "click",
+          "uiKey": "autoButton__startAutoplayButton",
+          "reason": "start autoplay batch of 30"
+        },
+        {
+          "kind": "wait_until_no_spin_response",
+          "quietMs": 5000,
+          "maxMs": 300000,
+          "reason": "wait autoplay batch of 30 to complete"
+        }
+      ]
+    },
+    "autoplay-quickspin-toggle": {
+      "caseId": "autoplay-quickspin-toggle",
+      "actions": [
+        {
+          "kind": "click",
+          "uiKey": "autoButton",
+          "reason": "open autoplay configuration popup"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1500
+        },
+        {
+          "kind": "click",
+          "uiKey": "autoButton__quickSpinToggle",
+          "reason": "enable Quick Spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 500
+        },
+        {
+          "kind": "click",
+          "uiKey": "autoButton__autoCountSlide-10",
+          "reason": "select 10-round batch"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 500
+        },
+        {
+          "kind": "click",
+          "uiKey": "autoButton__startAutoplayButton",
+          "reason": "start autoplay batch of 10"
+        },
+        {
+          "kind": "wait_until_no_spin_response",
+          "quietMs": 5000,
+          "maxMs": 180000,
+          "reason": "wait autoplay batch of 10 with quick spin to complete"
+        }
+      ]
+    },
+    "turbo-spin-toggle": {
+      "caseId": "turbo-spin-toggle",
+      "actions": [
+        {
+          "kind": "click",
+          "uiKey": "autoButton",
+          "reason": "open autoplay popup"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1500
+        },
+        {
+          "kind": "click",
+          "uiKey": "autoButton__turboSpinToggle",
+          "reason": "enable turbo spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 500
+        },
+        {
+          "kind": "click",
+          "uiKey": "autoButton__autoCountSlide-10",
+          "reason": "select 10 rounds (smallest rung)"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 500
+        },
+        {
+          "kind": "click",
+          "uiKey": "autoButton__startAutoplayButton",
+          "reason": "start autoplay batch"
+        },
+        {
+          "kind": "wait_until_no_spin_response",
+          "quietMs": 5000,
+          "maxMs": 180000,
+          "reason": "wait autoplay batch to complete (test consumes first 5 spins)"
+        }
+      ]
+    },
+    "buy-bonus-free-spins": {
+      "caseId": "buy-bonus-free-spins",
+      "actions": [
+        {
+          "kind": "set_bet_to_value",
+          "value": 0.5,
+          "reason": "set bet to 0.50 per buy-options base_bet_visible"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 500
+        },
+        {
+          "kind": "click",
+          "uiKey": "buyBonusButton",
+          "reason": "open buy bonus popup"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1500
+        },
+        {
+          "kind": "click",
+          "uiKey": "buyBonusButton__confirmButton",
+          "reason": "confirm buy free spins"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 500
+        },
+        {
+          "kind": "dismiss",
+          "reason": "dismiss FS celebration popup"
+        },
+        {
+          "kind": "wait_until_state",
+          "state": "MAIN",
+          "maxMs": 120000,
+          "reason": "wait FS chain to complete"
+        }
+      ]
+    },
+    "special-bet-more-scatters": {
+      "caseId": "special-bet-more-scatters",
+      "actions": [],
+      "skipReason": "missing uiKey moreScattersToggle — the More Scatters toggle required by setup step 4 is not present in uiMap_hierarchy"
+    },
+    "free-spins-trigger-watch": {
+      "caseId": "free-spins-trigger-watch",
+      "actions": [
+        {
+          "kind": "set_bet_to_value",
+          "value": 0.5,
+          "reason": "set bet to 0.50 per setup"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1000
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        }
+      ]
+    },
+    "free-spins-result-shape": {
+      "caseId": "free-spins-result-shape",
+      "actions": [
+        {
+          "kind": "set_bet_to_value",
+          "value": 0.5,
+          "reason": "set base bet to 0.50 per setup step 1-2"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 500
+        },
+        {
+          "kind": "click",
+          "uiKey": "buyBonusButton",
+          "reason": "open buy bonus popup"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1500
+        },
+        {
+          "kind": "click",
+          "uiKey": "buyBonusButton__confirmButton",
+          "reason": "confirm Free Spins purchase"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 500
+        },
+        {
+          "kind": "dismiss",
+          "reason": "clear celebration/press-anywhere popup before FS chain starts"
+        },
+        {
+          "kind": "wait_until_state",
+          "state": "MAIN",
+          "maxMs": 120000,
+          "reason": "wait for FS chain to complete"
+        }
+      ]
+    },
+    "tumble-feature-watch": {
+      "caseId": "tumble-feature-watch",
+      "actions": [
+        {
+          "kind": "set_bet_to_value",
+          "value": 0.5,
+          "reason": "set bet to 0.50 per setup step 1-2"
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        }
+      ]
+    },
+    "tumble-multiplier-progression": {
+      "caseId": "tumble-multiplier-progression",
+      "actions": [
+        {
+          "kind": "set_bet_to_value",
+          "value": 0.5,
+          "reason": "set bet to 0.50 per setup"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1500
+        },
+        {
+          "kind": "click",
+          "uiKey": "autoButton",
+          "reason": "open autoplay panel"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1500
+        },
+        {
+          "kind": "click",
+          "uiKey": "autoButton__autoCountSlide-50",
+          "reason": "select 50 autoplay rounds"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 500
+        },
+        {
+          "kind": "click",
+          "uiKey": "autoButton__startAutoplayButton",
+          "reason": "start autoplay batch of 50"
+        },
+        {
+          "kind": "wait_until_no_spin_response",
+          "quietMs": 5000,
+          "maxMs": 300000,
+          "reason": "wait autoplay batch of 50 to complete"
+        }
+      ]
+    },
+    "wild-substitution-watch": {
+      "caseId": "wild-substitution-watch",
+      "actions": [
+        {
+          "kind": "set_bet_to_value",
+          "value": 0.5,
+          "reason": "set base bet to 0.50 per setup"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1500
+        },
+        {
+          "kind": "click",
+          "uiKey": "autoButton",
+          "reason": "open autoplay panel"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1500
+        },
+        {
+          "kind": "click",
+          "uiKey": "autoButton__autoCountSlide-50",
+          "reason": "select 50 spins"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 500
+        },
+        {
+          "kind": "click",
+          "uiKey": "autoButton__startAutoplayButton",
+          "reason": "start autoplay batch of 50"
+        },
+        {
+          "kind": "wait_until_no_spin_response",
+          "quietMs": 5000,
+          "maxMs": 300000,
+          "reason": "wait autoplay batch of 50 to complete"
+        }
+      ]
+    },
+    "gold-symbol-transform-watch": {
+      "caseId": "gold-symbol-transform-watch",
+      "actions": [
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        }
+      ]
+    },
+    "rules-symbol-count-match": {
+      "caseId": "rules-symbol-count-match",
+      "actions": [],
+      "skipReason": "no setup + no spin needed (assertion checks collector.spins.length === 0)"
+    },
+    "payout-correctness-watch": {
+      "caseId": "payout-correctness-watch",
+      "actions": [
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        }
+      ]
+    },
+    "ways-to-win-cap": {
+      "caseId": "ways-to-win-cap",
+      "actions": [
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        }
+      ]
+    },
+    "history-normal-bet": {
+      "caseId": "history-normal-bet",
+      "actions": [],
+      "skipReason": "no setup + no spin needed (assertion checks collector.spins.length === 0)"
+    },
+    "history-freespin-row": {
+      "caseId": "history-freespin-row",
+      "actions": [],
+      "skipReason": "no setup + no spin needed (catalog spin_count = 0)"
+    },
+    "options-sound-toggle": {
+      "caseId": "options-sound-toggle",
+      "actions": [
+        {
+          "kind": "click",
+          "uiKey": "menuButton",
+          "reason": "open menu popup"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1500
+        },
+        {
+          "kind": "click",
+          "uiKey": "menuButton__soundFxToggle",
+          "reason": "flip sound fx toggle"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 500
+        },
+        {
+          "kind": "click",
+          "uiKey": "menuButton__soundFxToggle",
+          "reason": "flip back to original state"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 500
+        },
+        {
+          "kind": "click",
+          "uiKey": "menuButton__closeButton",
+          "reason": "close menu popup"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        }
+      ]
+    },
+    "options-ambient-music-toggle": {
+      "caseId": "options-ambient-music-toggle",
+      "actions": [
+        {
+          "kind": "click",
+          "uiKey": "menuButton",
+          "reason": "open settings popup"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1500
+        },
+        {
+          "kind": "click",
+          "uiKey": "menuButton__ambientMusicToggle",
+          "reason": "flip ambient music state"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 500
+        },
+        {
+          "kind": "click",
+          "uiKey": "menuButton__closeButton",
+          "reason": "dismiss settings popup"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        }
+      ]
+    },
+    "options-battery-saver-toggle": {
+      "caseId": "options-battery-saver-toggle",
+      "actions": [
+        {
+          "kind": "click",
+          "uiKey": "menuButton",
+          "reason": "open settings popup"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1500
+        },
+        {
+          "kind": "click",
+          "uiKey": "menuButton__batterySaverToggle",
+          "reason": "enable battery saver"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 500
+        },
+        {
+          "kind": "click",
+          "uiKey": "menuButton__closeButton",
+          "reason": "close menu popup"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        }
+      ]
+    },
+    "paytable-open-navigation": {
+      "caseId": "paytable-open-navigation",
+      "actions": [
+        {
+          "kind": "click",
+          "uiKey": "paytableButton",
+          "reason": "open paytable popup"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1500
+        },
+        {
+          "kind": "click",
+          "uiKey": "paytableButton__nextPageButton",
+          "reason": "advance to page 2"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1000
+        },
+        {
+          "kind": "click",
+          "uiKey": "paytableButton__prevPageButton",
+          "reason": "return to page 1"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1000
+        },
+        {
+          "kind": "click",
+          "uiKey": "paytableButton__closeButton",
+          "reason": "close paytable popup"
+        }
+      ]
+    },
+    "ui-consistency-balance-display": {
+      "caseId": "ui-consistency-balance-display",
+      "actions": [
+        {
+          "kind": "spin"
+        }
+      ]
+    },
+    "ui-consistency-bet-display": {
+      "caseId": "ui-consistency-bet-display",
+      "actions": [
+        {
+          "kind": "click",
+          "uiKey": "betPlus",
+          "reason": "open bet selector panel"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1500
+        },
+        {
+          "kind": "click",
+          "uiKey": "betPlus__betAmount-5.00",
+          "reason": "select 5.00 bet option"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 500
+        },
+        {
+          "kind": "click",
+          "uiKey": "betPlus__closeButton",
+          "reason": "close bet selector"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        }
+      ]
+    },
+    "ui-consistency-multi-spin-balance": {
+      "caseId": "ui-consistency-multi-spin-balance",
+      "actions": [
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        }
+      ]
+    },
+    "ui-consistency-last-win-display": {
+      "caseId": "ui-consistency-last-win-display",
+      "actions": [
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        }
+      ]
+    },
+    "performance-spin-response-time": {
+      "caseId": "performance-spin-response-time",
+      "actions": [
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        }
+      ]
+    },
+    "logic-version-captured": {
+      "caseId": "logic-version-captured",
+      "actions": [
+        {
+          "kind": "spin"
+        }
+      ]
+    }
+  }
+}

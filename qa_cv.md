@@ -1,10 +1,8 @@
 
-# TRAN THUCC  
+# Le Thi Nga
 Hà Nội, Việt Nam  
-📞 09xxxxxxxx  
-📧 hocre.net@gmail.com  
-💻 GitHub: github.com/yourgithub  
-🔗 LinkedIn: linkedin.com/in/yourlinkedin  
+📞 0968279952
+📧 lengahvtc95@gmail.com  
 
 ---
 
@@ -152,6 +150,24 @@ Experienced working with international remote teams and fluent in English commun
 
 # PROJECT EXPERIENCE
 
+## AI-Assisted QA Automation Platform for Slot / Casino Canvas Games
+### Technologies:
+TypeScript, Node.js, Playwright, Anthropic Claude SDK, PostgreSQL, Prisma, Redis, BullMQ, Docker, Pixelmatch
+
+### Responsibilities
+- Built end-to-end QA automation for canvas-based slot games combining deterministic Playwright tests, AI-driven discovery, and statistical math validation.
+- Implemented Rule Engine for per-spin invariants (paytable, balance reconciliation, ways/paylines/cluster payouts).
+- Built Statistical Simulator computing RTP (95% CI), volatility, hit frequency, and symbol distribution over 10k–100k spins.
+- Integrated Anthropic Claude for game spec extraction, test-catalog generation, and vision-based UI verification.
+- Built a live dashboard (HTTP + SSE) for task orchestration, real-time logs, and DB-backed test-run history.
+
+### Highlights
+- Reduced regression cost per run from $5–15 to $0–0.20 via deterministic replay routing.
+- Expanded coverage from 13 hand-written to 33 AI-generated test cases per game.
+- Achieved ~88% deterministic replay success with Claude vision fallback on the rest.
+
+---
+
 ## Blockchain Trading Platform QA
 ### Technologies:
 Playwright, Node.js, WebSocket, Redis, PostgreSQL
@@ -165,36 +181,6 @@ Playwright, Node.js, WebSocket, Redis, PostgreSQL
 ### Highlights
 - Verified transaction consistency between frontend and backend.
 - Automated validation for real-time trading features.
-
----
-
-## AI-Assisted QA Automation Platform for Slot / Casino Canvas Games (`crawler-qa-agent`)
-### Technologies:
-TypeScript, Node.js, Playwright, Anthropic Claude SDK, PostgreSQL, Prisma, Redis, BullMQ, Docker, Pixelmatch, Vanilla JS Dashboard (SSE)
-
-### Overview
-End-to-end QA automation platform combining deterministic Playwright tests, AI-driven discovery, and statistical math validation for canvas-based slot games (Pragmatic Play and generic providers). Designed to drive cost-per-run from $5–15 (vision-only) down to $0–0.20 (deterministic replay) while expanding coverage from 13 hand-written to 33 AI-generated test cases per game.
-
-### Responsibilities
-- Designed the three-flow architecture: (A) LLM-driven discovery for new games, (B) deterministic regression replay, (C) statistical math simulation over 10k–100k spins.
-- Built the **GameAdapter** abstraction — Provider × Mechanic composition supporting Ways, Paylines, and Cluster (cascade) pay mechanics.
-- Implemented the **Rule Engine** for per-spin invariants: reel decoding, ways/paylines/cluster payout math, paytable assertion, balance reconciliation (free-spin aware).
-- Built the **Statistical Simulator** firing concurrent spin requests directly to game endpoints — computing RTP with 95% CI, volatility (Welford variance), hit frequency, feature frequency, symbol distribution, and win-distribution buckets.
-- Built **Pre-game Click Replay** with pixel-diff verification (Pixelmatch) and auto-heal fallback to Claude vision when baselines drift.
-- Integrated **Anthropic Claude** for game spec extraction, test-catalog generation (33 cases per game), vision OCR (UI ↔ API balance cross-check), and AI bug summarization.
-- Designed the **Hybrid Case Mapper** that codegens deterministic Playwright specs from AI-generated test catalogs.
-- Built the **Dashboard** (HTTP + vanilla JS + SSE) for task orchestration, real-time logs, spin events, and DB-backed test-run history.
-- Implemented **DB write-through** with PostgreSQL + Prisma (4 tables: test_runs, spin_results, validation_errors, stat_reports), env-gated for optional usage.
-- Wired **Redis + BullMQ** for distributed statistical jobs with a dedicated worker process.
-- Authored Playwright reporter plumbing to surface per-case results via structured `EVENT:case_end` events.
-
-### Highlights
-- Reduced typical regression cost from **$5–15 → $0–0.20** per game run by routing to deterministic mocks when scenarios exist.
-- Shrank a 30–60 minute vision-per-spin run to **~5 minutes** for 33 cases via hybrid deterministic specs.
-- Achieved **~88% replay success** with vision fallback on the remaining ~12% (instrumented via `_stats.jsonl` aggregator CLI).
-- All 32/32 Playwright tests passing with clean TypeScript typecheck.
-- Wrote living architecture documentation (`docs/system-overview.md`, `docs/architecture.md`, `docs/dashboard-guide.md`) covering data lifecycle, smart routing, API surface, and configuration.
-- Designed the system so filesystem fixtures remain the source of truth and the database is an indexed view — keeping the toolchain reproducible without DB infrastructure.
 
 ---
 

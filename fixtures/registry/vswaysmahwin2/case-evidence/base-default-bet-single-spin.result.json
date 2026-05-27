@@ -1,0 +1,480 @@
+{
+  "caseId": "base-default-bet-single-spin",
+  "name": "Base game — default bet single spin",
+  "category": "base_game",
+  "severity": "critical",
+  "status": "fail",
+  "actionsExecuted": 4,
+  "assertions": [
+    {
+      "id": "_precheck_bet",
+      "description": "Setup should have reached bet=0.5",
+      "pass": true
+    },
+    {
+      "id": "default-bet-matches-0.50",
+      "description": "spin.betAmount equals default 0.50 USD",
+      "pass": true,
+      "outcome": "PASS_LOW",
+      "confidence": 0.65,
+      "signals": [
+        {
+          "name": "api",
+          "value": true,
+          "weight": 0.35,
+          "source": "parser/captured-spin",
+          "observed": 1
+        },
+        {
+          "name": "network",
+          "value": true,
+          "weight": 0.1,
+          "source": "page.on(response)",
+          "observed": 1
+        },
+        {
+          "name": "ui_ocr",
+          "value": false,
+          "weight": 0.25
+        },
+        {
+          "name": "state",
+          "value": false,
+          "weight": 0.1
+        },
+        {
+          "name": "rule",
+          "value": true,
+          "weight": 0.2,
+          "source": "assertion:default-bet-matches-0.50",
+          "observed": "predicate=true"
+        }
+      ]
+    },
+    {
+      "id": "default-win-non-negative",
+      "description": "winAmount is a finite non-negative number",
+      "pass": true,
+      "outcome": "PASS_LOW",
+      "confidence": 0.65,
+      "signals": [
+        {
+          "name": "api",
+          "value": true,
+          "weight": 0.35,
+          "source": "parser/captured-spin",
+          "observed": 1
+        },
+        {
+          "name": "network",
+          "value": true,
+          "weight": 0.1,
+          "source": "page.on(response)",
+          "observed": 1
+        },
+        {
+          "name": "ui_ocr",
+          "value": false,
+          "weight": 0.25
+        },
+        {
+          "name": "state",
+          "value": false,
+          "weight": 0.1
+        },
+        {
+          "name": "rule",
+          "value": true,
+          "weight": 0.2,
+          "source": "assertion:default-win-non-negative",
+          "observed": "predicate=true"
+        }
+      ]
+    },
+    {
+      "id": "default-balance-conservation",
+      "description": "endingBalance reflects bet/win arithmetic (skipped on first spin null)",
+      "pass": true,
+      "outcome": "PASS_LOW",
+      "confidence": 0.55,
+      "signals": [
+        {
+          "name": "api",
+          "value": true,
+          "weight": 0.35,
+          "observed": 99995604.28,
+          "expected": 99995604.28,
+          "source": "parser/balanceAfter"
+        },
+        {
+          "name": "rule",
+          "value": true,
+          "weight": 0.2,
+          "observed": "balance formula",
+          "expected": "balanceAfter == bb - bet + win"
+        },
+        {
+          "name": "ui_ocr",
+          "value": false,
+          "weight": 0.25,
+          "observed": 99995,
+          "expected": 99995604.28,
+          "source": "ocr/balanceArea"
+        }
+      ]
+    },
+    {
+      "id": "default-ui-bet-matches-api",
+      "description": "OCR bet display matches API bet when readable",
+      "pass": true,
+      "outcome": "PASS_HIGH",
+      "confidence": 0.9,
+      "signals": [
+        {
+          "name": "api",
+          "value": true,
+          "weight": 0.35,
+          "source": "parser/captured-spin",
+          "observed": 1
+        },
+        {
+          "name": "network",
+          "value": true,
+          "weight": 0.1,
+          "source": "page.on(response)",
+          "observed": 1
+        },
+        {
+          "name": "ui_ocr",
+          "value": true,
+          "weight": 0.25,
+          "source": "screen.ocr",
+          "observed": 99995
+        },
+        {
+          "name": "state",
+          "value": false,
+          "weight": 0.1
+        },
+        {
+          "name": "rule",
+          "value": true,
+          "weight": 0.2,
+          "source": "assertion:default-ui-bet-matches-api",
+          "observed": "predicate=true"
+        }
+      ]
+    },
+    {
+      "id": "default-no-setup-errors",
+      "description": "Setup phase emitted no error/fail warnings",
+      "pass": true,
+      "outcome": "PASS_LOW",
+      "confidence": 0.3,
+      "signals": [
+        {
+          "name": "api",
+          "value": false,
+          "weight": 0.35
+        },
+        {
+          "name": "network",
+          "value": true,
+          "weight": 0.1,
+          "source": "page.on(response)",
+          "observed": 1
+        },
+        {
+          "name": "ui_ocr",
+          "value": false,
+          "weight": 0.25
+        },
+        {
+          "name": "state",
+          "value": false,
+          "weight": 0.1
+        },
+        {
+          "name": "rule",
+          "value": true,
+          "weight": 0.2,
+          "source": "assertion:default-no-setup-errors",
+          "observed": "predicate=true"
+        }
+      ]
+    },
+    {
+      "id": "_auto_ui_balance_matches_api",
+      "description": "UI-displayed balance matches API-settled balance (OCR cross-check)",
+      "pass": false,
+      "outcome": "FAIL_LOW",
+      "confidence": 0,
+      "signals": [
+        {
+          "name": "ui_ocr",
+          "value": false,
+          "weight": 0.25
+        },
+        {
+          "name": "api",
+          "value": false,
+          "weight": 0.35
+        },
+        {
+          "name": "rule",
+          "value": false,
+          "weight": 0.2
+        }
+      ],
+      "detail": "UI displayed 99995.00 but API settled at 99995604.28 (diff 99895609.28)"
+    }
+  ],
+  "spin": {
+    "bet": 0.5,
+    "win": 0,
+    "balanceBefore": 99995604.78,
+    "balanceAfter": 99995604.28,
+    "state": "NORMAL",
+    "roundId": "req-2-3"
+  },
+  "durationMs": 20458,
+  "spinsCount": 1,
+  "screenshotPath": "fixtures/registry/vswaysmahwin2/case-evidence/base-default-bet-single-spin.png",
+  "ocrSnapshots": [
+    {
+      "region": "balance",
+      "bbox": {
+        "x": 292,
+        "y": 651,
+        "width": 207,
+        "height": 27
+      },
+      "text": "$99,995;604.28°9%\"",
+      "parsed": 99995,
+      "durationMs": 104,
+      "bboxScreenshotPath": "fixtures/registry/vswaysmahwin2/case-evidence/base-default-bet-single-spin.balance.png"
+    },
+    {
+      "region": "bet",
+      "bbox": {
+        "x": 292,
+        "y": 671,
+        "width": 103,
+        "height": 25
+      },
+      "text": "$0.50",
+      "parsed": 0.5,
+      "durationMs": 67,
+      "bboxScreenshotPath": "fixtures/registry/vswaysmahwin2/case-evidence/base-default-bet-single-spin.bet.png"
+    },
+    {
+      "region": "last_win",
+      "bbox": {
+        "x": 619,
+        "y": 625,
+        "width": 135,
+        "height": 59
+      },
+      "text": "TO WIN!",
+      "parsed": null,
+      "durationMs": 61,
+      "bboxScreenshotPath": "fixtures/registry/vswaysmahwin2/case-evidence/base-default-bet-single-spin.last_win.png"
+    }
+  ],
+  "actionLog": [
+    {
+      "kind": "set_bet_to_value",
+      "target": "0.5",
+      "durationMs": 126,
+      "success": true
+    },
+    {
+      "kind": "wait_ms",
+      "target": "1500ms",
+      "durationMs": 1503,
+      "success": true
+    },
+    {
+      "kind": "spin",
+      "durationMs": 2103,
+      "success": true
+    },
+    {
+      "kind": "wait_ms",
+      "target": "2500ms",
+      "durationMs": 2505,
+      "success": true
+    }
+  ],
+  "signalRollup": [
+    {
+      "signal": "api",
+      "pass": true,
+      "checks": [
+        {
+          "field": "spin captured",
+          "expected": "non-empty roundId",
+          "actual": "req-2-3",
+          "match": true,
+          "source": "parser/captured-spin"
+        },
+        {
+          "field": "bet",
+          "expected": "> 0 (bet was applied)",
+          "actual": 0.5,
+          "match": true,
+          "source": "parser/spin.bet"
+        },
+        {
+          "field": "win",
+          "expected": ">= 0 (non-negative)",
+          "actual": 0,
+          "match": true,
+          "source": "parser/spin.win"
+        },
+        {
+          "field": "balanceAfter",
+          "expected": "finite number",
+          "actual": 99995604.28,
+          "match": true,
+          "source": "parser/spin.balanceAfter"
+        }
+      ]
+    },
+    {
+      "signal": "ui_ocr",
+      "pass": false,
+      "checks": [
+        {
+          "field": "balance",
+          "expected": 99995604.28,
+          "actual": 99995,
+          "match": false,
+          "source": "ocr/balanceArea ↔ parser/balanceAfter",
+          "note": "diff=99895609.280 > tolerance 0.05"
+        },
+        {
+          "field": "bet",
+          "expected": 0.5,
+          "actual": 0.5,
+          "match": true,
+          "source": "ocr/betArea ↔ parser/spin.bet"
+        },
+        {
+          "field": "win",
+          "expected": 0,
+          "actual": 0,
+          "match": true,
+          "source": "ocr/winArea ↔ parser/spin.win"
+        }
+      ],
+      "detail": "2/3 UI widgets match API"
+    },
+    {
+      "signal": "network",
+      "pass": true,
+      "checks": [
+        {
+          "field": "captured spins",
+          "expected": ">= 1",
+          "actual": 1,
+          "match": true,
+          "source": "page.on(response)"
+        },
+        {
+          "field": "no error warnings",
+          "expected": "0 errors/failures/debounced clicks",
+          "actual": 0,
+          "match": true,
+          "source": "case-executor warnings"
+        }
+      ]
+    },
+    {
+      "signal": "state",
+      "pass": true,
+      "checks": [
+        {
+          "field": "stayed on MAIN (or allowed interrupts)",
+          "expected": "all transitions to MAIN | allowed",
+          "actual": "all clean",
+          "match": true,
+          "source": "stateTimeline"
+        }
+      ]
+    },
+    {
+      "signal": "rule",
+      "pass": true,
+      "checks": [
+        {
+          "field": "balance arithmetic",
+          "expected": 99995604.28,
+          "actual": 99995604.28,
+          "match": true,
+          "source": "balanceAfter == balanceBefore - bet + win"
+        }
+      ]
+    }
+  ],
+  "networkLogPath": "fixtures/registry/vswaysmahwin2/case-evidence/base-default-bet-single-spin.network.jsonl",
+  "networkSummary": [
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/reloadBalance.do?mgckey=demo@SFTIqmxdilH7qHteQ8Fij529_USD",
+      "method": "GET",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": false
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/common/v1/games-html5/games/vs/vswaysmahwin2/desktop/game/sounds.ogg.json?key=bf0b1928302e64c02f5329409f64b4de",
+      "method": "GET",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": false
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/common/v1/games-html5/games/vs/vswaysmahwin2/desktop/game/GUI_sounds.ogg.json?key=48eb86387b6cc28492680e173ebcee6c",
+      "method": "GET",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": false
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": true
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/saveSettings.do",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": false
+    }
+  ],
+  "parserDiagnostic": {
+    "parserKind": "PragmaticParser",
+    "betMultiplier": 20,
+    "requestFields": {
+      "action": "doSpin",
+      "symbol": "vswaysmahwin2",
+      "c": 0.025,
+      "l": 1024,
+      "sInfo": "n",
+      "bl": 0,
+      "index": 2,
+      "counter": 3,
+      "repeat": 0,
+      "mgckey": "demo@SFTIqmxdilH7qHteQ8Fij529_USD"
+    },
+    "formulaUsed": "c × M = 0.025 × 20",
+    "parsedBet": 0.5,
+    "expectedBet": 0.5,
+    "mismatch": false
+  },
+  "outcome": "FAIL_LOW",
+  "confidence": 0.75
+}

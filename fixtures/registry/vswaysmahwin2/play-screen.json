@@ -1,0 +1,127 @@
+{
+  "game_title": "Mahjong Wins 2",
+  "provider_guess": "Pragmatic Play",
+  "balance": {
+    "value": "99,995,601.89",
+    "currency": "$"
+  },
+  "bet": {
+    "current": "0.50",
+    "min": null,
+    "max": null,
+    "step_kind": "plus_minus",
+    "chips": null
+  },
+  "controls": [
+    {
+      "name": "Spin",
+      "kind": "button",
+      "visible": true,
+      "approx_location": "bottom-right center",
+      "state_hint": "ready"
+    },
+    {
+      "name": "Autoplay",
+      "kind": "button",
+      "visible": true,
+      "approx_location": "bottom-right below spin",
+      "state_hint": null
+    },
+    {
+      "name": "Bet Increase (+)",
+      "kind": "button",
+      "visible": true,
+      "approx_location": "right of spin",
+      "state_hint": null
+    },
+    {
+      "name": "Bet Decrease (-)",
+      "kind": "button",
+      "visible": true,
+      "approx_location": "left of spin",
+      "state_hint": null
+    },
+    {
+      "name": "Menu",
+      "kind": "button",
+      "visible": true,
+      "approx_location": "bottom-left",
+      "state_hint": null
+    },
+    {
+      "name": "Info",
+      "kind": "button",
+      "visible": true,
+      "approx_location": "bottom-left below menu",
+      "state_hint": null
+    },
+    {
+      "name": "Sound",
+      "kind": "toggle",
+      "visible": true,
+      "approx_location": "bottom-left",
+      "state_hint": null
+    },
+    {
+      "name": "Bet Display",
+      "kind": "selector",
+      "visible": true,
+      "approx_location": "bottom-center-left",
+      "state_hint": "$0.63"
+    },
+    {
+      "name": "More Scatters Toggle",
+      "kind": "toggle",
+      "visible": true,
+      "approx_location": "bottom-center, under BET",
+      "state_hint": "OFF"
+    },
+    {
+      "name": "Buy Free Spins",
+      "kind": "button",
+      "visible": true,
+      "approx_location": "bottom-center",
+      "state_hint": "$44.00"
+    }
+  ],
+  "buy_feature": {
+    "available": true,
+    "options": [
+      {
+        "label": "BUY FREE SPINS",
+        "price_multiplier": null,
+        "price_absolute": "$44.00"
+      }
+    ]
+  },
+  "special_bets": {
+    "available": true,
+    "variants": [
+      {
+        "label": "More Scatters",
+        "state": "OFF",
+        "price": "$0.63"
+      }
+    ]
+  },
+  "rules_summary": {
+    "paylines_or_ways": null,
+    "feature_mentions": [
+      "Multipliers x1 x2 x3 x5",
+      "Free Spins",
+      "More Scatters",
+      "Buy Free Spins"
+    ],
+    "visible_symbols": [
+      "中 (red)",
+      "中 (yellow/gold)",
+      "胜",
+      "發",
+      "八萬",
+      "circle dot tiles",
+      "bamboo stick tiles"
+    ],
+    "max_win": null
+  },
+  "raw_observations": "Mahjong-themed slot with green frame and dragon decorations. Top banner shows multiplier values x1 x2 x3 x5. Reel grid (~6 columns x 5 rows) filled with mahjong tiles including Chinese characters (中, 胜, 發, 八萬) and dot/bamboo tiles. Two highlighted yellow 中 tiles in upper area. CREDIT $99,995,601.89, BET $0.50, WIN $0.40 displayed at bottom. 'BET $0.63 / MORE SCATTERS OFF' toggle on left of bottom panel. 'BUY FREE SPINS $44.00' button right of it. Spin button (circular arrows) bottom-right with +/- buttons and AUTOPLAY label below."
+}

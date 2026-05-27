@@ -287,6 +287,70 @@ export type SpinRealResult = {
 const PP_SPIN_URL_RE = /\/gs2c\/v3\/gameService|\/gs2c\/ge\//;
 const GENERIC_SPIN_RE = /(?:\/|[?&=])(?:do)?spin\b|\/round\b|\/dogame\b/i;
 
+type SpinOffset = { dx: number; dy: number };
+const DEFAULT_SPIN_PROBE_OFFSETS: SpinOffset[] = [
+  { dx: 0, dy: 0 },
+  { dx: -22, dy: 0 },
+  { dx: 22, dy: 0 },
+  { dx: 0, dy: -22 },
+  { dx: 0, dy: 22 },
+];
+// Run Tests can execute many spins in one page session. Remember the last
+// successful offset and prioritize it on the next spin.
+const SPIN_OFFSET_PIN_BY_PAGE = new WeakMap<Page, SpinOffset>();
+
+function isChainContinuing(parsed: SpinResponseParsed | null): boolean {
+  if (!parsed) return false;
+  const na = String(parsed.na ?? "");
+  const rsMore = Number((parsed as Record<string, unknown>).rs_more ?? 0);
+  return na === "c" || (Number.isFinite(rsMore) && rsMore > 0);
+}
+
+async function settleSpinChain(
+  page: Page,
+  initialParsed: SpinResponseParsed,
+  initialRawBody: string,
+  timeoutMs: number,
+): Promise<{ parsed: SpinResponseParsed; rawBody: string; extraFrames: number }> {
+  let latestParsed = initialParsed;
+  let latestRaw = initialRawBody;
+  let lastFrameAt = Date.now();
+  let extraFrames = 0;
+  const deadline = Date.now() + timeoutMs;
+  const quietMs = 700;
+
+  while (Date.now() < deadline) {
+    const continuing = isChainContinuing(latestParsed);
+    if (!continuing && Date.now() - lastFrameAt >= quietMs) break;
+
+    const remaining = deadline - Date.now();
+    try {
+      const candidate = await page.waitForResponse(
+        (r) => {
+          const url = r.url();
+          if (shouldSkipUrl(url)) return false;
+          const req = r.request();
+          return req.method() === "POST" && (PP_SPIN_URL_RE.test(url) || GENERIC_SPIN_RE.test(url));
+        },
+        { timeout: Math.min(1_200, Math.max(200, remaining)) },
+      );
+      const text = await candidate.text().catch(() => "");
+      const parsed = parseSpinBody(text);
+      const score = parsed ? scoreSpinShape(parsed).score : 0;
+      if (parsed && score >= 5) {
+        latestParsed = parsed;
+        latestRaw = text;
+        lastFrameAt = Date.now();
+        extraFrames++;
+      }
+    } catch {
+      if (!continuing) break;
+    }
+  }
+
+  return { parsed: latestParsed, rawBody: latestRaw, extraFrames };
+}
+
 /**
  * Fire 1 real spin → click spin button, capture response từ network.
  * KHÔNG mock — server response thật, có RNG variation mỗi run.
@@ -362,14 +426,27 @@ export async function spinReal(
   // animation state, double-buffered render, dismissModal aftermath).
   const maxAttempts = 3;
   const perAttemptTimeout = Math.floor(timeoutMs / maxAttempts);
+  const pinnedOffset = SPIN_OFFSET_PIN_BY_PAGE.get(page) ?? null;
+  const probeOffsets: SpinOffset[] = [];
+  if (pinnedOffset) probeOffsets.push(pinnedOffset);
+  for (const off of DEFAULT_SPIN_PROBE_OFFSETS) {
+    if (!probeOffsets.some((x) => x.dx === off.dx && x.dy === off.dy)) {
+      probeOffsets.push(off);
+    }
+  }
   let response;
   let acceptedParsed: SpinResponseParsed | null = null;
   let acceptedRawBody = "";
   let lastError: string = "";
+  let successfulOffset: SpinOffset | null = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    await page.mouse.move(scaledX, scaledY);
+    const off = probeOffsets[attempt - 1] ?? { dx: 0, dy: 0 };
+    const clickX = Math.max(1, Math.min(actualViewport.width - 1, scaledX + off.dx));
+    const clickY = Math.max(1, Math.min(actualViewport.height - 1, scaledY + off.dy));
+
+    await page.mouse.move(clickX, clickY);
     await page.waitForTimeout(80);
-    await page.mouse.click(scaledX, scaledY);
+    await page.mouse.click(clickX, clickY);
 
     const deadline = Date.now() + perAttemptTimeout;
     try {
@@ -394,6 +471,7 @@ export async function spinReal(
           response = candidate;
           acceptedParsed = parsed;
           acceptedRawBody = text;
+          successfulOffset = off;
           break;
         }
       }
@@ -405,11 +483,14 @@ export async function spinReal(
     }
 
     if (attempt < maxAttempts) {
-      console.log(`[spinReal] attempt ${attempt}/${maxAttempts} no valid spin payload — retry`);
+      console.log(
+        `[spinReal] attempt ${attempt}/${maxAttempts} no valid spin payload at (${clickX},${clickY}) — retry`,
+      );
       await page.waitForTimeout(500); // brief settle before retry
     }
   }
   if (!response) {
+    SPIN_OFFSET_PIN_BY_PAGE.delete(page);
     return {
       ok: false,
       reason: `no spin response sau ${maxAttempts} attempts × ${perAttemptTimeout / 1000}s — coord ${scaleX !== 1 || scaleY !== 1 ? `scaled (${scaledX},${scaledY}) từ (${opts.spinButton.x},${opts.spinButton.y})` : `(${scaledX},${scaledY})`} viewport ${actualViewport.width}×${actualViewport.height} (lastError: ${lastError})`,
@@ -421,13 +502,24 @@ export async function spinReal(
       durationMs: Date.now() - t0,
     };
   }
+  if (successfulOffset) SPIN_OFFSET_PIN_BY_PAGE.set(page, successfulOffset);
   const text = acceptedRawBody || (await response.text().catch(() => ""));
   const parsed = acceptedParsed ?? parseSpinBody(text);
+  let finalParsed = parsed;
+  let finalText = text;
+  if (parsed) {
+    const settled = await settleSpinChain(page, parsed, text, Math.max(4_000, Math.floor(timeoutMs / 2)));
+    if (settled.extraFrames > 0) {
+      console.log(`[spinReal] chain settled with ${settled.extraFrames} extra frame(s)`);
+    }
+    finalParsed = settled.parsed;
+    finalText = settled.rawBody;
+  }
   return {
-    ok: parsed !== null,
-    reason: parsed ? "ok" : "unparseable_body",
-    parsed,
-    rawBody: text,
+    ok: finalParsed !== null,
+    reason: finalParsed ? "ok" : "unparseable_body",
+    parsed: finalParsed,
+    rawBody: finalText,
     status: response.status(),
     prevEndingBalance,
     url: response.url(),

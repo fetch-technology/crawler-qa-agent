@@ -1,0 +1,7 @@
+{"ranAt":"2026-05-27T07:54:10.488Z","outcome":"PASS_LOW","confidence":1,"status":"pass","durationMs":23241,"spinsCount":2}
+{"ranAt":"2026-05-27T14:27:46.324Z","outcome":"PASS_LOW","confidence":1,"status":"pass","durationMs":25884,"spinsCount":2}
+{"ranAt":"2026-05-27T15:10:18.929Z","outcome":"PASS_LOW","confidence":1,"status":"pass","durationMs":25339,"spinsCount":2}
+{"ranAt":"2026-05-27T16:02:43.802Z","outcome":"PASS_LOW","confidence":1,"status":"pass","durationMs":23583,"spinsCount":2}
+{"ranAt":"2026-05-27T16:14:24.400Z","outcome":"PASS_LOW","confidence":1,"status":"pass","durationMs":37222,"spinsCount":2}
+{"ranAt":"2026-05-27T16:46:37.654Z","outcome":"FAIL_LOW","confidence":0.75,"status":"fail","durationMs":22904,"spinsCount":2,"reason":"OCR balance reflects API endingBalance after high-stake spins"}
+{"ranAt":"2026-05-27T16:47:15.485Z","outcome":"PASS_LOW","confidence":1,"status":"pass","durationMs":37830,"spinsCount":2}

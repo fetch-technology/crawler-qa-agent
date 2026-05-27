@@ -1,0 +1,4 @@
+{"ranAt":"2026-05-27T08:29:56.402Z","outcome":"PASS_LOW","confidence":0.8999999999999999,"status":"pass","durationMs":153755,"spinsCount":30}
+{"ranAt":"2026-05-27T14:59:43.978Z","outcome":"FAIL_LOW","confidence":0.75,"status":"fail","durationMs":144435,"spinsCount":30,"reason":"UI-displayed balance matches API-settled balance (OCR cross-check)"}
+{"ranAt":"2026-05-27T17:30:30.948Z","outcome":"FAIL_LOW","confidence":0.75,"status":"fail","durationMs":167960,"spinsCount":30,"reason":"UI-displayed balance matches API-settled balance (OCR cross-check)"}
+{"ranAt":"2026-05-27T17:32:52.232Z","outcome":"PASS_LOW","confidence":1,"status":"pass","durationMs":141283,"spinsCount":30}

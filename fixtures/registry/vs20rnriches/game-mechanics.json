@@ -1,0 +1,12 @@
+{
+  "mechanic": "unknown",
+  "betMultiplier": 26,
+  "waysOrLines": 20,
+  "detectedAt": "2026-05-26T01:19:45.763Z",
+  "detectionMethod": "balance_derived",
+  "evidence": {
+    "coin": 0.01,
+    "deductedFromBalance": 0.26000000298023224,
+    "requestSample": "action=doSpin&symbol=vs20rnriches&c=0.01&l=20&sInfo=n&bl=0&index=2&counter=3&repeat=0&mgckey=demo@SFTIqmxdilH7qHteQ8Fij529_USD"
+  }
+}

@@ -1,1 +1,0 @@
-action=doSpin&symbol=vswayscyhecity&c=0.04&l=25&sInfo=n&bl=0&index=8&counter=10&repeat=0&mgckey=demo%40LEdUdA9z8mh1BbmKwzJB3XDb_USD

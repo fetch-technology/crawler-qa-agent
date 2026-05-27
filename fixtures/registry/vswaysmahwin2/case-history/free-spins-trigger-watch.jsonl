@@ -1,0 +1,6 @@
+{"ranAt":"2026-05-27T10:29:57.937Z","outcome":"PASS_LOW","confidence":1,"status":"fail","durationMs":384825,"spinsCount":72,"reason":"Per-spin balance conservation across all 60 spins (skip first-spin null guard)"}
+{"ranAt":"2026-05-27T14:42:37.943Z","outcome":"PASS_LOW","confidence":1,"status":"pass","durationMs":280815,"spinsCount":60}
+{"ranAt":"2026-05-27T15:26:58.252Z","outcome":"PASS_LOW","confidence":1,"status":"fail","durationMs":384060,"spinsCount":86,"reason":"Per-spin balance conservation across all 60 spins (skip first-spin null guard)"}
+{"ranAt":"2026-05-27T15:31:54.890Z","outcome":"PASS_LOW","confidence":1,"status":"fail","durationMs":296637,"spinsCount":60,"reason":"Per-spin balance conservation across all 60 spins (skip first-spin null guard)"}
+{"ranAt":"2026-05-27T16:36:04.194Z","outcome":"PASS_LOW","confidence":1,"status":"fail","durationMs":444802,"spinsCount":72,"reason":"Per-spin balance conservation across all 60 spins (skip first-spin null guard)"}
+{"ranAt":"2026-05-27T17:01:49.588Z","outcome":"PASS_LOW","confidence":0.8999999999999999,"status":"pass","durationMs":301433,"spinsCount":60}

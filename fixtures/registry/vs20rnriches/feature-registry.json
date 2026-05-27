@@ -1,0 +1,33 @@
+{
+  "detectedAt": "2026-05-25T19:06:10.633Z",
+  "signals": [
+    {
+      "feature": "buyBonus",
+      "source": "ui",
+      "confidence": 1,
+      "evidence": "UI element \"buyBonusButton\" present"
+    },
+    {
+      "feature": "autoSpin",
+      "source": "ui",
+      "confidence": 1,
+      "evidence": "UI element \"autoButton\" present"
+    }
+  ],
+  "features": {
+    "buyBonus": {
+      "present": true,
+      "confidence": 1,
+      "sources": [
+        "ui"
+      ]
+    },
+    "autoSpin": {
+      "present": true,
+      "confidence": 1,
+      "sources": [
+        "ui"
+      ]
+    }
+  }
+}

@@ -1,0 +1,103 @@
+// Pure cascade-frame dedup logic, extracted from case-executor's response
+// listener so it can be unit-tested in isolation (no Playwright, no async).
+//
+// Strategy:
+//   1. Match by roundId (primary) — works when parser builds stable IDs
+//   2. Match by balance continuity (fallback) — for games where cascade
+//      frames have NEW roundIds but continuous balance flow with no bet
+//      deduction (PP vswaysmahwin2-style)
+//
+// On merge: keep first frame's balanceBefore + bet, override balanceAfter
+// from latest frame, DERIVE win = balanceAfter - balanceBefore + bet
+// (canonical source — PP `tw` is unreliable across providers).
+
+import type { NormalizedSpinResult } from "../step6-build-model/normalized.js";
+
+export type CascadeDedupOptions = {
+  /** Continuity tolerance for float comparison (default 0.01). */
+  balanceTolerance?: number;
+  /** When true (default), derive win from balance delta + bet on merged
+   *  rounds. When false, keep latest frame's parser-reported win. */
+  deriveWinFromBalance?: boolean;
+  /** When true (default), allow balance-continuity fallback merge. When
+   *  false, only roundId-based matching is used. */
+  allowBalanceContinuity?: boolean;
+};
+
+export type DedupState = {
+  spins: NormalizedSpinResult[];
+  byRoundId: Map<string, number>;
+};
+
+export function createDedupState(): DedupState {
+  return { spins: [], byRoundId: new Map() };
+}
+
+/**
+ * Ingest a single parsed spin (could be initial bet frame or cascade frame).
+ * Mutates state. Returns "merged" | "appended" so callers can log.
+ */
+export function ingestFrame(
+  state: DedupState,
+  spin: NormalizedSpinResult,
+  opts: CascadeDedupOptions = {},
+): "merged" | "appended" {
+  const tol = opts.balanceTolerance ?? 0.01;
+  const deriveWin = opts.deriveWinFromBalance !== false;
+  const allowContinuity = opts.allowBalanceContinuity !== false;
+
+  const rid = spin.roundId;
+  const last = state.spins.length > 0 ? state.spins[state.spins.length - 1] : null;
+
+  const matchByRid = rid && state.byRoundId.has(rid) ? state.byRoundId.get(rid)! : -1;
+  // Balance-continuity fallback: merges frames where balance flow is continuous
+  // (last.ba ≈ spin.bb) AND no deduction (spin.ba ≈ spin.bb). Designed for
+  // cascade frames within ONE spin (same logical round, multiple visual frames).
+  //
+  // 2026-05-26 fix: SKIP this fallback when current spin is FREE SPIN
+  // (isFreeSpin=true). FS chain frames have:
+  //   - bb ≈ prev.ba (no deduction — exactly the "continuity" pattern)
+  //   - Different roundIds (each FS frame is a separate logical spin)
+  // Without this gate, all FS frames in a chain merge into the BUY spin (or
+  // the FS trigger spin) → engine reports "1 spin captured" instead of the
+  // full N-frame chain. Cascade-within-FS still merges correctly via the
+  // roundId path (those frames share a roundId).
+  const matchByBalance = allowContinuity
+    && last
+    && typeof last.balanceAfter === "number"
+    && typeof spin.balanceBefore === "number"
+    && typeof spin.balanceAfter === "number"
+    && !spin.isFreeSpin                                            // ← gate
+    && Math.abs(last.balanceAfter - spin.balanceBefore) < tol      // continuous balance
+    && spin.balanceAfter >= spin.balanceBefore - tol               // no new deduction
+    ? state.spins.length - 1
+    : -1;
+
+  const mergeIdx = matchByRid !== -1 ? matchByRid : matchByBalance;
+
+  if (mergeIdx !== -1) {
+    const prev = state.spins[mergeIdx]!;
+    const merged: NormalizedSpinResult = {
+      ...prev,
+      balanceAfter: spin.balanceAfter,
+      cascadeFrames: spin.cascadeFrames.length > 0 ? spin.cascadeFrames : prev.cascadeFrames,
+    };
+    if (
+      deriveWin
+      && typeof merged.balanceBefore === "number"
+      && typeof merged.balanceAfter === "number"
+      && typeof merged.bet === "number"
+    ) {
+      merged.win = Math.round((merged.balanceAfter - merged.balanceBefore + merged.bet) * 100) / 100;
+    } else {
+      merged.win = spin.win;
+    }
+    state.spins[mergeIdx] = merged;
+    if (rid) state.byRoundId.set(rid, mergeIdx);
+    return "merged";
+  }
+
+  if (rid) state.byRoundId.set(rid, state.spins.length);
+  state.spins.push(spin);
+  return "appended";
+}

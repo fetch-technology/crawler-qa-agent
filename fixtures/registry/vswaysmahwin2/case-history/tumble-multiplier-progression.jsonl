@@ -1,0 +1,5 @@
+{"ranAt":"2026-05-27T10:48:43.804Z","outcome":"FAIL_LOW","confidence":0.7999999999999999,"status":"fail","durationMs":1004249,"spinsCount":5,"reason":"Per-spin balance conservation across all 50 spins"}
+{"ranAt":"2026-05-27T14:16:10.589Z","outcome":"PASS_LOW","confidence":1,"status":"pass","durationMs":121626,"spinsCount":32}
+{"ranAt":"2026-05-27T14:48:46.476Z","outcome":"FAIL_LOW","confidence":1,"status":"fail","durationMs":97192,"spinsCount":32,"reason":"Setup should have reached bet=0.5"}
+{"ranAt":"2026-05-27T17:09:26.652Z","outcome":"FAIL_LOW","confidence":1,"status":"fail","durationMs":141221,"spinsCount":57,"reason":"Setup should have reached bet=0.5"}
+{"ranAt":"2026-05-27T17:09:43.878Z","outcome":"PASS_LOW","confidence":1,"status":"pass","durationMs":17225,"spinsCount":1}

@@ -1,0 +1,4 @@
+{"ranAt":"2026-05-27T10:31:49.708Z","outcome":"FAIL_LOW","confidence":1,"status":"fail","durationMs":110645,"spinsCount":20,"reason":"freeSpinsRemaining counter decreases monotonically across free spin chain"}
+{"ranAt":"2026-05-27T14:44:29.341Z","outcome":"FAIL_LOW","confidence":1,"status":"fail","durationMs":110218,"spinsCount":20,"reason":"freeSpinsRemaining counter decreases monotonically across free spin chain"}
+{"ranAt":"2026-05-27T17:03:53.050Z","outcome":"FAIL_LOW","confidence":1,"status":"fail","durationMs":114431,"spinsCount":21,"reason":"freeSpinsRemaining counter decreases monotonically across free spin chain"}
+{"ranAt":"2026-05-27T17:44:36.859Z","outcome":"FAIL_LOW","confidence":1,"status":"fail","durationMs":132088,"spinsCount":26,"reason":"freeSpinsRemaining counter decreases monotonically across free spin chain"}

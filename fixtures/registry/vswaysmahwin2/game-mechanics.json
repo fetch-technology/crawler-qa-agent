@@ -1,0 +1,12 @@
+{
+  "mechanic": "ways",
+  "betMultiplier": 20,
+  "waysOrLines": 1024,
+  "detectedAt": "2026-05-27T04:31:38.654Z",
+  "detectionMethod": "balance_derived",
+  "evidence": {
+    "coin": 0.025,
+    "deductedFromBalance": 0.5,
+    "requestSample": "action=doSpin&symbol=vswaysmahwin2&c=0.025&l=1024&sInfo=n&bl=0&index=2&counter=3&repeat=0&mgckey=demo@SFTIqmxdilH7qHteQ8Fij529_USD"
+  }
+}
