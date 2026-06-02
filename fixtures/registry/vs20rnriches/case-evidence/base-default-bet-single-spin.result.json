@@ -1,61 +1,19 @@
 {
   "caseId": "base-default-bet-single-spin",
-  "name": "Base game default bet single spin shape",
+  "name": "Default bet single spin — balance & shape integrity",
   "category": "base_game",
   "severity": "critical",
-  "status": "fail",
-  "actionsExecuted": 5,
+  "status": "pass",
+  "actionsExecuted": 3,
   "assertions": [
     {
       "id": "_precheck_bet",
-      "description": "Setup should have reached bet=0.2",
-      "pass": false,
-      "detail": "Setup did NOT reach expected bet. Expected 0.2, captured 0.26 (delta 0.0600). Likely cause: bet panel didn't open (already at min/max) OR action coords wrong. Check setup_instructions vs actual game behavior."
+      "description": "Setup should have reached bet=7",
+      "pass": true
     },
     {
-      "id": "bet-amount-matches-default",
-      "description": "Server-side betAmount equals default 0.20",
-      "pass": false,
-      "detail": "FAIL | spin: betAmount=0.26 | actual (LHS) = \"number\", expected (RHS) = false",
-      "outcome": "FAIL_LOW",
-      "confidence": 0,
-      "signals": [
-        {
-          "name": "api",
-          "value": false,
-          "weight": 0.35,
-          "source": "parser/captured-spin",
-          "observed": 1
-        },
-        {
-          "name": "network",
-          "value": false,
-          "weight": 0.1,
-          "source": "page.on(response)",
-          "observed": 1
-        },
-        {
-          "name": "ui_ocr",
-          "value": false,
-          "weight": 0.25
-        },
-        {
-          "name": "state",
-          "value": false,
-          "weight": 0.1
-        },
-        {
-          "name": "rule",
-          "value": false,
-          "weight": 0.2,
-          "source": "assertion:bet-amount-matches-default",
-          "observed": "predicate=false"
-        }
-      ]
-    },
-    {
-      "id": "win-amount-finite-non-negative",
-      "description": "winAmount is a finite non-negative number",
+      "id": "default-bet-equals-7",
+      "description": "spin.betAmount equals default total bet 7.00 USD",
       "pass": true,
       "outcome": "PASS_LOW",
       "confidence": 0.65,
@@ -88,46 +46,54 @@
           "name": "rule",
           "value": true,
           "weight": 0.2,
-          "source": "assertion:win-amount-finite-non-negative",
+          "source": "assertion:default-bet-equals-7",
           "observed": "predicate=true"
         }
       ]
     },
     {
-      "id": "ending-balance-non-negative",
-      "description": "endingBalance is a finite non-negative number",
+      "id": "win-amount-non-negative-number",
+      "description": "spin.winAmount is a finite non-negative number",
       "pass": true,
-      "outcome": "FAIL_LOW",
-      "confidence": 0.25,
+      "outcome": "PASS_LOW",
+      "confidence": 0.65,
       "signals": [
         {
           "name": "api",
-          "value": false,
+          "value": true,
           "weight": 0.35,
-          "observed": 99996504.76,
-          "expected": 99996504.69999999,
-          "source": "parser/balanceAfter"
+          "source": "parser/captured-spin",
+          "observed": 1
         },
         {
-          "name": "rule",
-          "value": false,
-          "weight": 0.2,
-          "observed": "balance formula",
-          "expected": "balanceAfter == bb - bet + win"
+          "name": "network",
+          "value": true,
+          "weight": 0.1,
+          "source": "page.on(response)",
+          "observed": 1
         },
         {
           "name": "ui_ocr",
+          "value": false,
+          "weight": 0.25
+        },
+        {
+          "name": "state",
+          "value": false,
+          "weight": 0.1
+        },
+        {
+          "name": "rule",
           "value": true,
-          "weight": 0.25,
-          "observed": 99996504.76,
-          "expected": 99996504.76,
-          "source": "ocr/balanceArea"
+          "weight": 0.2,
+          "source": "assertion:win-amount-non-negative-number",
+          "observed": "predicate=true"
         }
       ]
     },
     {
       "id": "round-id-present-string",
-      "description": "roundId is a non-empty string",
+      "description": "spin.id is a non-empty string (roundId required per spec.field_validation)",
       "pass": true,
       "outcome": "PASS_LOW",
       "confidence": 0.65,
@@ -166,24 +132,23 @@
       ]
     },
     {
-      "id": "balance-arithmetic-holds",
-      "description": "endingBalance reflects starting - bet + win (when prior balance known)",
-      "pass": false,
-      "detail": "FAIL | spin: startingBalance=99996504.96, endingBalance=99996504.76, betAmount=0.26, winAmount=0 | actual (LHS) = 99996504.96, expected (RHS) = false",
-      "outcome": "FAIL_LOW",
-      "confidence": 0.25,
+      "id": "balance-conservation-single-spin",
+      "description": "endingBalance = startingBalance - betAmount + winAmount (skipped on first-ever spin where startingBalance is null)",
+      "pass": true,
+      "outcome": "PASS_LOW",
+      "confidence": 0.8,
       "signals": [
         {
           "name": "api",
-          "value": false,
+          "value": true,
           "weight": 0.35,
-          "observed": 99996504.76,
-          "expected": 99996504.69999999,
+          "observed": 99985587.04,
+          "expected": 99985587.04,
           "source": "parser/balanceAfter"
         },
         {
           "name": "rule",
-          "value": false,
+          "value": true,
           "weight": 0.2,
           "observed": "balance formula",
           "expected": "balanceAfter == bb - bet + win"
@@ -192,15 +157,89 @@
           "name": "ui_ocr",
           "value": true,
           "weight": 0.25,
-          "observed": 99996504.76,
-          "expected": 99996504.76,
+          "observed": 99985587.04,
+          "expected": 99985587.04,
           "source": "ocr/balanceArea"
         }
       ]
     },
     {
-      "id": "no-setup-or-engine-errors",
-      "description": "No engine errors or failures in warnings during setup",
+      "id": "screen-bet-matches-api",
+      "description": "OCR bet display (configured region) matches API betAmount",
+      "pass": true,
+      "outcome": "PASS_HIGH",
+      "confidence": 0.9,
+      "signals": [
+        {
+          "name": "api",
+          "value": true,
+          "weight": 0.35,
+          "source": "parser/captured-spin",
+          "observed": 1
+        },
+        {
+          "name": "network",
+          "value": true,
+          "weight": 0.1,
+          "source": "page.on(response)",
+          "observed": 1
+        },
+        {
+          "name": "ui_ocr",
+          "value": true,
+          "weight": 0.25,
+          "source": "screen.ocr",
+          "observed": 99985587.04
+        },
+        {
+          "name": "state",
+          "value": false,
+          "weight": 0.1
+        },
+        {
+          "name": "rule",
+          "value": true,
+          "weight": 0.2,
+          "source": "assertion:screen-bet-matches-api",
+          "observed": "predicate=true"
+        }
+      ]
+    },
+    {
+      "id": "screen-balance-matches-api",
+      "description": "OCR balance display (configured region) matches API endingBalance",
+      "pass": true,
+      "outcome": "PASS_LOW",
+      "confidence": 0.8,
+      "signals": [
+        {
+          "name": "api",
+          "value": true,
+          "weight": 0.35,
+          "observed": 99985587.04,
+          "expected": 99985587.04,
+          "source": "parser/balanceAfter"
+        },
+        {
+          "name": "rule",
+          "value": true,
+          "weight": 0.2,
+          "observed": "balance formula",
+          "expected": "balanceAfter == bb - bet + win"
+        },
+        {
+          "name": "ui_ocr",
+          "value": true,
+          "weight": 0.25,
+          "observed": 99985587.04,
+          "expected": 99985587.04,
+          "source": "ocr/balanceArea"
+        }
+      ]
+    },
+    {
+      "id": "no-engine-errors",
+      "description": "No engine-level error warnings emitted during the spin",
       "pass": true,
       "outcome": "PASS_LOW",
       "confidence": 0.3,
@@ -231,7 +270,7 @@
           "name": "rule",
           "value": true,
           "weight": 0.2,
-          "source": "assertion:no-setup-or-engine-errors",
+          "source": "assertion:no-engine-errors",
           "observed": "predicate=true"
         }
       ]
@@ -262,14 +301,14 @@
     }
   ],
   "spin": {
-    "bet": 0.26,
-    "win": 0,
-    "balanceBefore": 99996504.96,
-    "balanceAfter": 99996504.76,
+    "bet": 7,
+    "win": 5.25,
+    "balanceBefore": 99985588.79,
+    "balanceAfter": 99985587.04,
     "state": "NORMAL",
-    "roundId": "req-34-4"
+    "roundId": "req-2-3"
   },
-  "durationMs": 16824,
+  "durationMs": 15304,
   "spinsCount": 1,
   "screenshotPath": "fixtures/registry/vs20rnriches/case-evidence/base-default-bet-single-spin.png",
   "ocrSnapshots": [
@@ -277,65 +316,40 @@
       "region": "balance",
       "bbox": {
         "x": 289,
-        "y": 650,
-        "width": 218,
+        "y": 652,
+        "width": 200,
         "height": 25
       },
-      "text": "$99,996,504.76",
-      "parsed": 99996504.76,
-      "durationMs": 65,
+      "text": "$99,985,587.04",
+      "parsed": 99985587.04,
+      "durationMs": 61,
       "bboxScreenshotPath": "fixtures/registry/vs20rnriches/case-evidence/base-default-bet-single-spin.balance.png"
     },
     {
       "region": "bet",
       "bbox": {
-        "x": 290,
-        "y": 671,
-        "width": 82,
-        "height": 32
+        "x": 287,
+        "y": 674,
+        "width": 102,
+        "height": 24
       },
-      "text": "$0.20",
-      "parsed": 0.2,
-      "durationMs": 32,
+      "text": "$7.00",
+      "parsed": 7,
+      "durationMs": 34,
       "bboxScreenshotPath": "fixtures/registry/vs20rnriches/case-evidence/base-default-bet-single-spin.bet.png"
-    },
-    {
-      "region": "last_win",
-      "bbox": {
-        "x": 619,
-        "y": 627,
-        "width": 207,
-        "height": 53
-      },
-      "text": "OUR BETS!",
-      "parsed": null,
-      "durationMs": 37,
-      "bboxScreenshotPath": "fixtures/registry/vs20rnriches/case-evidence/base-default-bet-single-spin.last_win.png"
     }
   ],
   "actionLog": [
     {
-      "kind": "click",
-      "target": "betMinus",
-      "durationMs": 1313,
+      "kind": "set_bet_to_value",
+      "target": "7",
+      "durationMs": 47,
       "success": true
     },
     {
       "kind": "wait_ms",
-      "target": "1500ms",
-      "durationMs": 1501,
-      "success": true
-    },
-    {
-      "kind": "click",
-      "target": "betMinus__bet-0.20",
-      "durationMs": 655,
-      "success": true
-    },
-    {
-      "kind": "wait_ms",
-      "target": "1500ms",
-      "durationMs": 1501,
+      "target": "800ms",
+      "durationMs": 802,
       "success": true
     },
     {
@@ -352,28 +366,28 @@
         {
           "field": "spin captured",
           "expected": "non-empty roundId",
-          "actual": "req-34-4",
+          "actual": "req-2-3",
           "match": true,
           "source": "parser/captured-spin"
         },
         {
           "field": "bet",
           "expected": "> 0 (bet was applied)",
-          "actual": 0.26,
+          "actual": 7,
           "match": true,
           "source": "parser/spin.bet"
         },
         {
           "field": "win",
           "expected": ">= 0 (non-negative)",
-          "actual": 0,
+          "actual": 5.25,
           "match": true,
           "source": "parser/spin.win"
         },
         {
           "field": "balanceAfter",
           "expected": "finite number",
-          "actual": 99996504.76,
+          "actual": 99985587.04,
           "match": true,
           "source": "parser/spin.balanceAfter"
         }
@@ -381,32 +395,24 @@
     },
     {
       "signal": "ui_ocr",
-      "pass": false,
+      "pass": true,
       "checks": [
         {
           "field": "balance",
-          "expected": 99996504.76,
-          "actual": 99996504.76,
+          "expected": 99985587.04,
+          "actual": 99985587.04,
           "match": true,
           "source": "ocr/balanceArea ↔ parser/balanceAfter"
         },
         {
           "field": "bet",
-          "expected": 0.26,
-          "actual": 0.2,
-          "match": false,
-          "source": "ocr/betArea ↔ parser/spin.bet",
-          "note": "diff=0.060 > tolerance 0.05"
-        },
-        {
-          "field": "win",
-          "expected": 0,
-          "actual": 0,
+          "expected": 7,
+          "actual": 7,
           "match": true,
-          "source": "ocr/winArea ↔ parser/spin.win"
+          "source": "ocr/betArea ↔ parser/spin.bet"
         }
       ],
-      "detail": "2/3 UI widgets match API"
+      "detail": "2/2 UI widgets match API"
     },
     {
       "signal": "network",
@@ -443,15 +449,14 @@
     },
     {
       "signal": "rule",
-      "pass": false,
+      "pass": true,
       "checks": [
         {
           "field": "balance arithmetic",
-          "expected": 99996504.69999999,
-          "actual": 99996504.76,
-          "match": false,
-          "source": "balanceAfter == balanceBefore - bet + win",
-          "note": "diff=0.060 > 0.01 — server math off OR parser bet/win wrong"
+          "expected": 99985587.04,
+          "actual": 99985587.04,
+          "match": true,
+          "source": "balanceAfter == balanceBefore - bet + win"
         }
       ]
     }
@@ -459,33 +464,61 @@
   "networkLogPath": "fixtures/registry/vs20rnriches/case-evidence/base-default-bet-single-spin.network.jsonl",
   "networkSummary": [
     {
+      "url": "https://pp.dev.revenge-games.com/gs2c/reloadBalance.do?mgckey=demo@SFTIqmxdilH7qHteQ8Fij529_USD",
+      "method": "GET",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": false
+    },
+    {
       "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
       "method": "POST",
       "status": 200,
       "durationMs": 0,
       "parsedAsSpin": true
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": true
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": true
+    },
+    {
+      "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
+      "method": "POST",
+      "status": 200,
+      "durationMs": 0,
+      "parsedAsSpin": false
     }
   ],
   "parserDiagnostic": {
     "parserKind": "PragmaticParser",
-    "betMultiplier": 26,
+    "betMultiplier": 20,
     "requestFields": {
       "action": "doSpin",
       "symbol": "vs20rnriches",
-      "c": 0.01,
+      "c": 0.35,
       "l": 20,
       "sInfo": "n",
       "bl": 0,
-      "index": 34,
-      "counter": 4,
+      "index": 2,
+      "counter": 3,
       "repeat": 0,
       "mgckey": "demo@SFTIqmxdilH7qHteQ8Fij529_USD"
     },
-    "formulaUsed": "c × M = 0.01 × 26",
-    "parsedBet": 0.26,
-    "expectedBet": 0.26,
+    "formulaUsed": "c × M = 0.35 × 20  [mechanic=unknown, M from game-mechanics]",
+    "parsedBet": 7,
+    "expectedBet": 7,
     "mismatch": false
   },
-  "outcome": "FLAKY",
-  "confidence": 0.5499999999999999
+  "outcome": "PASS_LOW",
+  "confidence": 1
 }

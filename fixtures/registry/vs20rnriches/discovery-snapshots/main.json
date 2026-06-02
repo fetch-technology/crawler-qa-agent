@@ -1,0 +1,58 @@
+{
+  "stateId": "main",
+  "capturedAt": "2026-06-01T04:48:19.835Z",
+  "source": "explore-graph-main",
+  "imageWidth": 1280,
+  "imageHeight": 720,
+  "elementCount": 8,
+  "elements": [
+    {
+      "key": "buyBonusButton",
+      "x": 130,
+      "y": 230,
+      "confidence": 0.95
+    },
+    {
+      "key": "paytableButton",
+      "x": 188,
+      "y": 651,
+      "confidence": 0.92
+    },
+    {
+      "key": "menuButton",
+      "x": 188,
+      "y": 627,
+      "confidence": 0.92
+    },
+    {
+      "key": "special_bets",
+      "x": 130,
+      "y": 400,
+      "confidence": 0.9
+    },
+    {
+      "key": "spinButton",
+      "x": 1000,
+      "y": 650,
+      "confidence": 0.85
+    },
+    {
+      "key": "betPlus",
+      "x": 1095,
+      "y": 650,
+      "confidence": 0.85
+    },
+    {
+      "key": "betMinus",
+      "x": 890,
+      "y": 648,
+      "confidence": 0.85
+    },
+    {
+      "key": "autoButton",
+      "x": 990,
+      "y": 710,
+      "confidence": 0.85
+    }
+  ]
+}

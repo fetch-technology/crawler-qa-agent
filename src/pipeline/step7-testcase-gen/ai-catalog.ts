@@ -65,7 +65,11 @@ export async function loadAiCatalog(slug: string): Promise<TestCaseCatalog | nul
   const file = path.join(dirForGame(slug), CATALOG_FILE);
   try {
     const raw = await readFile(file, "utf8");
-    return JSON.parse(raw) as TestCaseCatalog;
+    const catalog = JSON.parse(raw) as TestCaseCatalog;
+    // Inject deterministic built-in cases (e.g. payout-integrity) at LOAD time
+    // so they survive catalog regeneration and need no AI translation.
+    const { appendBuiltinCases } = await import("./builtin-cases.js");
+    return await appendBuiltinCases(catalog, slug);
   } catch {
     return null;
   }

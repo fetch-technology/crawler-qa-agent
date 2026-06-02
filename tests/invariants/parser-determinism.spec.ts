@@ -113,6 +113,55 @@ test("setBetMultiplier(undefined) reverts to naive formula", () => {
   expect(r.bet).toBe(10); // 0.5 * 20 (naive c × l, NOT × 20 multiplier)
 });
 
+// === Mechanic-aware bet formula (2026-05-29 — fix path 2) ===
+// REGRESSION: a stale `betMultiplier` from balance-derived game-mechanics.json
+// (e.g. derived at bet level 2 → 40 for a 20-line game) made `c × M` overshoot.
+// The fix: when mechanic === "lines", IGNORE betMultiplier and use the
+// request `l`/`bl` directly. Other mechanics (ways/cluster) still use M.
+
+test("mechanic=lines: uses c × l, IGNORES stale betMultiplier", () => {
+  const parser = new PragmaticParser();
+  parser.setMechanic("lines");
+  parser.setBetMultiplier(40); // stale / wrong — must be bypassed for lines games
+  const req = ppRequestBody({ action: "doSpin", c: 0.01, l: 20, bl: 0, index: 1, counter: 1 });
+  const res = ppFull({ bb: 99995529.55, ba: 99995529.35 });
+  const r = parser.parseSpinPair(req, res, URL);
+  expect(r.bet).toBe(0.2); // 0.01 × 20 (lines mode) — NOT 0.4 from stale M
+});
+
+test("mechanic=lines: bet-level mode uses c × bl when bl>0", () => {
+  const parser = new PragmaticParser();
+  parser.setMechanic("lines");
+  parser.setBetMultiplier(99); // ignored
+  const req = ppRequestBody({ action: "doSpin", c: 0.5, l: 10, bl: 5, index: 1, counter: 1 });
+  const res = ppFull({ bb: 100, ba: 97.5 });
+  const r = parser.parseSpinPair(req, res, URL);
+  expect(r.bet).toBe(2.5); // 0.5 × 5 (bl-as-multiplier)
+});
+
+test("mechanic=ways: still trusts betMultiplier (l is the ways count, not stake)", () => {
+  const parser = new PragmaticParser();
+  parser.setMechanic("ways");
+  parser.setBetMultiplier(20);
+  // Mahjong Ways-style: l=1024 ways, c=0.01, true bet = 0.20.
+  const req = ppRequestBody({ action: "doSpin", c: 0.01, l: 1024, bl: 0, index: 1, counter: 1 });
+  const res = ppFull({ bb: 100, ba: 99.8 });
+  const r = parser.parseSpinPair(req, res, URL);
+  expect(r.bet).toBe(0.2); // 0.01 × 20 (M from game-mechanics), NOT 0.01 × 1024 = 10.24
+});
+
+test("setMechanic(undefined) falls back to legacy PP convention", () => {
+  const parser = new PragmaticParser();
+  parser.setMechanic("lines");
+  parser.setMechanic(undefined);
+  parser.setBetMultiplier(20);
+  // No mechanic + M set → c × M path (legacy behaviour preserved).
+  const req = ppRequestBody({ action: "doSpin", c: 0.45, l: 1024, bl: 0, index: 1, counter: 1 });
+  const res = ppFull({ bb: 100, ba: 91 });
+  const r = parser.parseSpinPair(req, res, URL);
+  expect(r.bet).toBe(9);
+});
+
 test("canParseResponse rejects non-PP URL", () => {
   const parser = new PragmaticParser();
   const res = ppFull({});

@@ -1,7 +1,0 @@
-{"ranAt":"2026-05-27T09:48:58.437Z","outcome":"PASS_LOW","confidence":1,"status":"pass","durationMs":103707,"spinsCount":30}
-{"ranAt":"2026-05-27T14:31:52.004Z","outcome":"FAIL_LOW","confidence":0.6499999999999999,"status":"fail","durationMs":92148,"spinsCount":24,"reason":"At least 30 round-end spins captured (autoplay batch fulfilled)"}
-{"ranAt":"2026-05-27T15:17:02.637Z","outcome":"PASS_LOW","confidence":1,"status":"pass","durationMs":138974,"spinsCount":30}
-{"ranAt":"2026-05-27T16:21:30.585Z","outcome":"PASS_LOW","confidence":0.75,"status":"fail","durationMs":136862,"spinsCount":34,"reason":"End-to-end balance reconciles across 30 rounds"}
-{"ranAt":"2026-05-27T16:23:20.887Z","outcome":"FAIL_LOW","confidence":0.8999999999999999,"status":"fail","durationMs":110301,"spinsCount":26,"reason":"At least 30 round-end spins captured (autoplay batch fulfilled)"}
-{"ranAt":"2026-05-27T16:23:40.661Z","outcome":"FAIL_LOW","confidence":0.8999999999999999,"status":"fail","durationMs":19758,"spinsCount":1,"reason":"At least 30 round-end spins captured (autoplay batch fulfilled)"}
-{"ranAt":"2026-05-27T16:52:13.117Z","outcome":"PASS_LOW","confidence":1,"status":"pass","durationMs":134017,"spinsCount":30}

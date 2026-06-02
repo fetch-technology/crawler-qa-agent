@@ -1,0 +1,57 @@
+{
+  "stateId": "autoButton",
+  "capturedAt": "2026-06-02T00:40:02.067Z",
+  "source": "discover-substate",
+  "elementCount": 7,
+  "elements": [
+    {
+      "key": "autoButton__closeButton",
+      "x": 870,
+      "y": 154,
+      "confidence": 0.98,
+      "role": "close"
+    },
+    {
+      "key": "autoButton__turboSpinToggle",
+      "x": 462,
+      "y": 252,
+      "confidence": 0.95,
+      "role": "toggle"
+    },
+    {
+      "key": "autoButton__quickSpinToggle",
+      "x": 595,
+      "y": 252,
+      "confidence": 0.95,
+      "role": "toggle"
+    },
+    {
+      "key": "autoButton__skipScreensToggle",
+      "x": 728,
+      "y": 252,
+      "confidence": 0.95,
+      "role": "toggle"
+    },
+    {
+      "key": "autoButton__autospinsSliderMin",
+      "x": 432,
+      "y": 383,
+      "confidence": 0.9,
+      "role": "slider-preset"
+    },
+    {
+      "key": "autoButton__autospinsSliderMax",
+      "x": 760,
+      "y": 383,
+      "confidence": 0.9,
+      "role": "slider-preset"
+    },
+    {
+      "key": "autoButton__startAutoplayButton",
+      "x": 640,
+      "y": 506,
+      "confidence": 0.98,
+      "role": "action"
+    }
+  ]
+}

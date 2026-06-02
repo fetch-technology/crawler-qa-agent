@@ -32,6 +32,8 @@ const ALLOWED_TOP_LEVEL_IDENTIFIERS = new Set<string>([
   "detectBuyFeatureDeduction",
   "getRoundEndSpins",
   "getCurrentBalance",
+  "sumWinBreakdown",
+  "payoutModelCheck",
   "Math",
   "Number",
   "Array",

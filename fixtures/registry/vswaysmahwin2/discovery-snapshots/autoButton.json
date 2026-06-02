@@ -1,0 +1,44 @@
+{
+  "stateId": "autoButton",
+  "capturedAt": "2026-06-02T02:14:13.688Z",
+  "source": "explore-graph",
+  "elementCount": 6,
+  "elements": [
+    {
+      "key": "autoButton__closeButton",
+      "x": 848,
+      "y": 144,
+      "confidence": 0.98
+    },
+    {
+      "key": "autoButton__turboSpinToggle",
+      "x": 463,
+      "y": 252,
+      "confidence": 0.95
+    },
+    {
+      "key": "autoButton__quickSpinToggle",
+      "x": 597,
+      "y": 252,
+      "confidence": 0.95
+    },
+    {
+      "key": "autoButton__skipScreensToggle",
+      "x": 743,
+      "y": 252,
+      "confidence": 0.95
+    },
+    {
+      "key": "autoButton__autospinsSlider",
+      "x": 663,
+      "y": 384,
+      "confidence": 0.9
+    },
+    {
+      "key": "autoButton__startAutoplayButton",
+      "x": 663,
+      "y": 510,
+      "confidence": 0.98
+    }
+  ]
+}

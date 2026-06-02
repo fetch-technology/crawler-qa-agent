@@ -2,11 +2,11 @@
   "game_title": "Rolling in Treasures",
   "provider_guess": "Pragmatic Play",
   "balance": {
-    "value": "99,996,514.56",
+    "value": "99,991,063.79",
     "currency": "$"
   },
   "bet": {
-    "current": "4.00",
+    "current": "$7.00",
     "min": null,
     "max": null,
     "step_kind": "plus_minus",
@@ -28,14 +28,14 @@
       "state_hint": null
     },
     {
-      "name": "Bet Decrease (-)",
+      "name": "Bet Decrease",
       "kind": "button",
       "visible": true,
       "approx_location": "left of spin button",
       "state_hint": null
     },
     {
-      "name": "Bet Increase (+)",
+      "name": "Bet Increase",
       "kind": "button",
       "visible": true,
       "approx_location": "right of spin button",
@@ -52,21 +52,21 @@
       "name": "Info",
       "kind": "button",
       "visible": true,
-      "approx_location": "bottom-left (below menu)",
+      "approx_location": "bottom-left below menu",
       "state_hint": null
     },
     {
       "name": "Sound",
       "kind": "toggle",
       "visible": true,
-      "approx_location": "bottom-left (below info)",
+      "approx_location": "bottom-left",
       "state_hint": null
     },
     {
       "name": "Buy Feature",
       "kind": "button",
       "visible": true,
-      "approx_location": "left side of reels",
+      "approx_location": "left side, top",
       "state_hint": "3 OPTIONS"
     },
     {
@@ -81,7 +81,7 @@
     "available": true,
     "options": [
       {
-        "label": "BUY FEATURE - 3 OPTIONS",
+        "label": "3 OPTIONS",
         "price_multiplier": null,
         "price_absolute": null
       }
@@ -91,7 +91,7 @@
     "available": true,
     "variants": [
       {
-        "label": "SPECIAL BETS - 2 OPTIONS",
+        "label": "2 OPTIONS",
         "state": "off",
         "price": null
       }
@@ -104,16 +104,17 @@
       "Special Bets (2 options)"
     ],
     "visible_symbols": [
-      "Mine Cart with Gold",
-      "Yellow Diamond",
-      "Green Crystal/Emerald",
-      "Red Crystal/Ruby",
-      "Purple Crystal/Amethyst",
-      "Miner Helmet",
+      "Purple gem cluster",
+      "Pickaxe",
+      "Gold nugget/diamond",
+      "Miner helmet (yellow)",
       "Lantern",
-      "Pickaxe"
+      "Green emerald",
+      "Blue crystal",
+      "Red ruby",
+      "Minecart with gold"
     ],
     "max_win": null
   },
-  "raw_observations": "6x5 reel grid with mining-themed symbols. Banner shows 'PLACE YOUR BETS!'. Credit $99,996,514.56, Bet $4.00. Left side has red 'BUY FEATURE 3 OPTIONS' button and grey 'SPECIAL BETS 2 OPTIONS' panel with a toggle switch (appears off). Right side shows game logo 'ROLLING IN TREASURES' and a miner character holding gold. Bottom-right has spin button with AUTOPLAY label below and +/- bet steppers. Bottom-left has menu, info, and sound icons."
+  "raw_observations": "Mining-themed slot 'Rolling in Treasures'. 6x5 reel grid filled with mining symbols (gems, pickaxes, lantern, helmet, minecart). Left side: red 'BUY FEATURE 3 OPTIONS' button and grey 'SPECIAL BETS 2 OPTIONS' with toggle (off). Bottom shows 'PLACE YOUR BETS!' banner. Credit $99,991,063.79, Bet $7.00. Spin button (circular arrow) bottom-right center with Autoplay label and +/- bet steppers. Bottom-left has menu, info, and sound icons. Bearded miner character on right side, game logo top-right."
 }

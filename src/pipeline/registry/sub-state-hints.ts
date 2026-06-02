@@ -52,9 +52,14 @@ export const SUB_STATE_HINTS_DEFAULTS: Record<string, SubStateHint> = {
       + "- 'startAutoplayButton' — the large START AUTOPLAY button (may show the current count in parentheses).\n"
       + "- 'closeButton' — the X / close icon (usually top-right).\n"
       + "- Checkbox toggles, by their label: 'turboSpinToggle', 'quickSpinToggle', 'skipScreensToggle' (only the ones actually present).\n"
-      + "NUMBER OF AUTOSPINS control — detect which TYPE it is:\n"
-      + "  (a) DISCRETE preset chips (a row of separate clickable numbers like 10 20 30 50 100): emit ONE element per VISIBLE number with key 'autoCountSlide-<N>' (e.g. autoCountSlide-10, autoCountSlide-30). Read the actual numbers; do not invent.\n"
-      + "  (b) CONTINUOUS slider (a single draggable handle on a horizontal track with one numeric readout like '100'): the discrete stops are snapped along the track. Emit JUST the two track ENDS — 'autospinsSliderMin' at the far-LEFT end of the track (lowest value) and 'autospinsSliderMax' at the far-RIGHT end (highest value). The backend interpolates the individual stops from these two anchors. Do NOT emit autoCountSlide-<N> yourself for this type.",
+      + "NUMBER OF AUTOSPINS control — CRITICAL, you MUST emit BOTH of these two anchor elements regardless of UI type. The backend uses them to register every preset value automatically. Do NOT skip them. Do NOT emit only one. Do NOT emit autoCountSlide-<N> yourself:\n"
+      + "  - 'autospinsSliderMin' — the LEFTMOST element of the autospins control:\n"
+      + "      • CONTINUOUS slider (a horizontal track with a draggable handle): the far-LEFT end of the track (lowest value position).\n"
+      + "      • DISCRETE preset chips (a row of separate clickable numbers like 10 20 30 50 100): the CENTER of the LEFTMOST visible chip (the one showing the smallest number).\n"
+      + "  - 'autospinsSliderMax' — the RIGHTMOST element of the autospins control:\n"
+      + "      • CONTINUOUS slider: the far-RIGHT end of the track (highest value position).\n"
+      + "      • DISCRETE preset chips: the CENTER of the RIGHTMOST visible chip (the one showing the largest number).\n"
+      + "If you can only see ONE end, still emit it AND estimate the other end at the opposite side of the visible control area — never skip an anchor.",
     sliderMarks: {
       keyPrefix: "autoCountSlide",
       values: [10, 20, 30, 50, 70, 100, 500, 1000],

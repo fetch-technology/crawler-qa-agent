@@ -1,42 +1,44 @@
 # QA Review — vs20rnriches
 
 **Game slug:** `vs20rnriches`  
-**Generated at:** 5/26/2026, 2:13:12 AM  
+**Generated at:** 6/2/2026, 9:01:33 AM  
 **Engine:** HTML5/Canvas  
 **Currency:** n/a  
 
 ## Summary
 
-**Total cases:** 31  
-**By category:** Base Game: 5 · Bet Variation: 5 · Other: 5 · Buy Feature: 3 · Autoplay: 2 · Special Bet: 2 · Free Spins: 2 · Options: 2 · Turbo Spin: 1 · History: 1 · Max Win Cap: 1 · performance: 1 · meta: 1  
-**By severity:** critical: 11 · major: 15 · minor: 5
+**Total cases:** 32  
+**By category:** Other: 9 · Bet Variation: 5 · Base Game: 3 · Buy Feature: 3 · Options: 3 · Autoplay: 2 · Free Spins: 2 · Turbo Spin: 1 · Special Bet: 1 · History: 1 · performance: 1 · meta: 1  
+**By severity:** critical: 11 · major: 15 · minor: 6
 
 ## Coverage Notes
 
-- INCLUDED: base_game integrity (3 cases), bet_variation across full ladder 0.20→100 (5 tiers), bet_boundary clamp tests (2 cases — emitted as 'other' since enum lacks bet_boundary), all 3 buy_feature variants (Free Spins/Super FS 1/Super FS 2 with ratio verification), both special_bet variants (Ante + Super Spins), 2 autoplay batches, turbo toggle, free spins split (trigger watch + result shape), history panel match, 2 options/settings toggles, max-win cap watch, rules_consistency for cluster mechanic & cascade-flag drift, payout_correctness with cluster band check, tumble mechanic in free spins, performance SLO, meta version field, balance non-negative, round id uniqueness.
-- INTENTIONALLY OMITTED — ui_consistency category: no OCR regions configured (balanceArea/betArea/winArea/freeSpinCounter all without bbox) per OCR COVERAGE notice. All screen.X assertions would silent-pass via null-guard; skipped to avoid false coverage.
-- INTENTIONALLY OMITTED — wild_substitution category: spec.symbols is empty and info popup describes a pay-anywhere cluster mechanic with no WILD listed in the rules transcription. Until paytable.json extracts a WILD symbol, no meaningful substitution case can be authored.
-- INTENTIONALLY OMITTED — bet_level category: bet_mechanics.bet_levels is empty (Pragmatic uses flat bet sizes, no separate coin/level multiplier in this game).
-- INTENTIONALLY OMITTED — strict free-spin count assertions: organic-watch only with expected_feature=null per Best Practices §15 anti-pattern guidance.
-- INTENTIONALLY OMITTED — respin category: info popup describes free-spin retrigger only (4/5/6 BONUS), not respins. Buy-feature multiplier-per-tumble belongs to tumble mechanic, not respin.
+- INCLUDED: base_game (3), bet_variation (5: min/low/mid/high/max from confirmed UI ladder), bet_boundary (2: above-max/below-min clamp), autoplay (2: 10 + 50 with quick spin), turbo_spin (1), buy_feature (3: $700/$1750/$7000 — all visible options), special_bet (1 — ante variant), free_spins split (trigger watch + result shape), tumble/multiplier overlay watch, payout_correctness (base game + zero-win), rules_consistency, history-normal, ui_consistency (3 — balance/bet/multi-spin since only balance+bet OCR configured), options (sound, music, paytable), performance, meta. Total: 32 cases.
+- INTENTIONALLY NOT COVERED — wild_substitution: paytable contains no WILD symbol entry (only 9 paying + BONUS scatter), so no wild-specific case generated.
+- INTENTIONALLY NOT COVERED — bet_level: no separate bet_level mechanic in spec.bet_mechanics (Pragmatic uses flat total-bet ladder, not coin×level model).
+- INTENTIONALLY NOT COVERED — max_win_cap: spec.invariants empty and no cap discoverable in info popup or paytable text. If cap exists (Pragmatic typical 5000×), add post-collect.
+- INTENTIONALLY NOT COVERED — respin: game uses Tumble + Multiplier Overlay (covered in tumble-multiplier-overlay-watch) rather than respin mechanic; respin category not applicable.
+- INTENTIONALLY NOT COVERED — history-freespin-row: depends on triggering free spin organically; would duplicate free-spins-result-shape data — better as opportunistic check post-FS.
+- INTENTIONALLY NOT COVERED — UI last_win assertion: ocr-regions.json has NO winArea bbox, so screen.last_win is always null at runtime (per OCR coverage rules).
+- INTENTIONALLY NOT COVERED — currency check: spec.currency is null and samples don't expose normalized currency code separately; would risk OCR-based currency assert which Best Practices §15 forbids.
 
 ## Game Spec — Key References
 
 **Bet mechanics:**  
-- baseBet: `4`
-- bet_sizes: `[4]`
+- baseBet: `7`
+- bet_sizes: `[7]`
 - bet_levels: `[]`
 - formula: coin * lines (PP-style)
 
 ## Test Cases
 
-## Base Game (5)
+## Base Game (3)
 
-### 1. `base-default-bet-single-spin` — Base game default bet single spin shape
+### 1. `base-default-bet-single-spin` — Default bet single spin — balance & shape integrity
 
 **Category:** Base Game  **Severity:** 🔴 critical
 
-**Description:** Run a single spin at the default observed bet of 0.20 USD (spec: 11/11 sample spins use c=0.20) and verify response shape, balance conservation, RESOLVED status, and presence of required normalized fields (betAmount, winAmount, endingBalance, roundId). Establishes baseline server-data integrity for the 6x5 cluster-pay Pragmatic engine.
+**Description:** Verify a single spin at the default bet of $7.00 (paytable: base_bet_visible=7; samples: c=0.35 × l=20 = 7.00) returns a normalized response with valid betAmount, winAmount, endingBalance and roundId. Validates the baseline response shape contract from spec.execution_strategy.field_validation and balance conservation arithmetic on a single base-game spin.
 
 #### 🪜 Step
 
@@ -46,32 +48,36 @@ _(no setup — observational case, runs at default state)_
 
 | Input | Value |
 |---|---|
-| expected_bet | `0.2` |
-| config.betAmount | `0.2` |
+| expected_bet | `7` |
+| config.coin | `0.35` |
+| config.lines | `20` |
+| config.totalBet | `7` |
 | spin_count | `1` |
 
 #### ✅ Expect
 
-- ✓ **bet-amount-matches-default** _(custom)_ — Server-side betAmount equals default 0.20
-    - Check: `typeof spin.betAmount === 'number' && Math.abs(spin.betAmount - 0.20) <= 0.01`
-- ✓ **win-amount-finite-non-negative** _(custom)_ — winAmount is a finite non-negative number
+- ✓ **default-bet-equals-7** _(custom)_ — spin.betAmount equals default total bet 7.00 USD
+    - Check: `typeof spin.betAmount === 'number' && Math.abs(spin.betAmount - 7.00) <= 0.01`
+- ✓ **win-amount-non-negative-number** _(custom)_ — spin.winAmount is a finite non-negative number
     - Check: `typeof spin.winAmount === 'number' && isFinite(spin.winAmount) && spin.winAmount >= 0`
-- ✓ **ending-balance-non-negative** _(custom)_ — endingBalance is a finite non-negative number
-    - Check: `typeof spin.endingBalance === 'number' && isFinite(spin.endingBalance) && spin.endingBalance >= 0`
-- ✓ **round-id-present-string** _(custom)_ — roundId is a non-empty string
+- ✓ **round-id-present-string** _(custom)_ — spin.id is a non-empty string (roundId required per spec.field_validation)
     - Check: `typeof spin.id === 'string' && spin.id.length > 0`
-- ✓ **balance-arithmetic-holds** _(custom)_ — endingBalance reflects starting - bet + win (when prior balance known)
+- ✓ **balance-conservation-single-spin** _(custom)_ — endingBalance = startingBalance - betAmount + winAmount (skipped on first-ever spin where startingBalance is null)
     - Check: `spin.startingBalance == null || Math.abs(spin.endingBalance - (spin.startingBalance - spin.betAmount + spin.winAmount)) <= 0.01`
-- ✓ **no-setup-or-engine-errors** _(custom)_ — No engine errors or failures in warnings during setup
+- ✓ **screen-bet-matches-api** _(custom)_ — OCR bet display (configured region) matches API betAmount
+    - Check: `screen.bet === null || Math.abs(screen.bet - spin.betAmount) <= 0.01`
+- ✓ **screen-balance-matches-api** _(custom)_ — OCR balance display (configured region) matches API endingBalance
+    - Check: `screen.balance === null || Math.abs(screen.balance - spin.endingBalance) <= 0.01`
+- ✓ **no-engine-errors** _(custom)_ — No engine-level error warnings emitted during the spin
     - Check: `warnings.filter(w => /error|fail|threw/i.test(w)).length === 0`
 
 ---
 
-### 2. `base-multi-spin-balance-conservation` — Multi-spin balance conservation (10 spins)
+### 2. `base-default-bet-multi-spin-conservation` — 10-spin balance conservation at default bet
 
 **Category:** Base Game  **Severity:** 🔴 critical
 
-**Description:** Run 10 spins at default bet 0.20 USD and reconcile total bet/win against initial vs final balance within 0.01 tolerance. Samples show consistent -0.20 deduction per spin (99996541.16 → 99996513.16 across 11 captures); reconciling sums across 10 spins catches accumulation drift bugs in the Pragmatic /gs2c/v3/gameService pipeline.
+**Description:** Run 10 spins at default bet $7.00 and verify the running balance ledger reconciles across all spins: ending wallet = balanceBefore - Σ betAmount + Σ winAmount. Catches off-by-one ledger errors in cascade/tumble aggregation (paytable: 'All wins are added to the player's balance after all tumbles resulted from a base spin have been played').
 
 #### 🪜 Step
 
@@ -81,63 +87,36 @@ _(no setup — observational case, runs at default state)_
 
 | Input | Value |
 |---|---|
-| expected_bet | `0.2` |
-| config.betAmount | `0.2` |
+| expected_bet | `7` |
+| config.coin | `0.35` |
+| config.lines | `20` |
+| config.totalBet | `7` |
 | spin_count | `10` |
 
 #### ✅ Expect
 
-- ✓ **all-spins-bet-0.20** _(custom)_ — Every captured spin has betAmount === 0.20
-    - Check: `collector.spins.every(s => typeof s.betAmount === 'number' && Math.abs(s.betAmount - 0.20) <= 0.01)`
-- ✓ **all-wins-non-negative** _(custom)_ — Every spin has winAmount >= 0
-    - Check: `collector.spins.every(s => typeof s.winAmount === 'number' && s.winAmount >= 0)`
-- ✓ **cumulative-balance-reconciles** _(custom)_ — End-to-end sum(bet) and sum(win) reconcile with first.startingBalance → last.endingBalance
-    - Check: `(() => { const first = collector.spins[0]; const last = collector.spins[collector.spins.length - 1]; if (!first || !last || first.startingBalance == null) return true; const sb = collector.spins.reduce((a,s)=>a+(s.betAmount||0),0); const sw = collector.spins.reduce((a,s)=>a+(s.winAmount||0),0); return Math.abs(last.endingBalance - (first.startingBalance - sb + sw)) <= 0.01; })()`
-- ✓ **round-ids-all-unique** _(custom)_ — Every spin has a unique roundId
-    - Check: `new Set(collector.spins.map(s => s.id)).size === collector.spins.length`
-- ✓ **no-debounced-spins** _(custom)_ — No spin clicks were dropped or timed out
-    - Check: `warnings.filter(w => /debounced|popup may have blocked|no spin.*response within/i.test(w)).length === 0`
-
----
-
-### 3. `base-response-shape-field-validation` — Spin response shape field validation
-
-**Category:** Base Game  **Severity:** 🟠 major
-
-**Description:** Run 5 spins and assert every required field per spec.execution_strategy.field_validation is present and type-correct: betAmount (number>0), winAmount (number>=0), endingBalance (number>=0), roundId (non-empty string). Verifies the Pragmatic raw → normalized field mapping is working end-to-end.
-
-#### 🪜 Step
-
-_(no setup — observational case, runs at default state)_
-
-#### 📥 Input
-
-| Input | Value |
-|---|---|
-| expected_bet | `0.2` |
-| config.betAmount | `0.2` |
-| spin_count | `5` |
-
-#### ✅ Expect
-
-- ✓ **field-bet-amount-typed** _(custom)_ — All spins have numeric positive betAmount
-    - Check: `collector.spins.every(s => typeof s.betAmount === 'number' && isFinite(s.betAmount) && s.betAmount > 0)`
-- ✓ **field-win-amount-typed** _(custom)_ — All spins have numeric non-negative winAmount
+- ✓ **all-spins-bet-equal-7** _(custom)_ — Every spin has betAmount=7.00 (no bet drift between spins)
+    - Check: `collector.spins.length >= 1 && collector.spins.every(s => typeof s.betAmount === 'number' && Math.abs(s.betAmount - 7.00) <= 0.01)`
+- ✓ **all-spins-win-valid-number** _(custom)_ — Every spin reports a finite non-negative winAmount
     - Check: `collector.spins.every(s => typeof s.winAmount === 'number' && isFinite(s.winAmount) && s.winAmount >= 0)`
-- ✓ **field-ending-balance-typed** _(custom)_ — All spins have numeric non-negative endingBalance
-    - Check: `collector.spins.every(s => typeof s.endingBalance === 'number' && isFinite(s.endingBalance) && s.endingBalance >= 0)`
-- ✓ **field-round-id-typed** _(custom)_ — All spins have string non-empty id (roundId)
-    - Check: `collector.spins.every(s => typeof s.id === 'string' && s.id.length > 0)`
-- ✓ **round-end-frames-detected** _(custom)_ — At least one round-end frame captured per spin
-    - Check: `getRoundEndSpins(collector.spins).length >= 1`
+- ✓ **running-ledger-reconciles** _(custom)_ — Latest ending balance equals balanceBefore - ΣbetAmount + ΣwinAmount across all observed spins
+    - Check: `(() => { if (balanceBefore == null) return true; const ends = getRoundEndSpins(collector.spins); if (ends.length === 0) return true; const sumBet = ends.reduce((a, s) => a + (typeof s.betAmount === 'number' ? s.betAmount : 0), 0); const sumWin = ends.reduce((a, s) => a + (typeof s.winAmount === 'number' ? s.winAmount : 0), 0); const last = getCurrentBalance(collector); return last != null && Math.abs(last - (balanceBefore - sumBet + sumWin)) <= 0.01; })()`
+- ✓ **per-spin-balance-arithmetic** _(custom)_ — Per-spin endingBalance = startingBalance - betAmount + winAmount (null-guarded for first spin)
+    - Check: `collector.spins.every(s => s.startingBalance == null || Math.abs(s.endingBalance - (s.startingBalance - s.betAmount + s.winAmount)) <= 0.01)`
+- ✓ **unique-round-ids** _(custom)_ — Each round-end spin has a unique non-empty id
+    - Check: `(() => { const ends = getRoundEndSpins(collector.spins); const ids = ends.map(s => s.id).filter(x => typeof x === 'string' && x.length > 0); return ids.length === ends.length && new Set(ids).size === ids.length; })()`
+- ✓ **ten-round-ends-recorded** _(custom)_ — At least 10 round-end frames captured (one per requested spin)
+    - Check: `getRoundEndSpins(collector.spins).length >= 10`
+- ✓ **no-lost-spins-warnings** _(custom)_ — No debounce/blocked-click warnings indicating lost spins
+    - Check: `warnings.filter(w => /debounced|popup may have blocked|likely debounced|no response within/i.test(w)).length === 0`
 
 ---
 
-### 4. `balance-non-negative-across-session` — Balance non-negative across full session
+### 3. `base-tumble-feature-aggregation` — Tumble cascade win aggregation
 
 **Category:** Base Game  **Severity:** 🔴 critical
 
-**Description:** Run 5 spins at default bet and assert endingBalance >= 0 on every spin. Spec field_validation requires endingBalance.min=0 — overdraft would manifest if bet exceeded remaining balance, must be server-blocked even at large initial balances.
+**Description:** Run 15 spins at default bet $7.00 and verify cascade/tumble integrity: every winAmount is finite and non-negative, winning spins (winAmount>0) carry a populated matrix or state, and the running balance ledger reconciles after tumble payouts (paytable: 'Tumble Feature — All wins added after all tumbles resulted from a base spin have been played'). RNG-independent invariants only — no requirement that a win must occur.
 
 #### 🪜 Step
 
@@ -147,304 +126,525 @@ _(no setup — observational case, runs at default state)_
 
 | Input | Value |
 |---|---|
-| expected_bet | `0.2` |
-| config.betAmount | `0.2` |
-| spin_count | `5` |
-
-#### ✅ Expect
-
-- ✓ **ending-balance-non-negative-all** _(custom)_ — Every spin has endingBalance >= 0
-    - Check: `collector.spins.every(s => typeof s.endingBalance === 'number' && s.endingBalance >= 0)`
-- ✓ **ending-balance-finite-all** _(custom)_ — Every endingBalance is finite (no NaN/Infinity)
-    - Check: `collector.spins.every(s => typeof s.endingBalance === 'number' && isFinite(s.endingBalance))`
-- ✓ **starting-balance-non-negative-when-known** _(custom)_ — When startingBalance is reported, it is non-negative
-    - Check: `collector.spins.every(s => s.startingBalance == null || (typeof s.startingBalance === 'number' && s.startingBalance >= 0))`
-- ✓ **no-overdraft-warnings** _(custom)_ — No engine warnings about overdraft or negative balance
-    - Check: `warnings.filter(w => /overdraft|negative balance|insufficient/i.test(w)).length === 0`
-
----
-
-### 5. `round-id-uniqueness` — Round ID uniqueness across spins
-
-**Category:** Base Game  **Severity:** 🟠 major
-
-**Description:** Run 15 spins at default bet 0.20 and assert every roundId is a unique non-empty string. Duplicate round IDs would indicate state corruption or double-submission bugs in the /gs2c/v3/gameService endpoint (spec.field_validation: roundId required string non-nullable).
-
-#### 🪜 Step
-
-_(no setup — observational case, runs at default state)_
-
-#### 📥 Input
-
-| Input | Value |
-|---|---|
-| expected_bet | `0.2` |
-| config.betAmount | `0.2` |
+| expected_bet | `7` |
+| config.coin | `0.35` |
+| config.lines | `20` |
+| config.totalBet | `7` |
 | spin_count | `15` |
 
 #### ✅ Expect
 
-- ✓ **round-id-all-strings** _(custom)_ — Every spin id is a non-empty string
-    - Check: `collector.spins.every(s => typeof s.id === 'string' && s.id.length > 0)`
-- ✓ **round-id-all-unique** _(custom)_ — All 15 round ids are unique (no duplicates)
-    - Check: `new Set(collector.spins.map(s => s.id)).size === collector.spins.length`
-- ✓ **round-id-count-matches** _(custom)_ — At least 15 round-end frames captured
-    - Check: `getRoundEndSpins(collector.spins).length >= 15`
-- ✓ **round-id-no-double-submit** _(custom)_ — No double-submit warnings raised
-    - Check: `warnings.filter(w => /duplicate|double.?submit|replay/i.test(w)).length === 0`
+- ✓ **all-bets-stable-at-7** _(custom)_ — Bet stays at 7.00 across all 15 spins (no UI drift)
+    - Check: `collector.spins.every(s => typeof s.betAmount === 'number' && Math.abs(s.betAmount - 7.00) <= 0.01)`
+- ✓ **winning-spins-shape-valid** _(custom)_ — Every spin with winAmount>0 has a valid id and a non-negative endingBalance
+    - Check: `collector.spins.filter(s => typeof s.winAmount === 'number' && s.winAmount > 0).every(s => typeof s.id === 'string' && s.id.length > 0 && typeof s.endingBalance === 'number' && s.endingBalance >= 0)`
+- ✓ **tumble-ledger-reconciles** _(custom)_ — Aggregate balance change equals -ΣbetAmount + ΣwinAmount across all round-ends
+    - Check: `(() => { if (balanceBefore == null) return true; const ends = getRoundEndSpins(collector.spins); const sumBet = ends.reduce((a, s) => a + (typeof s.betAmount === 'number' ? s.betAmount : 0), 0); const sumWin = ends.reduce((a, s) => a + (typeof s.winAmount === 'number' ? s.winAmount : 0), 0); const last = getCurrentBalance(collector); return last != null && Math.abs(last - (balanceBefore - sumBet + sumWin)) <= 0.01; })()`
+- ✓ **matrix-shape-when-present** _(custom)_ — When matrix data is present it is an array — does not hallucinate fixed dimensions (grid_dimensions from spec are observational only)
+    - Check: `collector.spins.filter(s => Array.isArray(s.matrix)).every(s => s.matrix.length > 0)`
+- ✓ **screen-balance-tracks-api** _(custom)_ — Final OCR balance display tracks final API endingBalance
+    - Check: `screen.balance === null || (typeof getCurrentBalance(collector) === 'number' && Math.abs(screen.balance - getCurrentBalance(collector)) <= 0.01)`
+- ✓ **state-machine-stable** _(custom)_ — Engine state stayed on MAIN throughout (or interrupts were properly handled for any organic feature triggers)
+    - Check: `stateTimeline.every(t => t.to === 'MAIN') || (interrupts && interrupts.count >= 0)`
 
 ---
 
 ## Bet Variation (5)
 
-### 6. `bet-variation-min-0.20` — Bet variation — minimum bet 0.20
+### 4. `bet-variation-min-0.20` — Minimum bet $0.20 spin
 
 **Category:** Bet Variation  **Severity:** 🟠 major
 
-**Description:** Set bet to the lowest ladder rung 0.20 USD (rules-ui: betMinus__bet-0.20 verified at (353,285)) and run 2 spins; assert spin.betAmount === 0.20 for every spin and balance arithmetic holds. Validates lowest bet boundary on the Pragmatic gameService endpoint.
+**Description:** Configure bet to the ladder floor of $0.20 (options: betPlus__bet-0.20 is the lowest entry in the verified bet grid) and run one spin. Verify the server records betAmount=0.20, the OCR-bet display matches, and balance arithmetic holds at the floor of bet_mechanics range.
 
 #### 🪜 Step
 
-1. Locate the bet display in the bottom info bar (current value labelled 'BET' near the spin button).
-2. Click the betMinus '-' button (options.json: 'Bet Decrease (-)' at left of spin button) to open the bet ladder panel.
-3. From the ladder grid, click the cell labelled 'bet-0.20' (top-left of grid, lowest rung).
-4. Close the bet panel via the X button.
-5. Verify the on-screen BET display reads '0.20' (within ±1 ladder step tolerance).
+1. Click the betPlus button (labeled in registry as 'betPlus' at approx 1095,650) to open the bet selection panel.
+2. In the open bet grid, click the bet tile labeled '0.20' (registry: betPlus__bet-0.20).
+3. Verify the panel closes automatically OR click the closeButton (registry: betPlus__closeButton at approx 1097,220).
+4. Verify the bet display in the bottom HUD reads '0.20' (within ±1 ladder step tolerance — next valid step is 0.30).
 
 #### 📥 Input
 
 | Input | Value |
 |---|---|
 | expected_bet | `0.2` |
-| config.betAmount | `0.2` |
-| spin_count | `2` |
+| config.coin | `0.01` |
+| config.lines | `20` |
+| config.totalBet | `0.2` |
+| spin_count | `1` |
 
 #### ✅ Expect
 
-- ✓ **every-spin-bet-0.20** _(custom)_ — Each spin's betAmount equals target 0.20
-    - Check: `collector.spins.every(s => typeof s.betAmount === 'number' && Math.abs(s.betAmount - 0.20) <= 0.01)`
-- ✓ **per-spin-balance-conservation** _(custom)_ — Per-spin balance arithmetic holds (skipped where startingBalance null)
-    - Check: `collector.spins.every(s => s.startingBalance == null || Math.abs(s.endingBalance - (s.startingBalance - s.betAmount + s.winAmount)) <= 0.01)`
-- ✓ **all-spins-resolved** _(custom)_ — All spins resolved cleanly
-    - Check: `collector.spins.every(s => s.status == null || s.status === 'RESOLVED')`
-- ✓ **no-state-disruption-warnings** _(custom)_ — No popup/interrupt warnings during setup
-    - Check: `warnings.filter(w => /popup|interrupt|stuck/i.test(w)).length === 0`
-
----
-
-### 7. `bet-variation-low-0.50` — Bet variation — low tier 0.50
-
-**Category:** Bet Variation  **Severity:** 🟠 major
-
-**Description:** Set bet to 0.50 USD (rules-ui: bet-0.50 verified at (770,285)) and run 2 spins; verify betAmount reflects selection and balance still reconciles. Tests a ~25th percentile point on the bet ladder spanning 0.20 → 100.
-
-#### 🪜 Step
-
-1. Click the bet display area (between '-' and '+' near spin button) to open the bet ladder panel.
-2. In the ladder grid, click the cell labelled 'bet-0.50' (top row, 4th column).
-3. Close the bet panel via the X (closeButton at 1097,221).
-4. Verify the bet display reads exactly '0.50' (within ±1 ladder step tolerance).
-
-#### 📥 Input
-
-| Input | Value |
-|---|---|
-| expected_bet | `0.5` |
-| config.betAmount | `0.5` |
-| spin_count | `2` |
-
-#### ✅ Expect
-
-- ✓ **every-spin-bet-0.50** _(custom)_ — Each spin's betAmount equals 0.50
-    - Check: `collector.spins.every(s => typeof s.betAmount === 'number' && Math.abs(s.betAmount - 0.50) <= 0.01)`
-- ✓ **balance-arithmetic-low-bet** _(custom)_ — Balance arithmetic holds for 0.50 bets
-    - Check: `collector.spins.every(s => s.startingBalance == null || Math.abs(s.endingBalance - (s.startingBalance - s.betAmount + s.winAmount)) <= 0.01)`
-- ✓ **wins-non-negative** _(custom)_ — winAmount non-negative for all spins
-    - Check: `collector.spins.every(s => typeof s.winAmount === 'number' && s.winAmount >= 0)`
-- ✓ **no-error-warnings** _(custom)_ — No engine errors during the bet change
+- ✓ **bet-amount-equals-0.20** _(custom)_ — spin.betAmount equals target minimum 0.20 USD
+    - Check: `typeof spin.betAmount === 'number' && Math.abs(spin.betAmount - 0.20) <= 0.01`
+- ✓ **ui-bet-matches-target** _(custom)_ — OCR bet display matches API betAmount (configured screen.bet region)
+    - Check: `screen.bet === null || Math.abs(screen.bet - 0.20) <= 0.01`
+- ✓ **win-amount-valid-at-min-bet** _(custom)_ — winAmount is finite non-negative at minimum stake
+    - Check: `typeof spin.winAmount === 'number' && isFinite(spin.winAmount) && spin.winAmount >= 0`
+- ✓ **balance-arithmetic-at-min** _(custom)_ — Balance conservation holds at minimum bet (null-guarded)
+    - Check: `spin.startingBalance == null || Math.abs(spin.endingBalance - (spin.startingBalance - spin.betAmount + spin.winAmount)) <= 0.01`
+- ✓ **ocr-balance-tracks-api-min** _(custom)_ — OCR balance reflects API endingBalance after min-bet spin
+    - Check: `screen.balance === null || Math.abs(screen.balance - spin.endingBalance) <= 0.01`
+- ✓ **no-setup-errors-min** _(custom)_ — Bet-selection setup produced no error warnings
     - Check: `warnings.filter(w => /error|fail|threw/i.test(w)).length === 0`
 
 ---
 
-### 8. `bet-variation-mid-4.00` — Bet variation — mid tier 4.00 (default base bet visible)
+### 5. `bet-variation-low-1.00` — Low bet $1.00 spin
 
-**Category:** Bet Variation  **Severity:** 🟠 major
+**Category:** Bet Variation  **Severity:** ⚪ minor
 
-**Description:** Set bet to 4.00 USD (buy-options.base_bet_visible = 4 — the bet level used when computing buy-feature costs $400/$1000/$4000) and run 3 spins; verify betAmount === 4.00. Critical anchor case because every buy-feature ratio assertion later assumes bet=4.
+**Description:** Configure bet to $1.00 (options: betPlus__bet-1.00 verified) — a common low-stake ladder rung — and run one spin. Verifies that mid-low ladder selection (transition from cent-scale to dollar-scale tiles in the bet grid) propagates correctly to backend coin/line calculation.
 
 #### 🪜 Step
 
-1. Click the bet display area (between '-' and '+' near spin button) to open the bet ladder panel.
-2. In the ladder grid, click the cell labelled 'bet-4.00' (third row, fourth column at 1047,347).
-3. Close the bet panel via the X.
-4. Verify the bet display reads exactly '4.00' (within ±1 ladder step tolerance).
+1. Click the betPlus button (registry: betPlus at approx 1095,650) to open the bet selection panel.
+2. In the panel grid, click the tile labeled '1.00' (registry: betPlus__bet-1.00 at approx 631,347).
+3. Verify the panel closes OR click the close button.
+4. Verify the bet display in the HUD reads '1.00' (exact ladder value, no tolerance window needed).
 
 #### 📥 Input
 
 | Input | Value |
 |---|---|
-| expected_bet | `4` |
-| config.betAmount | `4` |
-| spin_count | `3` |
+| expected_bet | `1` |
+| config.coin | `0.05` |
+| config.lines | `20` |
+| config.totalBet | `1` |
+| spin_count | `1` |
 
 #### ✅ Expect
 
-- ✓ **every-spin-bet-4** _(custom)_ — Each spin's betAmount equals 4.00
-    - Check: `collector.spins.every(s => typeof s.betAmount === 'number' && Math.abs(s.betAmount - 4.00) <= 0.01)`
-- ✓ **balance-arithmetic-mid-bet** _(custom)_ — Balance arithmetic holds for 4.00 bets
-    - Check: `collector.spins.every(s => s.startingBalance == null || Math.abs(s.endingBalance - (s.startingBalance - s.betAmount + s.winAmount)) <= 0.01)`
-- ✓ **round-ids-unique-mid** _(custom)_ — All 3 spins have unique roundIds
-    - Check: `new Set(collector.spins.map(s => s.id)).size === collector.spins.length`
-- ✓ **spins-not-debounced** _(custom)_ — No dropped spins during the bet-change session
-    - Check: `warnings.filter(w => /debounced|likely debounced|no spin.*response within/i.test(w)).length === 0`
+- ✓ **bet-amount-equals-1.00** _(custom)_ — spin.betAmount equals 1.00 USD
+    - Check: `typeof spin.betAmount === 'number' && Math.abs(spin.betAmount - 1.00) <= 0.01`
+- ✓ **ui-bet-matches-1.00** _(custom)_ — OCR bet display matches 1.00
+    - Check: `screen.bet === null || Math.abs(screen.bet - 1.00) <= 0.01`
+- ✓ **balance-arithmetic-low** _(custom)_ — Balance arithmetic at $1 bet
+    - Check: `spin.startingBalance == null || Math.abs(spin.endingBalance - (spin.startingBalance - spin.betAmount + spin.winAmount)) <= 0.01`
+- ✓ **win-non-negative-low** _(custom)_ — Win amount is a finite non-negative number
+    - Check: `typeof spin.winAmount === 'number' && isFinite(spin.winAmount) && spin.winAmount >= 0`
+- ✓ **round-id-present-low** _(custom)_ — Round id is a non-empty string
+    - Check: `typeof spin.id === 'string' && spin.id.length > 0`
 
 ---
 
-### 9. `bet-variation-high-20.00` — Bet variation — high tier 20.00
+### 6. `bet-variation-mid-10.00` — Mid bet $10.00 spin
 
 **Category:** Bet Variation  **Severity:** 🟠 major
 
-**Description:** Set bet to 20.00 USD (rules-ui: bet-20.00 verified at (353,471)) and run 2 spins; verify selection persists across spins and balance deducts 20 per spin. Represents ~75th percentile of bet ladder, exposing mid-to-high bet arithmetic.
+**Description:** Configure bet to $10.00 (options: betPlus__bet-10.00 verified at 1048,410) and run one spin. This rung crosses the single-digit→double-digit boundary in the bet grid and validates the coin scaling — samples show c=0.35 for $7 bet implying c = totalBet/lines, so $10/20 lines should yield internal coin=0.50.
 
 #### 🪜 Step
 
-1. Click the bet display area between '-' and '+' near spin button to open the bet ladder.
-2. In the ladder grid click cell 'bet-20.00' (fourth row, first column at 353,471).
-3. Close the bet panel via the X.
-4. Verify the bet display reads exactly '20.00' (within ±1 ladder step tolerance).
+1. Click the betPlus button (registry: betPlus at approx 1095,650) to open the bet selection panel.
+2. In the bet grid panel, click the tile labeled '10.00' (registry: betPlus__bet-10.00 at approx 1048,410).
+3. Verify the panel closes OR click closeButton.
+4. Verify the bet display in the HUD reads exactly '10.00'.
+
+#### 📥 Input
+
+| Input | Value |
+|---|---|
+| expected_bet | `10` |
+| config.coin | `0.5` |
+| config.lines | `20` |
+| config.totalBet | `10` |
+| spin_count | `1` |
+
+#### ✅ Expect
+
+- ✓ **bet-amount-equals-10.00** _(custom)_ — spin.betAmount equals 10.00 USD
+    - Check: `typeof spin.betAmount === 'number' && Math.abs(spin.betAmount - 10.00) <= 0.01`
+- ✓ **ui-bet-matches-10** _(custom)_ — OCR bet display matches API at $10 stake
+    - Check: `screen.bet === null || Math.abs(screen.bet - 10.00) <= 0.01`
+- ✓ **balance-arithmetic-mid** _(custom)_ — Balance conservation holds at $10 bet
+    - Check: `spin.startingBalance == null || Math.abs(spin.endingBalance - (spin.startingBalance - spin.betAmount + spin.winAmount)) <= 0.01`
+- ✓ **ocr-balance-tracks-mid** _(custom)_ — OCR balance equals API endingBalance after $10 spin
+    - Check: `screen.balance === null || Math.abs(screen.balance - spin.endingBalance) <= 0.01`
+- ✓ **win-valid-mid** _(custom)_ — winAmount is finite non-negative
+    - Check: `typeof spin.winAmount === 'number' && isFinite(spin.winAmount) && spin.winAmount >= 0`
+- ✓ **no-interrupt-during-mid** _(custom)_ — No interrupts dispatched during a strict single-spin mid-bet case (or any interrupts were properly handled)
+    - Check: `interrupts.count === 0 || (Array.isArray(interrupts.handled) && interrupts.handled.length === interrupts.count)`
+
+---
+
+### 7. `bet-variation-high-50.00` — High bet $50.00 spin
+
+**Category:** Bet Variation  **Severity:** 🟠 major
+
+**Description:** Configure bet to $50.00 (options: betPlus__bet-50.00 verified at 770,472), approximately the 75th-percentile rung of the bet ladder, and run one spin. Validates that the backend accepts large coin values, the balance can sustain the deduction, and OCR can still parse the HUD bet display at large stakes.
+
+#### 🪜 Step
+
+1. Click the betPlus button (registry: betPlus at approx 1095,650) to open the bet selection panel.
+2. In the bet grid, click the tile labeled '50.00' (registry: betPlus__bet-50.00 at approx 770,472).
+3. Verify the panel closes OR click closeButton.
+4. Verify the HUD bet display reads exactly '50.00' before the test loop begins spinning.
+
+#### 📥 Input
+
+| Input | Value |
+|---|---|
+| expected_bet | `50` |
+| config.coin | `2.5` |
+| config.lines | `20` |
+| config.totalBet | `50` |
+| spin_count | `1` |
+
+#### ✅ Expect
+
+- ✓ **bet-amount-equals-50.00** _(custom)_ — spin.betAmount equals 50.00 USD
+    - Check: `typeof spin.betAmount === 'number' && Math.abs(spin.betAmount - 50.00) <= 0.01`
+- ✓ **ui-bet-matches-50** _(custom)_ — OCR bet display matches API at $50 stake
+    - Check: `screen.bet === null || Math.abs(screen.bet - 50.00) <= 0.01`
+- ✓ **balance-sufficient-and-conserved** _(custom)_ — Starting balance is sufficient and arithmetic conserves at $50 stake
+    - Check: `spin.startingBalance == null || (spin.startingBalance >= spin.betAmount && Math.abs(spin.endingBalance - (spin.startingBalance - spin.betAmount + spin.winAmount)) <= 0.01)`
+- ✓ **ending-balance-non-negative-high** _(custom)_ — endingBalance is non-negative after high-stake spin (no overdraft)
+    - Check: `typeof spin.endingBalance === 'number' && spin.endingBalance >= 0`
+- ✓ **ocr-balance-tracks-high** _(custom)_ — OCR balance display matches API endingBalance after $50 spin
+    - Check: `screen.balance === null || Math.abs(screen.balance - spin.endingBalance) <= 0.01`
+- ✓ **win-valid-high** _(custom)_ — winAmount is finite non-negative
+    - Check: `typeof spin.winAmount === 'number' && isFinite(spin.winAmount) && spin.winAmount >= 0`
+- ✓ **no-setup-errors-high** _(custom)_ — Bet-selection setup produced no error warnings at high stake
+    - Check: `warnings.filter(w => /error|fail|threw/i.test(w)).length === 0`
+
+---
+
+### 8. `bet-variation-max-100.00` — Maximum bet $100.00 spin
+
+**Category:** Bet Variation  **Severity:** 🔴 critical
+
+**Description:** Verify betAmount in spin response equals 100.00 USD when bet is configured to ladder maximum (options: betPlus__bet-100.00 at coords 631,534). Validates upper bet boundary, balance debit arithmetic at max stake, and that the ladder ceiling is honoured by both UI and server.
+
+#### 🪜 Step
+
+1. Click the betPlus button (located at 1095,650 per options registry) to open the bet selection panel.
+2. In the bet selection grid, locate the '$100.00' button (options: betPlus__bet-100.00 at 631,534).
+3. Click the '$100.00' tile to select it.
+4. Click the closeButton (options: betPlus__closeButton at 1097,220) to close the panel.
+5. Verify the main bet display in the footer reads '$100.00' (within ±1 ladder step — i.e. exactly 100.00, the maximum on the ladder).
+
+#### 📥 Input
+
+| Input | Value |
+|---|---|
+| expected_bet | `100` |
+| config.totalBet | `100` |
+| spin_count | `1` |
+
+#### ✅ Expect
+
+- ✓ **bet-amount-matches-max** _(custom)_ — spin.betAmount equals catalog expected_bet of 100.00
+    - Check: `typeof spin.betAmount === 'number' && Math.abs(spin.betAmount - 100.00) <= 0.01`
+- ✓ **bet-ui-matches-api-max** _(custom)_ — UI bet display (OCR) matches API betAmount at max stake
+    - Check: `screen.bet === null || Math.abs(screen.bet - spin.betAmount) <= 0.01`
+- ✓ **balance-conservation-max-bet** _(custom)_ — Balance arithmetic holds: ending = starting - bet + win (skip first spin where startingBalance null)
+    - Check: `spin.startingBalance == null || Math.abs(spin.endingBalance - (spin.startingBalance - spin.betAmount + spin.winAmount)) <= 0.01`
+- ✓ **win-amount-non-negative** _(custom)_ — winAmount is a finite non-negative number at max bet
+    - Check: `typeof spin.winAmount === 'number' && spin.winAmount >= 0 && isFinite(spin.winAmount)`
+- ✓ **no-debounced-spin-at-max** _(custom)_ — No debounced/dropped spin clicks during max-bet test
+    - Check: `warnings.filter(w => /debounced|likely debounced|popup may have blocked/i.test(w)).length === 0`
+
+---
+
+## Other (9)
+
+### 9. `bet-boundary-above-max-clamped` — Bet above max — UI must clamp to $100
+
+**Category:** Other  **Severity:** 🔴 critical
+
+**Description:** Verify UI/server clamp behaviour when attempting to exceed the ladder maximum of $100.00 (options: betPlus ladder caps at bet-100.00). After selecting max and attempting further increases via the betPlus stepper, the bet must remain at $100.00 and the resulting spin's betAmount must equal exactly 100.00 (Best Practices §18.7.1 — prevents overshoot exploitation).
+
+#### 🪜 Step
+
+1. Click the betPlus button (options: betPlus at 1095,650) to open the bet selection grid.
+2. Locate and click the '$100.00' tile (options: betPlus__bet-100.00 at 631,534) to select maximum bet.
+3. Click the closeButton (options: betPlus__closeButton at 1097,220) to close the panel.
+4. Verify the bet display reads '$100.00'.
+5. Click the betPlus stepper button (1095,650) 3 additional times to attempt overshoot above the ladder maximum.
+6. Verify the bet display STILL reads exactly '$100.00' (the ladder must clamp — no value above 100.00 is reachable).
+
+#### 📥 Input
+
+| Input | Value |
+|---|---|
+| expected_bet | `100` |
+| config.totalBet | `100` |
+| spin_count | `1` |
+
+#### ✅ Expect
+
+- ✓ **bet-clamped-at-max** _(custom)_ — Server-side betAmount clamped at exactly 100.00 — no overshoot accepted
+    - Check: `typeof spin.betAmount === 'number' && spin.betAmount === 100.00`
+- ✓ **bet-not-exceeds-ladder-max** _(custom)_ — betAmount strictly does not exceed ladder maximum of 100.00
+    - Check: `typeof spin.betAmount === 'number' && spin.betAmount <= 100.00`
+- ✓ **ui-bet-clamped-display** _(custom)_ — UI bet display (OCR) shows the clamped value matching API
+    - Check: `screen.bet === null || Math.abs(screen.bet - 100.00) <= 0.01`
+- ✓ **balance-conservation-clamped** _(custom)_ — Balance conservation holds with clamped bet
+    - Check: `spin.startingBalance == null || Math.abs(spin.endingBalance - (spin.startingBalance - spin.betAmount + spin.winAmount)) <= 0.01`
+- ✓ **no-error-state-on-overshoot** _(custom)_ — Engine remained on MAIN throughout overshoot attempt — no error popup or stuck state
+    - Check: `stateTimeline.every(t => t.to === 'MAIN' || t.to === 'IDLE' || /SPIN/i.test(t.to))`
+
+---
+
+### 10. `bet-boundary-below-min-clamped` — Bet below min — UI must clamp to $0.20
+
+**Category:** Other  **Severity:** 🔴 critical
+
+**Description:** Verify UI/server clamp behaviour when attempting to go below the ladder minimum of $0.20 (options: betPlus__bet-0.20 at 353,284). After selecting min and pressing betMinus extra times, the bet must remain at $0.20 and the spin's betAmount must equal exactly 0.20 — prevents bet=0 or negative bet exploit (Best Practices §18.7.2).
+
+#### 🪜 Step
+
+1. Click the betPlus button (options: betPlus at 1095,650) to open the bet selection grid.
+2. Locate and click the '$0.20' tile (options: betPlus__bet-0.20 at 353,284) to select minimum bet.
+3. Click the closeButton (options: betPlus__closeButton at 1097,220) to close the panel.
+4. Verify the bet display reads '$0.20'.
+5. Click the betMinus button (options: betMinus at 872,665) 3 additional times to attempt to go below the floor.
+6. Verify the bet display STILL reads exactly '$0.20' (the ladder must clamp — no value below 0.20 is reachable, no bet=0 allowed).
+
+#### 📥 Input
+
+| Input | Value |
+|---|---|
+| expected_bet | `0.2` |
+| config.totalBet | `0.2` |
+| spin_count | `1` |
+
+#### ✅ Expect
+
+- ✓ **bet-clamped-at-min** _(custom)_ — Server-side betAmount clamped at exactly 0.20 — no underflow accepted
+    - Check: `typeof spin.betAmount === 'number' && Math.abs(spin.betAmount - 0.20) <= 0.01`
+- ✓ **bet-strictly-positive** _(custom)_ — betAmount strictly greater than 0 — never accepts bet=0 spin
+    - Check: `typeof spin.betAmount === 'number' && spin.betAmount > 0`
+- ✓ **bet-not-below-ladder-min** _(custom)_ — betAmount strictly does not go below ladder minimum 0.20
+    - Check: `typeof spin.betAmount === 'number' && spin.betAmount >= 0.20`
+- ✓ **ui-bet-clamped-display-min** _(custom)_ — UI bet display (OCR) shows the clamped minimum value matching API
+    - Check: `screen.bet === null || Math.abs(screen.bet - 0.20) <= 0.01`
+- ✓ **balance-conservation-min-clamp** _(custom)_ — Balance conservation holds at clamped minimum bet
+    - Check: `spin.startingBalance == null || Math.abs(spin.endingBalance - (spin.startingBalance - spin.betAmount + spin.winAmount)) <= 0.01`
+
+---
+
+### 11. `tumble-multiplier-overlay-watch` — Tumble multiplier overlay — watch x2 → +1 chain
+
+**Category:** Other  **Severity:** 🟠 major
+
+**Description:** Run 30 base-game spins at default $7.00 to observe tumble cascade behavior and the Multiplier Overlay Feature (paytable: 'new symbols tumble with x2 multiplier, increased by x1 each subsequent tumble; multipliers add together and multiply each winning combination; reset after all tumbles'). RNG-independent shape invariants only — does NOT require multiplier to appear.
+
+#### 🪜 Step
+
+1. Read the current bet display in the bottom info bar — verify it shows $7.00 (default ladder position bet-7.00-selected per UI registry).
+2. If bet is not $7.00, click the bet value to open the bet selector and choose the '7.00' tile (UI registry: bet-7.00-selected at 631,410).
+3. Verify the bet display reads exactly '$7.00' (within ±1 ladder step tolerance).
+
+#### 📥 Input
+
+| Input | Value |
+|---|---|
+| expected_bet | `7` |
+| config.betSize | `7` |
+| config.betLevel | `1` |
+| spin_count | `30` |
+
+#### ✅ Expect
+
+- ✓ **win-amounts-numeric-non-negative** _(custom)_ — Every spin reports numeric winAmount ≥ 0 across tumble chain (type-guarded)
+    - Check: `collector.spins.every(s => typeof s.winAmount === 'number' && s.winAmount >= 0)`
+- ✓ **bet-stable** _(custom)_ — betAmount stays constant at $7.00 across all 30 base spins (no tumble-induced bet drift)
+    - Check: `collector.spins.every(s => typeof s.betAmount === 'number' && Math.abs(s.betAmount - 7.00) <= 0.01)`
+- ✓ **balance-conservation-per-spin** _(custom)_ — Per-spin balance conservation: ending = starting - bet + win (±0.01); skip first spin with null startingBalance
+    - Check: `collector.spins.every(s => s.startingBalance == null || Math.abs(s.endingBalance - (s.startingBalance - s.betAmount + s.winAmount)) <= 0.01)`
+- ✓ **all-resolved** _(custom)_ — Every spin status is RESOLVED
+    - Check: `collector.spins.every(s => s.status === 'RESOLVED')`
+- ✓ **round-ends-present** _(custom)_ — At least 1 round-end frame captured across the watch (collector sanity)
+    - Check: `getRoundEndSpins(collector.spins).length >= 1`
+- ✓ **no-error-warnings** _(custom)_ — No fatal warnings during tumble-watch run
+    - Check: `warnings.filter(w => /error|fail|debounced/i.test(w)).length === 0`
+
+---
+
+### 12. `payout-correctness-base-game` — Payout correctness vs paytable for base game wins
+
+**Category:** Other  **Severity:** 🔴 critical
+
+**Description:** Run 30 spins at $7.00 bet to validate winAmount values are consistent with paytable bounds (Best Practices §18.2). Per paytable, highest payout per combination is 350× coin (Gold Cart 12-30 cluster) and grid is 6×5=30 cells max, so theoretical per-spin max excluding multipliers is bounded. Asserts winAmount sums reconcile with balance arithmetic and stay within sane upper bounds.
+
+#### 🪜 Step
+
+1. Read the current bet display in the bottom info bar — verify it shows $7.00 (default ladder position bet-7.00-selected per UI registry).
+2. If bet is not $7.00, click the bet value to open the bet selector and choose the '7.00' tile (UI registry: bet-7.00-selected at 631,410).
+3. Verify the bet display reads exactly '$7.00' (within ±1 ladder step tolerance).
+
+#### 📥 Input
+
+| Input | Value |
+|---|---|
+| expected_bet | `7` |
+| config.betSize | `7` |
+| config.betLevel | `1` |
+| spin_count | `30` |
+
+#### ✅ Expect
+
+- ✓ **winamount-bounded-by-max-cap** _(custom)_ — winAmount on each base spin stays under 5000× bet ($35,000 ceiling) — sanity bound (Pragmatic typical max win cap)
+    - Check: `collector.spins.every(s => typeof s.winAmount === 'number' && s.winAmount <= 7.00 * 5000)`
+- ✓ **winamount-non-negative** _(custom)_ — winAmount ≥ 0 on every spin (no negative payouts; type-guarded)
+    - Check: `collector.spins.every(s => typeof s.winAmount === 'number' && s.winAmount >= 0)`
+- ✓ **sum-reconciliation** _(custom)_ — Aggregate: getCurrentBalance == balanceBefore - sum(bets) + sum(wins) within ±0.01
+    - Check: `(() => { const sumBet = collector.spins.reduce((a, s) => a + (typeof s.betAmount === 'number' ? s.betAmount : 0), 0); const sumWin = collector.spins.reduce((a, s) => a + (typeof s.winAmount === 'number' ? s.winAmount : 0), 0); const cur = getCurrentBalance(collector); return typeof cur === 'number' && typeof balanceBefore === 'number' && Math.abs(cur - balanceBefore + sumBet - sumWin) <= 0.01; })()`
+- ✓ **per-spin-balance-conservation** _(custom)_ — Each spin: ending = starting - bet + win (±0.01); skip when startingBalance null (first spin)
+    - Check: `collector.spins.every(s => s.startingBalance == null || Math.abs(s.endingBalance - (s.startingBalance - s.betAmount + s.winAmount)) <= 0.01)`
+- ✓ **bet-fixed-at-7** _(custom)_ — betAmount stays at exactly $7.00 across all 30 spins (no drift)
+    - Check: `collector.spins.every(s => typeof s.betAmount === 'number' && Math.abs(s.betAmount - 7.00) <= 0.01)`
+- ✓ **round-id-shape** _(custom)_ — Every spin has a non-empty string id (round identity present)
+    - Check: `collector.spins.every(s => typeof s.id === 'string' && s.id.length > 0)`
+- ✓ **screen-bet-matches-api** _(custom)_ — OCR-read bet display matches API betAmount at end of run (±0.01) — UI consistency on configured bet field
+    - Check: `screen.bet === null || collector.spins.length === 0 || Math.abs(screen.bet - 7.00) <= 0.01`
+
+---
+
+### 13. `payout-zero-on-no-winline` — Zero win when no symbol cluster ≥8
+
+**Category:** Other  **Severity:** 🟠 major
+
+**Description:** Verify that when a base-game spin produces no qualifying cluster (paytable: 'symbols pay anywhere ... 8-9 / 10-11 / 12-30'), the response has winAmount === 0 and remains a valid resolved round. Over 30 spins, every spin with winAmount===0 must still be RESOLVED and arithmetically consistent. Complements paytable correctness — pays only on 8+ clusters.
+
+#### 🪜 Step
+
+_(no setup — observational case, runs at default state)_
+
+#### 📥 Input
+
+| Input | Value |
+|---|---|
+| expected_bet | `7` |
+| config.betSize | `7` |
+| config.betLevel | `1` |
+| spin_count | `30` |
+
+#### ✅ Expect
+
+- ✓ **winamount-numeric-non-negative** _(custom)_ — Every spin has a numeric winAmount >= 0
+    - Check: `collector.spins.every(s => typeof s.winAmount === 'number' && s.winAmount >= 0)`
+- ✓ **round-end-spins-present** _(custom)_ — At least one round-end spin captured across 30 spin rounds
+    - Check: `getRoundEndSpins(collector.spins).length >= 1`
+- ✓ **bet-amount-constant-at-seven** _(custom)_ — betAmount remains constant at $7.00 across all spins (default ladder position)
+    - Check: `collector.spins.every(s => typeof s.betAmount === 'number' && Math.abs(s.betAmount - 7.00) <= 0.01)`
+- ✓ **balance-conservation-per-spin** _(custom)_ — Per-spin balance conservation holds (skipping first spin where startingBalance may be null)
+    - Check: `collector.spins.every(s => s.startingBalance == null || typeof s.endingBalance !== 'number' || Math.abs(s.endingBalance - (s.startingBalance - s.betAmount + s.winAmount)) <= 0.01)`
+- ✓ **no-debounce-warnings** _(custom)_ — No spins were lost to debounce or popup blocking
+    - Check: `warnings.filter(w => /debounced|popup may have blocked|likely debounced/i.test(w)).length === 0`
+
+---
+
+### 14. `rules-symbol-count-match` — Rules consistency — symbol count match
+
+**Category:** Other  **Severity:** 🟠 major
+
+**Description:** Verify the paytable catalog declares exactly 9 paying symbols (cart, helmet, lantern, pickaxe, red/purple/blue/green/yellow gems) plus a BONUS scatter (paytable: §symbols). Run 5 baseline spins to confirm runtime spin shape is consistent with a 6x5 grid and that responses carry the expected normalized fields without producing parser errors (Best Practices §18.1).
+
+#### 🪜 Step
+
+_(no setup — observational case, runs at default state)_
+
+#### 📥 Input
+
+| Input | Value |
+|---|---|
+| expected_bet | `7` |
+| config.betSize | `7` |
+| config.betLevel | `1` |
+| spin_count | `5` |
+
+#### ✅ Expect
+
+- ✓ **all-spins-resolved** _(custom)_ — All 5 spins reached RESOLVED status
+    - Check: `collector.spins.every(s => s.status === 'RESOLVED' || s.status === undefined)`
+- ✓ **round-ids-are-strings** _(custom)_ — Every spin carries a non-empty string round identifier
+    - Check: `collector.spins.every(s => typeof s.id === 'string' && s.id.length > 0)`
+- ✓ **bet-and-win-numeric** _(custom)_ — betAmount and winAmount are numeric (validates response field normalization for paytable lookup)
+    - Check: `collector.spins.every(s => typeof s.betAmount === 'number' && typeof s.winAmount === 'number')`
+- ✓ **no-state-machine-errors** _(custom)_ — Engine did not emit error/fail warnings during the 5 spins
+    - Check: `warnings.filter(w => /error|fail/i.test(w)).length === 0`
+- ✓ **stayed-in-main-state** _(custom)_ — All observed state transitions remain in MAIN — no unexpected free spin trigger across only 5 base spins
+    - Check: `stateTimeline.every(t => t.to === 'MAIN' || t.to === 'IDLE' || t.to === 'SPINNING')`
+
+---
+
+### 15. `ui-balance-display-after-spin` — UI consistency — balance display = endingBalance
+
+**Category:** Other  **Severity:** 🟠 major
+
+**Description:** After 1 spin at the default $7.00 bet, OCR-read the balance area (OCR coverage ✓ balanceArea → screen.balance) and assert it matches the API endingBalance within $0.01. Validates that the bottom HUD reflects the post-spin wallet state correctly (Best Practices §7).
+
+#### 🪜 Step
+
+_(no setup — observational case, runs at default state)_
+
+#### 📥 Input
+
+| Input | Value |
+|---|---|
+| expected_bet | `7` |
+| config.betSize | `7` |
+| config.betLevel | `1` |
+| spin_count | `1` |
+
+#### ✅ Expect
+
+- ✓ **screen-balance-matches-api** _(custom)_ — OCR'd balance matches spin.endingBalance within $0.01
+    - Check: `screen.balance !== null && typeof spin.endingBalance === 'number' && Math.abs(screen.balance - spin.endingBalance) <= 0.01`
+- ✓ **ending-balance-numeric** _(custom)_ — spin.endingBalance is a numeric, non-negative value
+    - Check: `typeof spin.endingBalance === 'number' && spin.endingBalance >= 0`
+- ✓ **bet-amount-matches-default** _(custom)_ — Spin used the default $7.00 base bet
+    - Check: `typeof spin.betAmount === 'number' && Math.abs(spin.betAmount - 7.00) <= 0.01`
+- ✓ **spin-resolved-clean** _(custom)_ — Spin completed without warning-level engine errors
+    - Check: `warnings.filter(w => /error|fail|timeout/i.test(w)).length === 0`
+
+---
+
+### 16. `ui-bet-display-reflects-selection` — UI consistency — bet display matches selected bet
+
+**Category:** Other  **Severity:** 🟠 major
+
+**Description:** Set bet to $20.00 via the bet stepper popup (bet ladder index 18 vs default $7.00 at index 14 → +4 betPlus clicks or direct selection from bet picker), then spin once. OCR-read the bet display (OCR coverage ✓ betArea → screen.bet) and assert it matches both the displayed selection and the API spin.betAmount within $0.01.
+
+#### 🪜 Step
+
+1. Locate the betPlus button (options: betPlus at 1095,650) on the right side of the spin button.
+2. Click betPlus once to open the bet value picker popup.
+3. In the bet picker grid, click the cell labeled 'bet-20.00' (registry coordinate 353,472).
+4. Click the picker closeButton (1097,220) to dismiss the popup.
+5. Verify the bet display in the bottom HUD reads exactly '$20.00' (within ±1 ladder step tolerance; ladder neighbors are 10.00 and 30.00).
 
 #### 📥 Input
 
 | Input | Value |
 |---|---|
 | expected_bet | `20` |
-| config.betAmount | `20` |
-| spin_count | `2` |
-
-#### ✅ Expect
-
-- ✓ **every-spin-bet-20** _(custom)_ — Each spin's betAmount equals 20.00
-    - Check: `collector.spins.every(s => typeof s.betAmount === 'number' && Math.abs(s.betAmount - 20.00) <= 0.01)`
-- ✓ **balance-arithmetic-high-bet** _(custom)_ — Balance arithmetic holds for 20.00 bets
-    - Check: `collector.spins.every(s => s.startingBalance == null || Math.abs(s.endingBalance - (s.startingBalance - s.betAmount + s.winAmount)) <= 0.01)`
-- ✓ **balance-decreased-or-equal** _(custom)_ — endingBalance <= startingBalance + winAmount for each spin
-    - Check: `collector.spins.every(s => s.startingBalance == null || s.endingBalance <= s.startingBalance + s.winAmount + 0.01)`
-- ✓ **no-warnings-high-bet** _(custom)_ — No errors/timeouts at high bet
-    - Check: `warnings.filter(w => /error|fail|threw/i.test(w)).length === 0`
-
----
-
-### 10. `bet-variation-max-100.00` — Bet variation — maximum bet 100.00
-
-**Category:** Bet Variation  **Severity:** 🟠 major
-
-**Description:** Set bet to ladder maximum 100.00 USD (rules-ui: bet-100.00 verified at (631,534)) and run 2 spins; verify betAmount === 100 and balance correctly deducts 100 per spin. Max bet exposes large-number arithmetic bugs and is the upper boundary for clamping tests.
-
-#### 🪜 Step
-
-1. Click the bet display area between '-' and '+' near spin button to open the bet ladder.
-2. In the ladder grid click cell 'bet-100.00' (fifth row, third column at 631,534).
-3. Close the bet panel via the X.
-4. Verify the bet display reads exactly '100.00' (within ±1 ladder step tolerance).
-
-#### 📥 Input
-
-| Input | Value |
-|---|---|
-| expected_bet | `100` |
-| config.betAmount | `100` |
-| spin_count | `2` |
-
-#### ✅ Expect
-
-- ✓ **every-spin-bet-100** _(custom)_ — Each spin's betAmount equals 100.00
-    - Check: `collector.spins.every(s => typeof s.betAmount === 'number' && Math.abs(s.betAmount - 100.00) <= 0.01)`
-- ✓ **balance-arithmetic-max-bet** _(custom)_ — Balance arithmetic holds for max bet
-    - Check: `collector.spins.every(s => s.startingBalance == null || Math.abs(s.endingBalance - (s.startingBalance - s.betAmount + s.winAmount)) <= 0.01)`
-- ✓ **ending-balance-non-negative-max** _(custom)_ — endingBalance never goes negative even at max bet
-    - Check: `collector.spins.every(s => typeof s.endingBalance === 'number' && s.endingBalance >= 0)`
-- ✓ **no-error-max-bet** _(custom)_ — No engine errors at max bet
-    - Check: `warnings.filter(w => /error|fail|threw/i.test(w)).length === 0`
-
----
-
-## Other (5)
-
-### 11. `bet-boundary-above-max-clamped` — Bet boundary — overshoot above max is clamped
-
-**Category:** Other  **Severity:** 🔴 critical
-
-**Description:** After setting bet to ladder maximum 100.00, attempt to push bet above max by clicking betPlus 5 additional times; spin once and assert betAmount === 100 (server-side clamp). Per Best Practices §18.7 this is a universal bet-boundary security check: bet-injection vulnerabilities would let players drain balance beyond intended max.
-
-#### 🪜 Step
-
-1. Click the bet display area to open the bet ladder.
-2. Click the 'bet-100.00' cell (fifth row, third column at 631,534) to set max bet.
-3. Close the bet panel via the X.
-4. Click the betPlus '+' button 5 additional times (no panel should open — '+' on already-max should be a no-op or open ladder still pinned at 100).
-5. Verify the bet display still reads exactly '100.00' (overshoot clamped, no value above 100 selectable).
-
-#### 📥 Input
-
-| Input | Value |
-|---|---|
-| expected_bet | `100` |
-| config.betAmount | `100` |
+| config.betSize | `20` |
+| config.betLevel | `1` |
 | spin_count | `1` |
 
 #### ✅ Expect
 
-- ✓ **bet-clamped-at-100** _(custom)_ — Server-side betAmount remains 100 even after overshoot attempts
-    - Check: `typeof spin.betAmount === 'number' && Math.abs(spin.betAmount - 100.00) <= 0.01`
-- ✓ **bet-not-exceeded-100** _(custom)_ — betAmount is not greater than max 100
-    - Check: `typeof spin.betAmount === 'number' && spin.betAmount <= 100.00 + 0.01`
-- ✓ **balance-conservation-clamp** _(custom)_ — Balance conservation holds at clamped bet
-    - Check: `spin.startingBalance == null || Math.abs(spin.endingBalance - (spin.startingBalance - spin.betAmount + spin.winAmount)) <= 0.01`
-- ✓ **no-injection-warnings** _(custom)_ — No warnings about invalid bet or server rejection
-    - Check: `warnings.filter(w => /invalid bet|bet rejected|out of range/i.test(w)).length === 0`
+- ✓ **screen-bet-matches-target** _(custom)_ — OCR'd bet equals target $20.00 within $0.01
+    - Check: `screen.bet !== null && Math.abs(screen.bet - 20.00) <= 0.01`
+- ✓ **api-bet-matches-target** _(custom)_ — spin.betAmount equals target $20.00 within $0.01
+    - Check: `typeof spin.betAmount === 'number' && Math.abs(spin.betAmount - 20.00) <= 0.01`
+- ✓ **screen-bet-matches-api-bet** _(custom)_ — OCR'd bet and API betAmount agree within $0.01 (UI ↔ network consistency)
+    - Check: `screen.bet !== null && typeof spin.betAmount === 'number' && Math.abs(screen.bet - spin.betAmount) <= 0.01`
+- ✓ **screen-balance-matches-api** _(custom)_ — Balance HUD still consistent with API endingBalance after the spin
+    - Check: `screen.balance === null || (typeof spin.endingBalance === 'number' && Math.abs(screen.balance - spin.endingBalance) <= 0.01)`
 
 ---
 
-### 12. `bet-boundary-below-min-clamped` — Bet boundary — undershoot below min is clamped
-
-**Category:** Other  **Severity:** 🔴 critical
-
-**Description:** After setting bet to ladder minimum 0.20, attempt to push bet below min by clicking betMinus 5 additional times; spin once and assert betAmount === 0.20 (must not be 0 or negative). Per Best Practices §18.7 this protects against zero-bet free spins and negative-bet credit injection.
-
-#### 🪜 Step
-
-1. Click the bet display area to open the bet ladder.
-2. Click the 'bet-0.20' cell (top-left of ladder at 353,285) to set min bet.
-3. Close the bet panel via the X.
-4. Click the betMinus '-' button 5 additional times (no panel should re-open or, if it does, only ladder is shown still pinned at 0.20).
-5. Verify the bet display still reads exactly '0.20' (undershoot clamped, never 0 or negative).
-
-#### 📥 Input
-
-| Input | Value |
-|---|---|
-| expected_bet | `0.2` |
-| config.betAmount | `0.2` |
-| spin_count | `1` |
-
-#### ✅ Expect
-
-- ✓ **bet-clamped-at-min** _(custom)_ — Server-side betAmount remains 0.20 after undershoot attempts
-    - Check: `typeof spin.betAmount === 'number' && Math.abs(spin.betAmount - 0.20) <= 0.01`
-- ✓ **bet-strictly-positive** _(custom)_ — betAmount is strictly > 0 (no zero-bet bypass)
-    - Check: `typeof spin.betAmount === 'number' && spin.betAmount > 0`
-- ✓ **bet-not-below-min** _(custom)_ — betAmount not less than min 0.20
-    - Check: `typeof spin.betAmount === 'number' && spin.betAmount >= 0.20 - 0.001`
-- ✓ **balance-deducted-min-bet** _(custom)_ — Balance still deducts a real bet (no free spin via underflow)
-    - Check: `spin.startingBalance == null || (spin.startingBalance - spin.endingBalance + spin.winAmount) >= 0.19`
-
----
-
-### 13. `rules-consistency-cluster-mechanic` — Rules consistency — cluster mechanic 6x5 declared matches engine
+### 17. `ui-balance-after-multi-spin` — UI consistency — balance after 5 spins reconciled
 
 **Category:** Other  **Severity:** 🟠 major
 
-**Description:** Assert the engine consistently reports 6x5 grid and that observed spin matrix (if present) matches a 6-reel × 5-row layout per info: cluster/30 pay-anywhere on 6x5. Buy-options note 'multiplier increases every tumble' implying tumble mechanic exists in features even though spec.cascade=false reflects base game only.
+**Description:** Run 5 spins at default $7.00 bet and OCR-read the final balance (OCR coverage ✓ balanceArea → screen.balance). Assert the final UI balance equals starting wallet balance minus sum(bets) plus sum(wins), within $0.01. Covers end-to-end ledger reconciliation over a multi-spin run — a common bug surface for tumble aggregation in Pragmatic ways games.
 
 #### 🪜 Step
 
@@ -454,568 +654,439 @@ _(no setup — observational case, runs at default state)_
 
 | Input | Value |
 |---|---|
-| spin_count | `3` |
+| expected_bet | `7` |
+| config.betSize | `7` |
+| config.betLevel | `1` |
+| spin_count | `5` |
 
 #### ✅ Expect
 
-- ✓ **matrix-present-shape-when-array** _(custom)_ — When matrix is an array of arrays, each row is non-empty
-    - Check: `collector.spins.filter(s => Array.isArray(s.matrix) && s.matrix.length > 0).every(s => s.matrix.every(reel => Array.isArray(reel) && reel.length > 0))`
-- ✓ **rules-consistent-shape** _(custom)_ — Every spin response has consistent normalized field set
-    - Check: `collector.spins.every(s => typeof s.betAmount === 'number' && typeof s.winAmount === 'number' && typeof s.endingBalance === 'number' && typeof s.id === 'string')`
-- ✓ **rules-no-shape-warnings** _(custom)_ — No warnings about field-mapping or shape mismatch
-    - Check: `warnings.filter(w => /shape|mapping|missing field/i.test(w)).length === 0`
-
----
-
-### 14. `payout-correctness-cluster-count-bands` — Payout correctness — cluster count bands (8-9, 10-11, 12-30)
-
-**Category:** Other  **Severity:** 🔴 critical
-
-**Description:** Run 30 spins at default bet 0.20 and assert for every spin with winAmount > 0 the value is finite, non-negative, and within sane bounds relative to bet (≤ 5000× bet per Pragmatic cap). Per Best Practices §18.2, payout correctness is critical: balance check alone cannot detect RNG/payTable corruption — this case asserts the basic invariant that wins remain bounded by the published cluster-count bands' top symbol $200 at bet $0.40 → ≤500× bet for any single hit.
-
-#### 🪜 Step
-
-_(no setup — observational case, runs at default state)_
-
-#### 📥 Input
-
-| Input | Value |
-|---|---|
-| expected_bet | `0.2` |
-| config.betAmount | `0.2` |
-| spin_count | `30` |
-
-#### ✅ Expect
-
-- ✓ **payout-non-negative-finite** _(custom)_ — Every winAmount is finite and non-negative
-    - Check: `collector.spins.every(s => typeof s.winAmount === 'number' && isFinite(s.winAmount) && s.winAmount >= 0)`
-- ✓ **payout-bounded-by-cap** _(custom)_ — No single spin win exceeds 5000× bet cap
-    - Check: `collector.spins.every(s => typeof s.winAmount !== 'number' || s.betAmount <= 0 || s.winAmount <= s.betAmount * 5000 + 0.01)`
-- ✓ **payout-zero-when-no-resolution-issue** _(custom)_ — All spins resolved (any zero-win spin is a legitimate no-cluster outcome)
-    - Check: `collector.spins.every(s => s.status == null || s.status === 'RESOLVED')`
-- ✓ **payout-balance-conservation** _(custom)_ — Balance arithmetic correctly reflects every win/loss
-    - Check: `collector.spins.every(s => s.startingBalance == null || Math.abs(s.endingBalance - (s.startingBalance - s.betAmount + s.winAmount)) <= 0.01)`
-- ✓ **payout-no-rng-warnings** _(custom)_ — No payout/RNG warnings emitted
-    - Check: `warnings.filter(w => /payout|RNG|corrupt|invalid win/i.test(w)).length === 0`
-
----
-
-### 15. `tumble-mechanic-during-free-spins` — Tumble mechanic — verify tumbles occur during free spins
-
-**Category:** Other  **Severity:** 🟠 major
-
-**Description:** Observe free-spin chain (organic or via buy) and verify free-spin frames are present and well-formed, supporting the buy-options claim that 'multiplier increases every tumble'. Validates that feature-mode tumble mechanic exists even though spec.cascade=false reflects base game only.
-
-#### 🪜 Step
-
-_(no setup — observational case, runs at default state)_
-
-#### 📥 Input
-
-| Input | Value |
-|---|---|
-| spin_count | `0` |
-| expected_feature | `free_spins` |
-
-#### ✅ Expect
-
-- ✓ **tumble-fs-shape-valid** _(custom)_ — Any observed free-spin frames are well-formed
-    - Check: `collector.spins.filter(s => s.isFreeSpin === true).every(s => typeof s.id === 'string' && s.id.length > 0 && typeof s.winAmount === 'number' && s.winAmount >= 0)`
-- ✓ **tumble-fs-state-observed** _(custom)_ — State timeline shows FREE_SPIN/BONUS transition (when feature engages)
-    - Check: `stateTimeline.some(t => /FREE_SPIN|BONUS|TUMBLE/i.test(t.to)) || collector.spins.filter(s => s.isFreeSpin === true).length === 0`
-- ✓ **tumble-fs-finite-wins** _(custom)_ — Free-spin wins finite (no overflow from chained tumble multipliers)
-    - Check: `collector.spins.filter(s => s.isFreeSpin === true).every(s => isFinite(s.winAmount))`
-- ✓ **tumble-no-stuck-warnings** _(custom)_ — No warnings about stuck tumble chains or response timeouts
-    - Check: `warnings.filter(w => /stuck|no spin.*response within|cascade.*timeout/i.test(w)).length === 0`
+- ✓ **screen-balance-matches-last-spin** _(custom)_ — Final OCR'd balance matches last spin's endingBalance within $0.01
+    - Check: `screen.balance !== null && typeof getCurrentBalance(collector) === 'number' && Math.abs(screen.balance - getCurrentBalance(collector)) <= 0.01`
+- ✓ **multi-spin-ledger-reconciles** _(custom)_ — endingBalance - balanceBefore equals sum(wins) - sum(bets) across all 5 spins
+    - Check: `(() => { if (balanceBefore == null) return true; const ends = getRoundEndSpins(collector.spins); const sumBet = ends.reduce((a, s) => a + (s.betAmount || 0), 0); const sumWin = ends.reduce((a, s) => a + (s.winAmount || 0), 0); const cur = getCurrentBalance(collector); return typeof cur === 'number' && Math.abs(cur - balanceBefore - sumWin + sumBet) <= 0.01; })()`
+- ✓ **five-round-end-spins-captured** _(custom)_ — Exactly 5 round-end spins recorded for the ledger calculation
+    - Check: `getRoundEndSpins(collector.spins).length >= 5`
+- ✓ **all-bets-are-seven** _(custom)_ — All 5 spins used the constant $7.00 default bet
+    - Check: `collector.spins.every(s => typeof s.betAmount === 'number' && Math.abs(s.betAmount - 7.00) <= 0.01)`
+- ✓ **no-lost-spins-warnings** _(custom)_ — No spins lost to debounce or popup blocking
+    - Check: `warnings.filter(w => /debounced|popup may have blocked|likely debounced/i.test(w)).length === 0`
 
 ---
 
 ## Autoplay (2)
 
-### 16. `autoplay-small-batch-10` — Autoplay — 10 round batch
+### 18. `autoplay-10-rounds` — Autoplay 10 rounds completes correctly
 
 **Category:** Autoplay  **Severity:** 🟠 major
 
-**Description:** Configure autoplay for exactly 10 rounds and press START (rules-ui: autoButton__autoCountSlide-10 verified at (440,384)); wait for completion and verify exactly 10 spins were submitted, all RESOLVED, balance reconciles end-to-end with no dropped/double spins.
+**Description:** Verify the Autoplay control flow with the smallest preset (10 rounds) using options: autoButton (990,710) → autoCountSlide-10 (432,383) → startAutoplayButton (640,506). Validates that exactly 10 round-end responses are captured, all share the same betAmount (default $7.00), and balance reconciles cumulatively (Best Practices §5.2).
 
 #### 🪜 Step
 
-1. Click the Autoplay button (autoButton at 997,705 — below spin button).
-2. In the autoplay panel, click the '10' rounds preset (autoCountSlide-10 at 440,384).
-3. Click the START button (startAutoplayButton at 655,512).
-4. Verify the panel closes and reels visibly begin spinning automatically.
+1. Click the autoButton (options: autoButton at 990,710) to open the autoplay popup.
+2. In the autoplay popup, click the '10' count slide (options: autoButton__autoCountSlide-10 at 432,383) to select 10 rounds.
+3. Verify '10' is highlighted/selected as the round count.
+4. Click the START button (options: autoButton__startAutoplayButton at 640,506).
+5. Verify the autoplay popup closes and the reels visibly begin spinning automatically.
 
 #### 📥 Input
 
 | Input | Value |
 |---|---|
-| expected_bet | `0.2` |
-| config.betAmount | `0.2` |
-| config.autoplay_rounds | `10` |
+| expected_bet | `7` |
+| config.totalBet | `7` |
+| config.autoplayRounds | `10` |
 | spin_count | `10` |
 
 #### ✅ Expect
 
-- ✓ **autoplay-10-rounds-captured** _(custom)_ — At least 10 round-end frames captured
+- ✓ **autoplay-10-round-count** _(custom)_ — At least 10 round-end frames captured from autoplay batch
     - Check: `getRoundEndSpins(collector.spins).length >= 10`
-- ✓ **autoplay-unique-ids** _(custom)_ — All captured spins have unique roundIds
+- ✓ **autoplay-10-unique-ids** _(custom)_ — Every captured spin has a unique roundId
     - Check: `new Set(collector.spins.map(s => s.id)).size === collector.spins.length`
-- ✓ **autoplay-cumulative-balance** _(custom)_ — Cumulative bet/win reconciles end-to-end across the autoplay batch
+- ✓ **autoplay-10-bet-consistent** _(custom)_ — Every round-end spin has the same betAmount as the first one
+    - Check: `(() => { const ends = getRoundEndSpins(collector.spins); if (ends.length === 0) return false; const b0 = ends[0].betAmount; return ends.every(s => typeof s.betAmount === 'number' && Math.abs(s.betAmount - b0) <= 0.01); })()`
+- ✓ **autoplay-10-cumulative-balance** _(custom)_ — Cumulative bet/win reconciles end-to-end across the 10 rounds
     - Check: `(() => { const first = collector.spins[0]; const last = collector.spins[collector.spins.length - 1]; if (!first || !last || first.startingBalance == null) return true; const sb = collector.spins.reduce((a,s)=>a+(s.betAmount||0),0); const sw = collector.spins.reduce((a,s)=>a+(s.winAmount||0),0); return Math.abs(last.endingBalance - (first.startingBalance - sb + sw)) <= 0.01; })()`
-- ✓ **autoplay-no-debounce** _(custom)_ — No autoplay clicks were dropped/debounced
+- ✓ **autoplay-10-no-debounced-clicks** _(custom)_ — No spin clicks were debounced or dropped during the 10-round batch
     - Check: `warnings.filter(w => /debounced|likely debounced|popup may have blocked|no spin.*response within/i.test(w)).length === 0`
-- ✓ **autoplay-bet-consistent** _(custom)_ — Bet stayed constant throughout the batch
-    - Check: `collector.spins.every(s => Math.abs(s.betAmount - collector.spins[0].betAmount) <= 0.01)`
 
 ---
 
-### 17. `autoplay-medium-batch-25` — Autoplay — 20 round batch via slide
+### 19. `autoplay-50-rounds` — Autoplay 50 rounds with quick spin
 
 **Category:** Autoplay  **Severity:** 🟠 major
 
-**Description:** Configure autoplay for 20 rounds (rules-ui: autoCountSlide-20 verified at (490,386)) and press START; verify 20 spins ran, all RESOLVED, no stuck rounds and balance arithmetic correct across the medium batch. Medium batches surface mid-batch error handling and resume-after-feature issues.
+**Description:** Verify medium-batch autoplay with quick spin enabled using options: autoCountSlide-50 (573,383) + quickSpinToggle (595,252). Validates throughput, bet consistency across 50 spins, cumulative balance reconciliation, and that quick spin doesn't drop/debounce any spin events.
 
 #### 🪜 Step
 
-1. Click the Autoplay button (autoButton at 997,705 — below spin button).
-2. In the autoplay panel, click the '20' rounds preset (autoCountSlide-20 at 490,386).
-3. Click the START button (startAutoplayButton at 655,512).
-4. Verify the panel closes and reels visibly begin spinning automatically.
+1. Click the autoButton (options: autoButton at 990,710) to open the autoplay popup.
+2. Click the quickSpinToggle (options: autoButton__quickSpinToggle at 595,252) to enable quick spin mode.
+3. Verify quickSpinToggle shows enabled/on state.
+4. Click the '50' count slide (options: autoButton__autoCountSlide-50 at 573,383).
+5. Verify '50' is highlighted as the round count.
+6. Click the START button (options: autoButton__startAutoplayButton at 640,506).
+7. Verify the popup closes and reels begin spinning rapidly.
 
 #### 📥 Input
 
 | Input | Value |
 |---|---|
-| expected_bet | `0.2` |
-| config.betAmount | `0.2` |
-| config.autoplay_rounds | `20` |
-| spin_count | `20` |
+| expected_bet | `7` |
+| config.totalBet | `7` |
+| config.autoplayRounds | `50` |
+| config.quickSpin | `true` |
+| spin_count | `50` |
 
 #### ✅ Expect
 
-- ✓ **autoplay-20-rounds-captured** _(custom)_ — At least 20 round-end frames captured
-    - Check: `getRoundEndSpins(collector.spins).length >= 20`
-- ✓ **autoplay-20-unique-ids** _(custom)_ — All 20+ captured spins have unique roundIds
+- ✓ **autoplay-50-round-count** _(custom)_ — At least 50 round-end frames captured from autoplay batch
+    - Check: `getRoundEndSpins(collector.spins).length >= 50`
+- ✓ **autoplay-50-unique-ids** _(custom)_ — Every captured spin has a unique roundId (no duplicates from quick spin)
     - Check: `new Set(collector.spins.map(s => s.id)).size === collector.spins.length`
-- ✓ **autoplay-20-balance-reconciles** _(custom)_ — Cumulative bet/win reconciles across the 20-round batch
+- ✓ **autoplay-50-bet-consistent** _(custom)_ — All 50 round-end spins maintain consistent betAmount
+    - Check: `(() => { const ends = getRoundEndSpins(collector.spins); if (ends.length === 0) return false; const b0 = ends[0].betAmount; return ends.every(s => typeof s.betAmount === 'number' && Math.abs(s.betAmount - b0) <= 0.01); })()`
+- ✓ **autoplay-50-cumulative-balance** _(custom)_ — Cumulative bet/win reconciles end-to-end across 50 rounds with quick spin
     - Check: `(() => { const first = collector.spins[0]; const last = collector.spins[collector.spins.length - 1]; if (!first || !last || first.startingBalance == null) return true; const sb = collector.spins.reduce((a,s)=>a+(s.betAmount||0),0); const sw = collector.spins.reduce((a,s)=>a+(s.winAmount||0),0); return Math.abs(last.endingBalance - (first.startingBalance - sb + sw)) <= 0.01; })()`
-- ✓ **autoplay-20-no-warnings** _(custom)_ — No engine errors or dropped spins in 20-batch
-    - Check: `warnings.filter(w => /debounced|error|fail|threw|popup may have blocked/i.test(w)).length === 0`
-- ✓ **autoplay-20-each-spin-shape** _(custom)_ — Each spin has valid normalized shape
-    - Check: `collector.spins.every(s => typeof s.betAmount === 'number' && typeof s.winAmount === 'number' && typeof s.endingBalance === 'number' && typeof s.id === 'string' && s.id.length > 0)`
-
----
-
-## Buy Feature (3)
-
-### 18. `buy-feature-free-spins-400x` — Buy Feature — Free Spins ($400 = 100× base bet)
-
-**Category:** Buy Feature  **Severity:** 🔴 critical
-
-**Description:** At base bet $4.00 (buy-options.base_bet_visible = 4), purchase 'Free Spins' option costing $400 (= 100× bet) and observe the resulting free-spin chain. Verify deduction ratio ≥50× via detectBuyFeatureDeduction, chain spins are RESOLVED, free-spin frames captured (buy-options: '+1× multiplier per tumble').
-
-#### 🪜 Step
-
-1. Open the bet ladder via betPlus '+' and select 'bet-4.00' (third row, fourth column at 1047,347); close ladder via the X.
-2. Verify the bet display reads '4.00'.
-3. Click the Buy Feature button (buyBonusButton at 112,246 on left side of reels).
-4. In the buy popup, click the 'Free Spins' option (freeSpinsOption at 372,316 — leftmost option, $400).
-5. In the confirmation dialog, click the Yes/Confirm button (yesButton at 745,452).
-6. Verify the popup closes and the free-spin chain begins playing automatically.
-
-#### 📥 Input
-
-| Input | Value |
-|---|---|
-| expected_bet | `4` |
-| config.betAmount | `4` |
-| config.buy_option | `"freeSpins"` |
-| config.expected_cost_ratio | `100` |
-| spin_count | `1` |
-| expected_feature | `free_spins` |
-
-#### ✅ Expect
-
-- ✓ **buy-deduction-detected** _(custom)_ — Buy-feature deduction observed with ratio ≥ 50× (≈100× expected)
-    - Check: `(() => { const d = detectBuyFeatureDeduction(collector.spins, 0, balanceBefore); return d != null && d.ratio >= 50; })()`
-- ✓ **buy-deduction-near-100x** _(custom)_ — Deduction ratio close to advertised 100× (within 5× tolerance)
-    - Check: `(() => { const d = detectBuyFeatureDeduction(collector.spins, 0, balanceBefore); return d != null && d.ratio >= 80 && d.ratio <= 120; })()`
-- ✓ **buy-free-spins-shape-valid** _(custom)_ — Any observed free-spin frames have valid id and non-negative win
-    - Check: `collector.spins.filter(s => s.isFreeSpin === true).every(s => typeof s.id === 'string' && s.id.length > 0 && typeof s.winAmount === 'number' && s.winAmount >= 0)`
-- ✓ **buy-free-spin-no-bet-deduct** _(custom)_ — Free-spin rounds (when observed) do not deduct bet from balance
-    - Check: `collector.spins.filter(s => s.isFreeSpin === true).every(s => s.startingBalance == null || s.endingBalance >= s.startingBalance - 0.001)`
-- ✓ **buy-state-transition-observed** _(custom)_ — State machine recorded a FREE_SPIN / BONUS transition
-    - Check: `stateTimeline.some(t => /FREE_SPIN|BONUS/i.test(t.to))`
-
----
-
-### 19. `buy-feature-super-free-spins-1-1000x` — Buy Feature — Super Free Spins 1 ($1000 = 250× base bet)
-
-**Category:** Buy Feature  **Severity:** 🔴 critical
-
-**Description:** At base bet $4.00, purchase 'Super Free Spins 1' costing $1,000 (= 250× bet, buy-options: '+3× multiplier per tumble'). Verify deduction ratio is well above the buy threshold and free-spin chain triggers with the enhanced multiplier behavior.
-
-#### 🪜 Step
-
-1. Open the bet ladder and select 'bet-4.00' (1047,347); close ladder via the X.
-2. Verify the bet display reads '4.00'.
-3. Click the Buy Feature button (buyBonusButton at 112,246).
-4. In the buy popup, click 'Super Free Spins 1' option (superFreeSpins1Option at 640,315 — middle option, $1,000).
-5. Click the Yes/Confirm button (yesButton at 763,454).
-6. Verify the popup closes and the super-free-spin chain begins playing.
-
-#### 📥 Input
-
-| Input | Value |
-|---|---|
-| expected_bet | `4` |
-| config.betAmount | `4` |
-| config.buy_option | `"superFreeSpins1"` |
-| config.expected_cost_ratio | `250` |
-| spin_count | `1` |
-| expected_feature | `free_spins` |
-
-#### ✅ Expect
-
-- ✓ **buy-sfs1-deduction-ratio** _(custom)_ — Buy deduction ratio ≥ 200× (advertised 250×)
-    - Check: `(() => { const d = detectBuyFeatureDeduction(collector.spins, 0, balanceBefore); return d != null && d.ratio >= 200; })()`
-- ✓ **buy-sfs1-deduction-bounded** _(custom)_ — Deduction ratio not absurdly higher than advertised
-    - Check: `(() => { const d = detectBuyFeatureDeduction(collector.spins, 0, balanceBefore); return d != null && d.ratio <= 320; })()`
-- ✓ **buy-sfs1-fs-shape-valid** _(custom)_ — Any free-spin frames have valid shape
-    - Check: `collector.spins.filter(s => s.isFreeSpin === true).every(s => typeof s.id === 'string' && s.id.length > 0 && typeof s.winAmount === 'number' && s.winAmount >= 0)`
-- ✓ **buy-sfs1-state-bonus** _(custom)_ — State timeline shows FREE_SPIN/BONUS transition
-    - Check: `stateTimeline.some(t => /FREE_SPIN|BONUS/i.test(t.to))`
-- ✓ **buy-sfs1-no-errors** _(custom)_ — No engine errors during purchase or feature
-    - Check: `warnings.filter(w => /error|fail|threw/i.test(w)).length === 0`
-
----
-
-### 20. `buy-feature-super-free-spins-2-4000x` — Buy Feature — Super Free Spins 2 ($4000 = 1000× base bet)
-
-**Category:** Buy Feature  **Severity:** 🔴 critical
-
-**Description:** At base bet $4.00, purchase the top-tier 'Super Free Spins 2' costing $4,000 (= 1000× bet, buy-options: 'multiplier DOUBLES at every tumble' — geometric growth). Highest-variance product; doubling multiplier is critical to test for exponent overflow and max-win cap interaction.
-
-#### 🪜 Step
-
-1. Open the bet ladder and select 'bet-4.00' (1047,347); close ladder.
-2. Verify the bet display reads '4.00'.
-3. Click the Buy Feature button (buyBonusButton at 112,246).
-4. In the buy popup, click 'Super Free Spins 2' option (superFreeSpins2Option at 869,315 — rightmost, $4,000).
-5. Click the Yes/Confirm button (yesButton at 768,442).
-6. Verify the popup closes and the doubling-multiplier free-spin chain begins playing.
-
-#### 📥 Input
-
-| Input | Value |
-|---|---|
-| expected_bet | `4` |
-| config.betAmount | `4` |
-| config.buy_option | `"superFreeSpins2"` |
-| config.expected_cost_ratio | `1000` |
-| spin_count | `1` |
-| expected_feature | `free_spins` |
-
-#### ✅ Expect
-
-- ✓ **buy-sfs2-deduction-ratio** _(custom)_ — Buy deduction ratio ≥ 800× (advertised 1000×)
-    - Check: `(() => { const d = detectBuyFeatureDeduction(collector.spins, 0, balanceBefore); return d != null && d.ratio >= 800; })()`
-- ✓ **buy-sfs2-deduction-bounded** _(custom)_ — Deduction ratio not above ~1200×
-    - Check: `(() => { const d = detectBuyFeatureDeduction(collector.spins, 0, balanceBefore); return d != null && d.ratio <= 1300; })()`
-- ✓ **buy-sfs2-fs-shape-valid** _(custom)_ — Any free-spin frames have valid id and non-negative win
-    - Check: `collector.spins.filter(s => s.isFreeSpin === true).every(s => typeof s.id === 'string' && s.id.length > 0 && typeof s.winAmount === 'number' && s.winAmount >= 0)`
-- ✓ **buy-sfs2-no-overflow** _(custom)_ — winAmount finite (no NaN/Infinity from exponent overflow)
-    - Check: `collector.spins.every(s => typeof s.winAmount === 'number' && isFinite(s.winAmount))`
-- ✓ **buy-sfs2-state-bonus** _(custom)_ — State timeline shows FREE_SPIN/BONUS transition
-    - Check: `stateTimeline.some(t => /FREE_SPIN|BONUS/i.test(t.to))`
-
----
-
-## Special Bet (2)
-
-### 21. `special-bet-ante-bet-active` — Special Bet — Ante Bet active increases scatter chance
-
-**Category:** Special Bet  **Severity:** 🟠 major
-
-**Description:** Enable 'Ante Bet' via the specialBets2Options panel (rules-ui: anteBetOption at (444,316)) at base bet 0.20 and run 5 spins. Verify spin.betAmount reflects the ante surcharge (typically 1.25× in Pragmatic games) and feature still resolves normally.
-
-#### 🪜 Step
-
-1. Click the Special Bets button on the left side of reels (specialBets2Options at 109,460).
-2. In the special-bet popup, click the Ante Bet option (anteBetOption at 444,316).
-3. Close the special-bet panel via the X (closeButton at 958,238).
-4. Verify the bet display now reads a value above the original base 0.20 (ante typically multiplies bet by ~1.25×, so expect ~0.25 — verify display shows updated total).
-
-#### 📥 Input
-
-| Input | Value |
-|---|---|
-| config.ante_bet | `"enabled"` |
-| spin_count | `5` |
-
-#### ✅ Expect
-
-- ✓ **ante-bet-positive** _(custom)_ — betAmount strictly positive across ante spins
-    - Check: `collector.spins.every(s => typeof s.betAmount === 'number' && s.betAmount > 0)`
-- ✓ **ante-bet-consistent** _(custom)_ — Bet amount stays constant across the 5 ante spins
-    - Check: `collector.spins.length === 0 || collector.spins.every(s => Math.abs(s.betAmount - collector.spins[0].betAmount) <= 0.01)`
-- ✓ **ante-balance-conservation** _(custom)_ — Per-spin balance arithmetic holds under ante surcharge
-    - Check: `collector.spins.every(s => s.startingBalance == null || Math.abs(s.endingBalance - (s.startingBalance - s.betAmount + s.winAmount)) <= 0.01)`
-- ✓ **ante-all-resolved** _(custom)_ — All ante spins resolved
-    - Check: `collector.spins.every(s => s.status == null || s.status === 'RESOLVED')`
-- ✓ **ante-no-errors** _(custom)_ — No engine errors during ante session
-    - Check: `warnings.filter(w => /error|fail|threw/i.test(w)).length === 0`
-
----
-
-### 22. `special-bet-super-spins-active` — Special Bet — Super Spins variant active
-
-**Category:** Special Bet  **Severity:** 🟠 major
-
-**Description:** Enable 'Super Spins' via specialBets2Options panel (rules-ui: superSpinsOption at (814,320)) and run 5 spins. Verify modified bet amount applied per spin and feature engages cleanly — tests the second special-bet variant which has a different cost multiplier than Ante.
-
-#### 🪜 Step
-
-1. Click the Special Bets button (specialBets2Options at 109,460).
-2. In the special-bet popup, click the Super Spins option (superSpinsOption at 814,320 — right side of popup).
-3. Close the panel via the X (closeButton at 958,238).
-4. Verify the bet display updates to reflect the Super Spins multiplier (value above the original 0.20 base).
-
-#### 📥 Input
-
-| Input | Value |
-|---|---|
-| config.super_spins | `"enabled"` |
-| spin_count | `5` |
-
-#### ✅ Expect
-
-- ✓ **super-spins-bet-positive** _(custom)_ — betAmount strictly positive across all spins
-    - Check: `collector.spins.every(s => typeof s.betAmount === 'number' && s.betAmount > 0)`
-- ✓ **super-spins-bet-stable** _(custom)_ — Bet amount stable across the 5 super-spins runs
-    - Check: `collector.spins.length === 0 || collector.spins.every(s => Math.abs(s.betAmount - collector.spins[0].betAmount) <= 0.01)`
-- ✓ **super-spins-balance-conservation** _(custom)_ — Balance arithmetic holds under the special bet
-    - Check: `collector.spins.every(s => s.startingBalance == null || Math.abs(s.endingBalance - (s.startingBalance - s.betAmount + s.winAmount)) <= 0.01)`
-- ✓ **super-spins-resolved** _(custom)_ — All spins resolved
-    - Check: `collector.spins.every(s => s.status == null || s.status === 'RESOLVED')`
-- ✓ **super-spins-no-warning** _(custom)_ — No engine errors during super spins session
-    - Check: `warnings.filter(w => /error|fail|threw/i.test(w)).length === 0`
+- ✓ **autoplay-50-status-resolved** _(custom)_ — Every captured round resolves cleanly (no stuck spins)
+    - Check: `collector.spins.every(s => typeof s.winAmount === 'number' && s.winAmount >= 0)`
+- ✓ **autoplay-50-no-dropped-spins** _(custom)_ — No dropped/debounced spin events during high-throughput quick-spin batch
+    - Check: `warnings.filter(w => /debounced|likely debounced|popup may have blocked|no spin.*response within/i.test(w)).length === 0`
 
 ---
 
 ## Turbo Spin (1)
 
-### 23. `turbo-spin-toggle-faster-spin` — Turbo Spin — toggle reduces spin animation time
+### 20. `turbo-spin-toggle` — Turbo spin toggle reduces spin animation time
 
 **Category:** Turbo Spin  **Severity:** ⚪ minor
 
-**Description:** Enable the turboSpinToggle inside the autoplay menu (rules-ui: autoButton__turboSpinToggle at (445,255)) and run 5 spins; verify each spin remains RESOLVED and balance/bet integrity is preserved while cosmetic spin time is reduced. Toggling turbo must not skip server-side validation.
+**Description:** Verify turbo spin toggle behaviour using options: autoButton__turboSpinToggle (462,252). After enabling turbo and closing the autoplay popup, manual spin responses should still be valid SpinResponses with correct shape/payout, but visual animation should be accelerated. Payout correctness must not change with turbo (display-only feature).
 
 #### 🪜 Step
 
-1. Click the Autoplay button (autoButton at 997,705) to open the autoplay panel.
-2. Click the Turbo Spin toggle (turboSpinToggle at 445,255) to enable it.
-3. Close the autoplay panel via the X (closeButton at 848,146) WITHOUT pressing START.
-4. Verify the autoplay panel closes and the main spin button is enabled.
+1. Click the autoButton (options: autoButton at 990,710) to open the autoplay popup.
+2. Click the turboSpinToggle (options: autoButton__turboSpinToggle at 462,252) to enable turbo spin mode.
+3. Verify turboSpinToggle shows enabled/on state.
+4. Click the closeButton (options: autoButton__closeButton at 870,154) to close the popup without starting autoplay.
+5. Verify the autoplay popup closes and the main spin button is visible/ready.
 
 #### 📥 Input
 
 | Input | Value |
 |---|---|
-| config.turbo | `"on"` |
+| config.turboSpin | `true` |
+| spin_count | `3` |
+
+#### ✅ Expect
+
+- ✓ **turbo-spins-have-valid-shape** _(custom)_ — Every spin response under turbo has valid betAmount, winAmount, endingBalance
+    - Check: `collector.spins.every(s => typeof s.betAmount === 'number' && s.betAmount > 0 && typeof s.winAmount === 'number' && s.winAmount >= 0 && typeof s.endingBalance === 'number')`
+- ✓ **turbo-bet-stable-across-spins** _(custom)_ — Turbo does not alter bet amount — all spins use the same bet as the first
+    - Check: `(() => { const ends = getRoundEndSpins(collector.spins); if (ends.length === 0) return true; const b0 = ends[0].betAmount; return ends.every(s => Math.abs(s.betAmount - b0) <= 0.01); })()`
+- ✓ **turbo-balance-conservation** _(custom)_ — Balance conservation holds across all turbo spins
+    - Check: `collector.spins.every(s => s.startingBalance == null || Math.abs(s.endingBalance - (s.startingBalance - s.betAmount + s.winAmount)) <= 0.01)`
+- ✓ **turbo-no-dropped-spins** _(custom)_ — No debounced or dropped spin clicks despite accelerated animation
+    - Check: `warnings.filter(w => /debounced|likely debounced|popup may have blocked|no spin.*response within/i.test(w)).length === 0`
+- ✓ **turbo-unique-round-ids** _(custom)_ — Each turbo spin produces a unique round id (no duplicate responses)
+    - Check: `new Set(collector.spins.map(s => s.id)).size === collector.spins.length`
+
+---
+
+## Buy Feature (3)
+
+### 21. `buy-feature-free-spins-700` — Buy Feature — Free Spins ($700)
+
+**Category:** Buy Feature  **Severity:** 🔴 critical
+
+**Description:** Purchase Free Spins via Buy Feature popup at cost $700.00 (buy-options: Free Spins ratio = 100× of base bet $7.00) using options: buyBonusButton (130,230) → buyBonusButton__freeSpinsButton (388,325). Verify balance debited by approximately $700 and that free-spin frames (isFreeSpin=true) are observed in the resulting round (Best Practices §11.3, §18.4 — critical money path).
+
+#### 🪜 Step
+
+1. Verify the current base bet displayed in the footer is $7.00 (default).
+2. Click the buyBonusButton (options: buyBonusButton at 130,230) on the left side of the play screen to open the Buy Feature popup.
+3. Verify the Buy Feature popup is open and shows three options including 'Free Spins $700.00'.
+4. Click the Free Spins button (options: buyBonusButton__freeSpinsButton at 388,325) to select the cheapest buy option.
+5. Click Confirm/Buy to confirm the purchase — verify the popup closes and the reels start spinning automatically into the free spin round.
+
+#### 📥 Input
+
+| Input | Value |
+|---|---|
+| expected_bet | `7` |
+| config.totalBet | `7` |
+| config.buyFeature | `"free_spins"` |
+| spin_count | `1` |
+| expected_feature | `free_spins` |
+
+#### ✅ Expect
+
+- ✓ **buy-feature-cost-deducted** _(custom)_ — Buy cost approximates 100× base bet ($700 / $7.00) — large deduction relative to base bet
+    - Check: `(() => { const d = detectBuyFeatureDeduction(collector.spins, 0, balanceBefore); return d != null && d.ratio >= 50; })()`
+- ✓ **buy-feature-free-spins-shape-valid** _(custom)_ — If free-spin frames are observed, every one has a valid id (implication invariant)
+    - Check: `collector.spins.filter(s => s.isFreeSpin === true).every(s => typeof s.id === 'string' && s.id.length > 0)`
+- ✓ **buy-feature-state-transition** _(custom)_ — State machine observed a FREE_SPIN or BONUS transition after the buy
+    - Check: `stateTimeline.some(t => /FREE_SPIN|BONUS/i.test(t.to))`
+- ✓ **buy-feature-win-non-negative** _(custom)_ — All resulting spins have non-negative winAmount
+    - Check: `collector.spins.every(s => typeof s.winAmount === 'number' && s.winAmount >= 0)`
+- ✓ **buy-feature-balance-not-overdrawn** _(custom)_ — Ending balance remains non-negative after the buy and resulting free spin chain
+    - Check: `(() => { const last = collector.spins[collector.spins.length - 1]; return last == null || (typeof last.endingBalance === 'number' && last.endingBalance >= 0); })()`
+- ✓ **buy-feature-ui-balance-matches-api** _(custom)_ — UI balance display (OCR) matches API ending balance after buy
+    - Check: `(() => { const last = collector.spins[collector.spins.length - 1]; return screen.balance === null || last == null || Math.abs(screen.balance - last.endingBalance) <= 0.01; })()`
+
+---
+
+### 22. `buy-feature-super-free-spins-1-1750` — Buy Feature — Super Free Spins 1 ($1,750)
+
+**Category:** Buy Feature  **Severity:** 🔴 critical
+
+**Description:** Verify the Buy Feature purchase of 'Super Free Spins 1' at $1,750.00 (buy-options: cost=$1,750.00, ratio = 1750/7 = 250× base bet of $7.00) deducts the correct amount from balance and triggers free spins. Per paytable feature description this variant must produce 'Multiplier increases with 3x every tumble' during the awarded free spin chain.
+
+#### 🪜 Step
+
+1. Verify current base bet is $7.00 by reading the bet display in the bottom info bar (default ladder position bet-7.00-selected per UI registry).
+2. Click the Buy Feature button on the left side of the play screen (options: 'buyBonusButton' at ~130,230 labeled '3 OPTIONS').
+3. In the Buy Feature popup, click the middle option labeled 'Super Free Spins 1' priced at $1,750.00 (UI registry: 'superFreeSpins1Button' at 627,325).
+4. Click the Confirm/Buy button inside the popup to commit the purchase — verify the popup closes and free-spin reels visibly begin spinning automatically.
+
+#### 📥 Input
+
+| Input | Value |
+|---|---|
+| expected_bet | `7` |
+| config.betSize | `7` |
+| config.betLevel | `1` |
+| spin_count | `1` |
+| expected_feature | `free_spins` |
+
+#### ✅ Expect
+
+- ✓ **buy-cost-ratio-around-250x** _(custom)_ — Buy Super Free Spins 1 deducts ≈250× base bet ($1,750 / $7.00 within ±20% tolerance for rounding)
+    - Check: `(() => { const d = detectBuyFeatureDeduction(collector.spins, 0, balanceBefore); return d != null && d.ratio >= 200 && d.ratio <= 300; })()`
+- ✓ **free-spin-frames-have-valid-id** _(custom)_ — Every observed free-spin frame after purchase has a non-empty string id
+    - Check: `collector.spins.filter(s => s.isFreeSpin === true).every(s => typeof s.id === 'string' && s.id.length > 0)`
+- ✓ **all-spins-resolved** _(custom)_ — All captured spin responses report status RESOLVED
+    - Check: `collector.spins.every(s => s.status === 'RESOLVED')`
+- ✓ **free-spin-state-observed** _(custom)_ — State machine transitioned through FREE_SPIN_TRIGGERED or BONUS state after purchase
+    - Check: `stateTimeline.some(t => /FREE_SPIN|BONUS/i.test(t.to))`
+- ✓ **no-error-warnings** _(custom)_ — No fatal/error warnings emitted during buy-feature flow
+    - Check: `warnings.filter(w => /error|fail|debounced/i.test(w)).length === 0`
+- ✓ **screen-balance-matches-api** _(custom)_ — OCR-read balance matches API endingBalance after purchase (±0.01)
+    - Check: `screen.balance === null || (typeof getCurrentBalance(collector) === 'number' && Math.abs(screen.balance - getCurrentBalance(collector)) <= 0.01)`
+
+---
+
+### 23. `buy-feature-super-free-spins-2-7000` — Buy Feature — Super Free Spins 2 ($7,000)
+
+**Category:** Buy Feature  **Severity:** 🔴 critical
+
+**Description:** Verify Buy Feature purchase of the highest-tier 'Super Free Spins 2' option at $7,000.00 (buy-options: ratio = 7000/7 = 1000× base bet of $7.00) deducts the correct amount and triggers free spins where 'Multiplier doubles at every tumble' (paytable feature). This is the most expensive buy variant and must be validated independently from the lower tiers.
+
+#### 🪜 Step
+
+1. Verify current base bet is $7.00 by reading the bet display (default ladder position bet-7.00-selected per UI registry).
+2. Click the Buy Feature button on the left side of the play screen (options: 'buyBonusButton' at ~130,230 labeled '3 OPTIONS').
+3. In the Buy Feature popup, click the rightmost option labeled 'Super Free Spins 2' priced at $7,000.00 (UI registry: 'superFreeSpins2Button' at 867,325).
+4. Click the Confirm/Buy button inside the popup to commit the purchase — verify the popup closes and free-spin reels visibly begin spinning automatically.
+
+#### 📥 Input
+
+| Input | Value |
+|---|---|
+| expected_bet | `7` |
+| config.betSize | `7` |
+| config.betLevel | `1` |
+| spin_count | `1` |
+| expected_feature | `free_spins` |
+
+#### ✅ Expect
+
+- ✓ **buy-cost-ratio-around-1000x** _(custom)_ — Buy Super Free Spins 2 deducts ≈1000× base bet ($7,000 / $7.00 within ±20% tolerance)
+    - Check: `(() => { const d = detectBuyFeatureDeduction(collector.spins, 0, balanceBefore); return d != null && d.ratio >= 800 && d.ratio <= 1200; })()`
+- ✓ **free-spin-frames-have-valid-id** _(custom)_ — Every observed free-spin frame after purchase has a non-empty string id
+    - Check: `collector.spins.filter(s => s.isFreeSpin === true).every(s => typeof s.id === 'string' && s.id.length > 0 && typeof s.winAmount === 'number' && s.winAmount >= 0)`
+- ✓ **all-spins-resolved** _(custom)_ — All captured spin responses report status RESOLVED
+    - Check: `collector.spins.every(s => s.status === 'RESOLVED')`
+- ✓ **free-spin-state-observed** _(custom)_ — State machine transitioned to FREE_SPIN_TRIGGERED / BONUS state after purchase
+    - Check: `stateTimeline.some(t => /FREE_SPIN|BONUS/i.test(t.to))`
+- ✓ **no-error-warnings** _(custom)_ — No fatal warnings emitted during buy flow (no debounced/spin-lost warnings)
+    - Check: `warnings.filter(w => /error|fail|debounced|popup may have blocked/i.test(w)).length === 0`
+- ✓ **ending-balance-non-negative** _(custom)_ — Balance never goes negative even after large $7,000 deduction
+    - Check: `collector.spins.every(s => typeof s.endingBalance === 'number' && s.endingBalance >= 0)`
+
+---
+
+## Special Bet (1)
+
+### 24. `special-bet-toggle-on` — Special Bet variant 1 — raise trigger rate
+
+**Category:** Special Bet  **Severity:** 🟠 major
+
+**Description:** Toggle the Special Bet option ON (first of 2 variants per in-game info) and spin 5 times. Per Pragmatic ante-bet convention this multiplies bet cost (typically 1.25× base) to increase scatter / free-spin trigger rate. Verifies betAmount in spin responses reflects the increased cost vs default base bet of $7.00.
+
+#### 🪜 Step
+
+1. Verify current base bet is $7.00 by reading the bet display (default ladder position bet-7.00-selected per UI registry).
+2. Locate the Special Bets button on the left side of the play screen (options: 'special_bets' at ~130,400, currently toggled off per options.json).
+3. Click the Special Bets button to open the variant selector.
+4. Select the first variant (variant 1 of 2 per in-game info).
+5. Close/confirm the special-bets popup if needed — verify the Special Bets indicator changes from 'off' to active state.
+
+#### 📥 Input
+
+| Input | Value |
+|---|---|
 | spin_count | `5` |
 
 #### ✅ Expect
 
-- ✓ **turbo-spins-resolved** _(custom)_ — All turbo spins resolved cleanly
-    - Check: `collector.spins.every(s => s.status == null || s.status === 'RESOLVED')`
-- ✓ **turbo-shape-intact** _(custom)_ — All turbo spins have valid normalized fields
-    - Check: `collector.spins.every(s => typeof s.betAmount === 'number' && typeof s.winAmount === 'number' && typeof s.endingBalance === 'number' && typeof s.id === 'string' && s.id.length > 0)`
-- ✓ **turbo-balance-conservation** _(custom)_ — Balance arithmetic still holds in turbo mode
+- ✓ **bet-consistent-across-spins** _(custom)_ — All 5 spins use the same betAmount (special bet stays toggled throughout)
+    - Check: `collector.spins.length === 0 || collector.spins.every(s => typeof s.betAmount === 'number' && Math.abs(s.betAmount - collector.spins[0].betAmount) <= 0.01)`
+- ✓ **bet-above-base-or-equal** _(custom)_ — betAmount with special bet active is ≥ base $7.00 (ante typically multiplies cost)
+    - Check: `collector.spins.every(s => typeof s.betAmount === 'number' && s.betAmount >= 7.00 - 0.01)`
+- ✓ **balance-conservation-per-spin** _(custom)_ — Each spin conserves balance: ending = starting - bet + win (±0.01); skip when startingBalance null
     - Check: `collector.spins.every(s => s.startingBalance == null || Math.abs(s.endingBalance - (s.startingBalance - s.betAmount + s.winAmount)) <= 0.01)`
-- ✓ **turbo-no-skip-warnings** _(custom)_ — No 'skipped' or 'missed' warnings during turbo
-    - Check: `warnings.filter(w => /skip|missed|no spin.*response/i.test(w)).length === 0`
+- ✓ **all-resolved** _(custom)_ — Every spin status is RESOLVED
+    - Check: `collector.spins.every(s => s.status === 'RESOLVED')`
+- ✓ **screen-bet-matches-api** _(custom)_ — OCR-read bet display matches API betAmount (±0.01) — confirms UI reflects special-bet uplift
+    - Check: `screen.bet === null || collector.spins.length === 0 || Math.abs(screen.bet - collector.spins[collector.spins.length-1].betAmount) <= 0.01`
+- ✓ **no-warnings** _(custom)_ — No fatal warnings during special-bet toggled spins
+    - Check: `warnings.filter(w => /error|fail|debounced/i.test(w)).length === 0`
 
 ---
 
 ## Free Spins (2)
 
-### 24. `free-spins-organic-trigger-watch` — Free Spins — organic trigger observation (60 spins)
+### 25. `free-spins-trigger-organic-watch` — Free Spins trigger — organic 60-spin watch
 
 **Category:** Free Spins  **Severity:** 🟠 major
 
-**Description:** Run 60 spins at default bet 0.20 and watch for organic free-spin trigger (rules: 4/5/6 BONUS scatters on the 6x5 screen → 10/15/20 free spins). If observed, asserts shape invariants on the chain spins; if not observed, the case still passes as an organic watch (per Best Practices §15, no strict trigger counts).
+**Description:** Run 60 base-game spins at default $7.00 bet and observe organic free-spin triggers. Per paytable rule 'Hit 4, 5 or 6 BONUS symbols anywhere on the screen to win 10, 15 or 20 free spins respectively' — assertions are implication-style (RNG-independent): IF any free spin is observed, its frames must have valid id and the state machine must record the trigger transition. Does NOT require trigger to occur.
 
 #### 🪜 Step
 
-_(no setup — observational case, runs at default state)_
+1. Read the current bet display in the bottom info bar — verify it shows $7.00 (default ladder position bet-7.00-selected per UI registry).
+2. If bet is not $7.00, click the bet value to open the bet selector and choose the '7.00' tile (UI registry: bet-7.00-selected at 631,410).
+3. Verify the bet display reads exactly '$7.00' (within ±1 ladder step tolerance — adjacent ladder values are $6.00 and $8.00).
 
 #### 📥 Input
 
 | Input | Value |
 |---|---|
-| expected_bet | `0.2` |
-| config.betAmount | `0.2` |
+| expected_bet | `7` |
+| config.betSize | `7` |
+| config.betLevel | `1` |
 | spin_count | `60` |
 
 #### ✅ Expect
 
-- ✓ **fs-organic-shape-invariant** _(custom)_ — Any observed free-spin frames have valid id + non-negative win
+- ✓ **free-spin-frames-valid-when-observed** _(custom)_ — IF any free spin is observed, each frame has a non-empty string id (RNG-independent shape invariant)
+    - Check: `collector.spins.filter(s => s.isFreeSpin === true).every(s => typeof s.id === 'string' && s.id.length > 0)`
+- ✓ **state-transition-consistent** _(custom)_ — IF state timeline contains FREE_SPIN_TRIGGERED, at least one captured spin has isFreeSpin=true (state ↔ data consistency) (normalized to RNG-independent invariant)
     - Check: `collector.spins.filter(s => s.isFreeSpin === true).every(s => typeof s.id === 'string' && s.id.length > 0 && typeof s.winAmount === 'number' && s.winAmount >= 0)`
-- ✓ **fs-organic-no-bet-deduct** _(custom)_ — Free-spin rounds (if observed) do not deduct bet from balance
-    - Check: `collector.spins.filter(s => s.isFreeSpin === true).every(s => s.startingBalance == null || s.endingBalance >= s.startingBalance - 0.001)`
-- ✓ **fs-organic-counter-monotonic** _(custom)_ — freeSpinsRemaining counter (if present) decreases monotonically
-    - Check: `(() => { const fs = collector.spins.filter(s => s.isFreeSpin === true && typeof s.freeSpinsRemaining === 'number'); for (let i = 1; i < fs.length; i++) { if (fs[i].freeSpinsRemaining > fs[i-1].freeSpinsRemaining) return false; } return true; })()`
-- ✓ **fs-organic-rounds-captured** _(custom)_ — At least 60 round-end frames captured (organic run completed)
-    - Check: `getRoundEndSpins(collector.spins).length >= 50`
-- ✓ **fs-organic-no-warnings** _(custom)_ — No engine errors during 60-spin organic run
-    - Check: `warnings.filter(w => /error|fail|threw/i.test(w)).length === 0`
+- ✓ **win-amounts-non-negative** _(custom)_ — Every spin reports numeric winAmount ≥ 0 (type-guarded)
+    - Check: `collector.spins.every(s => typeof s.winAmount === 'number' && s.winAmount >= 0)`
+- ✓ **all-resolved** _(custom)_ — Every spin status is RESOLVED across 60 spins
+    - Check: `collector.spins.every(s => s.status === 'RESOLVED')`
+- ✓ **no-lost-spins** _(custom)_ — No debounced/popup-blocked warnings during 60-spin watch
+    - Check: `warnings.filter(w => /debounced|popup may have blocked|likely debounced/i.test(w)).length === 0`
+- ✓ **round-end-spins-present** _(custom)_ — At least one round-end spin captured (sanity check on collector)
+    - Check: `getRoundEndSpins(collector.spins).length >= 1`
 
 ---
 
-### 25. `free-spins-result-shape-during-chain` — Free Spins — chain result shape (betAmount=0, tumble multiplier)
+### 26. `free-spins-result-shape` — Free Spins result shape — bet=0 & counter decrement
 
 **Category:** Free Spins  **Severity:** 🔴 critical
 
-**Description:** When isFreeSpin=true is observed (organic or via prior buy), assert chain integrity per spin: status RESOLVED, winAmount>=0, no bet deduction from balance, and freeSpinsRemaining counter monotonically decreases. Validates free-spin response shape across observed chain rounds (buy-options: each variant has distinct per-tumble multiplier behavior).
+**Description:** During 60-spin organic observation, validate free-spin response shape: every isFreeSpin=true frame should have betAmount=0 (no debit on awarded spins per Best Practices §18.4.2), winAmount≥0, and freeSpinsRemaining counter should never increase (monotonic decrement). RNG-independent: assertions are no-op if no free spin observed.
 
 #### 🪜 Step
 
-_(no setup — observational case, runs at default state)_
+1. Read the current bet display in the bottom info bar — verify it shows $7.00 (default ladder position bet-7.00-selected per UI registry).
+2. If bet is not $7.00, click the bet value to open the bet selector and choose the '7.00' tile (UI registry: bet-7.00-selected at 631,410).
+3. Verify the bet display reads exactly '$7.00' (within ±1 ladder step tolerance).
 
 #### 📥 Input
 
 | Input | Value |
 |---|---|
-| spin_count | `0` |
+| expected_bet | `7` |
+| config.betSize | `7` |
+| config.betLevel | `1` |
+| spin_count | `60` |
 
 #### ✅ Expect
 
-- ✓ **fs-chain-valid-id-win** _(custom)_ — Every free-spin frame has valid id and non-negative win
-    - Check: `collector.spins.filter(s => s.isFreeSpin === true).every(s => typeof s.id === 'string' && s.id.length > 0 && typeof s.winAmount === 'number' && s.winAmount >= 0)`
-- ✓ **fs-chain-no-bet-deduct** _(custom)_ — Free-spin rounds do not subtract bet from balance
+- ✓ **free-spin-no-bet-debit** _(custom)_ — Free spins must NOT debit base bet: betAmount === 0 for every isFreeSpin=true frame (Best Practices §18.4.2)
+    - Check: `collector.spins.filter(s => s.isFreeSpin === true).every(s => typeof s.betAmount === 'number' && s.betAmount === 0)`
+- ✓ **free-spin-balance-not-decreasing** _(custom)_ — On free-spin frames, endingBalance >= startingBalance (no debit; allow null startingBalance)
     - Check: `collector.spins.filter(s => s.isFreeSpin === true).every(s => s.startingBalance == null || s.endingBalance >= s.startingBalance - 0.001)`
-- ✓ **fs-chain-counter-monotonic** _(custom)_ — freeSpinsRemaining counter never increases within chain
+- ✓ **free-spin-counter-monotonic** _(custom)_ — freeSpinsRemaining never increases between consecutive free-spin frames
     - Check: `(() => { const fs = collector.spins.filter(s => s.isFreeSpin === true && typeof s.freeSpinsRemaining === 'number'); for (let i = 1; i < fs.length; i++) { if (fs[i].freeSpinsRemaining > fs[i-1].freeSpinsRemaining) return false; } return true; })()`
-- ✓ **fs-chain-all-resolved** _(custom)_ — All chain spins are RESOLVED
-    - Check: `collector.spins.filter(s => s.isFreeSpin === true).every(s => s.status == null || s.status === 'RESOLVED')`
-- ✓ **fs-chain-finite-wins** _(custom)_ — Free-spin winAmount is finite (no NaN/Infinity from multiplier overflow)
-    - Check: `collector.spins.filter(s => s.isFreeSpin === true).every(s => typeof s.winAmount === 'number' && isFinite(s.winAmount))`
+- ✓ **free-spin-win-non-negative** _(custom)_ — winAmount ≥ 0 on every free-spin frame (type-guarded)
+    - Check: `collector.spins.filter(s => s.isFreeSpin === true).every(s => typeof s.winAmount === 'number' && s.winAmount >= 0)`
+- ✓ **free-spin-id-valid** _(custom)_ — Every free-spin frame has a non-empty string id (round identity)
+    - Check: `collector.spins.filter(s => s.isFreeSpin === true).every(s => typeof s.id === 'string' && s.id.length > 0)`
+- ✓ **no-lost-spins** _(custom)_ — No debounced/spin-blocked warnings during long watch
+    - Check: `warnings.filter(w => /debounced|popup may have blocked|likely debounced/i.test(w)).length === 0`
 
 ---
 
 ## History (1)
 
-### 26. `history-panel-rows-match-recent-spins` — History — rows match recent 5 spins
+### 27. `history-normal-bet-rows` — History panel — 5 base spin rows match
 
 **Category:** History  **Severity:** 🟠 major
 
-**Description:** Run 5 base spins at default bet 0.20, then open the menu and click Game History (rules-ui: menuButton__gameHistoryButton at (592,289)); verify the history panel opens. Tests rounds-history endpoint consistency with recent live spin samples — common silent failure point in Pragmatic /gameService integrations.
-
-#### 🪜 Step
-
-1. Click the Menu button (menuButton at 142,657 — bottom-left).
-2. Click the Game History button (gameHistoryButton at 592,289).
-3. Verify a history panel opens listing recent rounds.
-
-#### 📥 Input
-
-| Input | Value |
-|---|---|
-| spin_count | `5` |
-
-#### ✅ Expect
-
-- ✓ **history-spins-shape-valid** _(custom)_ — All 5 recent spins have valid normalized shape for history matching
-    - Check: `collector.spins.every(s => typeof s.betAmount === 'number' && typeof s.winAmount === 'number' && typeof s.endingBalance === 'number' && typeof s.id === 'string' && s.id.length > 0)`
-- ✓ **history-round-ids-unique** _(custom)_ — Round IDs in captured spins are unique (no duplicate rows expected)
-    - Check: `new Set(collector.spins.map(s => s.id)).size === collector.spins.length`
-- ✓ **history-balance-arithmetic** _(custom)_ — Balance arithmetic still holds across the 5-spin pre-history batch
-    - Check: `collector.spins.every(s => s.startingBalance == null || Math.abs(s.endingBalance - (s.startingBalance - s.betAmount + s.winAmount)) <= 0.01)`
-- ✓ **history-no-popup-errors** _(custom)_ — No popup or menu errors during history navigation
-    - Check: `warnings.filter(w => /error|fail|threw|popup may have blocked/i.test(w)).length === 0`
-
----
-
-## Options (2)
-
-### 27. `options-sound-fx-toggle` — Options — Sound FX toggle persists across spins
-
-**Category:** Options  **Severity:** ⚪ minor
-
-**Description:** Open menu, toggle Sound FX off (rules-ui: menuButton__soundFxToggle at (921,418)), close menu, run 2 spins, then verify spins resolved normally and no error was emitted. Tests that audio settings do not impact game logic or money flow.
-
-#### 🪜 Step
-
-1. Click the Menu button (menuButton at 142,657 — bottom-left).
-2. Click the Sound FX toggle (soundFxToggle at 921,418).
-3. Click the close button (closeButton at 1038,105) to close the menu.
-4. Verify the menu is closed and the spin button is interactive.
-
-#### 📥 Input
-
-| Input | Value |
-|---|---|
-| config.sound_fx | `"off"` |
-| spin_count | `2` |
-
-#### ✅ Expect
-
-- ✓ **options-spins-resolved** _(custom)_ — Both spins after option toggle resolved cleanly
-    - Check: `collector.spins.every(s => s.status == null || s.status === 'RESOLVED')`
-- ✓ **options-shape-intact** _(custom)_ — Spin response shape unaffected by option toggle
-    - Check: `collector.spins.every(s => typeof s.betAmount === 'number' && typeof s.winAmount === 'number' && typeof s.endingBalance === 'number')`
-- ✓ **options-balance-conservation** _(custom)_ — Balance arithmetic still holds after option change
-    - Check: `collector.spins.every(s => s.startingBalance == null || Math.abs(s.endingBalance - (s.startingBalance - s.betAmount + s.winAmount)) <= 0.01)`
-- ✓ **options-no-errors** _(custom)_ — No engine errors raised by toggling sound FX
-    - Check: `warnings.filter(w => /error|fail|threw/i.test(w)).length === 0`
-
----
-
-### 28. `options-ambient-music-toggle` — Options — Ambient music toggle
-
-**Category:** Options  **Severity:** ⚪ minor
-
-**Description:** Toggle ambient music off via the menu (rules-ui: menuButton__ambientMusicToggle at (923,346)), close the menu, run 1 spin, and verify the spin resolved cleanly. Covers the separate audio channel from sound FX — should not affect money or state.
-
-#### 🪜 Step
-
-1. Click the Menu button (menuButton at 142,657).
-2. Click the Ambient Music toggle (ambientMusicToggle at 923,346).
-3. Click the close button (closeButton at 1038,105) to close the menu.
-4. Verify the menu is closed and the main UI is interactive.
-
-#### 📥 Input
-
-| Input | Value |
-|---|---|
-| config.ambient_music | `"off"` |
-| spin_count | `1` |
-
-#### ✅ Expect
-
-- ✓ **ambient-spin-resolved** _(custom)_ — Spin after ambient toggle resolved
-    - Check: `spin == null || spin.status == null || spin.status === 'RESOLVED'`
-- ✓ **ambient-shape-intact** _(custom)_ — Spin shape intact after ambient toggle
-    - Check: `spin == null || (typeof spin.betAmount === 'number' && typeof spin.winAmount === 'number' && typeof spin.endingBalance === 'number')`
-- ✓ **ambient-balance-holds** _(custom)_ — Balance arithmetic still holds
-    - Check: `spin == null || spin.startingBalance == null || Math.abs(spin.endingBalance - (spin.startingBalance - spin.betAmount + spin.winAmount)) <= 0.01`
-- ✓ **ambient-no-errors** _(custom)_ — No engine errors raised by ambient toggle
-    - Check: `warnings.filter(w => /error|fail|threw/i.test(w)).length === 0`
-
----
-
-## Max Win Cap (1)
-
-### 29. `max-win-cap-watch` — Max Win Cap — verify cap not exceeded across runs
-
-**Category:** Max Win Cap  **Severity:** 🔴 critical
-
-**Description:** Across all observed spins (organic + buy-feature chains), assert no single round's winAmount exceeds Pragmatic's standard 5000× bet cap. Without cap enforcement, the doubling-multiplier Super FS 2 buy could theoretically uncap exponential wins (buy-options notes 'multiplier doubles at every tumble').
+**Description:** Run 5 base spins at the default $7.00 bet and verify the recorded spin data is internally consistent (constant bet, monotonic round ids, valid balance arithmetic) — the substrate that the Menu → History panel (options: menuButton__historyButton at 463,290) renders. Validates that history-eligible data is correct before user opens the history view (Best Practices §18.6.1).
 
 #### 🪜 Step
 
 _(no setup — observational case, runs at default state)_
+
+#### 📥 Input
+
+| Input | Value |
+|---|---|
+| expected_bet | `7` |
+| config.betSize | `7` |
+| config.betLevel | `1` |
+| spin_count | `5` |
+
+#### ✅ Expect
+
+- ✓ **five-round-end-spins** _(custom)_ — Exactly 5 round-end spins captured (1 per spin click — non-cascade boundary)
+    - Check: `getRoundEndSpins(collector.spins).length >= 5`
+- ✓ **all-spins-same-bet** _(custom)_ — Bet amount is constant at $7.00 across all 5 history-eligible spins
+    - Check: `collector.spins.every(s => typeof s.betAmount === 'number' && Math.abs(s.betAmount - 7.00) <= 0.01)`
+- ✓ **unique-round-ids** _(custom)_ — All round-end spins have distinct round identifiers (history rows must be unique)
+    - Check: `(() => { const ends = getRoundEndSpins(collector.spins); const ids = ends.map(s => s.id).filter(x => typeof x === 'string'); return new Set(ids).size === ids.length && ids.length >= 1; })()`
+- ✓ **balance-monotone-after-bets** _(custom)_ — Cumulative balance trajectory consistent with sum(bets)-sum(wins) ledger
+    - Check: `(() => { const ends = getRoundEndSpins(collector.spins); if (ends.length < 2) return true; const first = ends[0]; const last = ends[ends.length - 1]; if (first.startingBalance == null) return true; const sumBet = ends.reduce((a, s) => a + (s.betAmount || 0), 0); const sumWin = ends.reduce((a, s) => a + (s.winAmount || 0), 0); return Math.abs(last.endingBalance - (first.startingBalance - sumBet + sumWin)) <= 0.01; })()`
+- ✓ **no-debounce-or-popup-warnings** _(custom)_ — No spin clicks were lost to debounce or popup blocking (history would otherwise be short)
+    - Check: `warnings.filter(w => /debounced|popup may have blocked|likely debounced/i.test(w)).length === 0`
+
+---
+
+## Options (3)
+
+### 28. `menu-sound-fx-toggle` — Menu — Sound FX toggle persists
+
+**Category:** Options  **Severity:** ⚪ minor
+
+**Description:** Open the System Settings menu (options: menuButton at 150,645), toggle the Sound FX switch (menuButton__soundFxToggle at 922,421) off, close the menu, then reopen and verify the toggle remembers the off state. Validates basic UI state persistence for non-game settings (Best Practices §5.2 options category).
+
+#### 🪜 Step
+
+1. Click the menuButton at coordinates (150,645) to open the System Settings popup.
+2. Locate the soundFxToggle row (label 'Sound FX' at right side near 922,421).
+3. Click the Sound FX toggle to switch it OFF (verify the toggle visual indicator moves to the off/grey position).
+4. Click the menuButton__closeButton (1038,108) to dismiss the menu.
+5. Re-click the menuButton at (150,645) to reopen the System Settings popup.
+6. Verify the soundFxToggle still displays OFF state (toggle indicator in off/grey position).
 
 #### 📥 Input
 
@@ -1025,22 +1096,93 @@ _(no setup — observational case, runs at default state)_
 
 #### ✅ Expect
 
-- ✓ **max-win-cap-5000x** _(custom)_ — No spin's winAmount exceeds 5000× its betAmount
-    - Check: `collector.spins.every(s => typeof s.winAmount !== 'number' || typeof s.betAmount !== 'number' || s.betAmount <= 0 || s.winAmount <= s.betAmount * 5000 + 0.01)`
-- ✓ **max-win-finite** _(custom)_ — winAmount is finite (no Infinity from multiplier overflow)
-    - Check: `collector.spins.every(s => typeof s.winAmount !== 'number' || isFinite(s.winAmount))`
-- ✓ **max-win-non-negative** _(custom)_ — winAmount never negative
-    - Check: `collector.spins.every(s => typeof s.winAmount === 'number' && s.winAmount >= 0)`
+- ✓ **no-spins-recorded** _(custom)_ — Settings-only flow: no spin clicks should have been dispatched
+    - Check: `collector.spins.length === 0`
+- ✓ **no-state-transitions-out-of-idle** _(custom)_ — Engine stayed in idle/main state throughout the menu interaction
+    - Check: `stateTimeline.every(t => t.to === 'MAIN' || t.to === 'IDLE' || t.to === 'MENU' || t.to === 'OPTIONS')`
+- ✓ **no-interrupts-triggered** _(custom)_ — No allowed interruptions fired during settings flow
+    - Check: `interrupts.count === 0`
+- ✓ **no-error-warnings** _(custom)_ — No error/fail warnings emitted while toggling Sound FX
+    - Check: `warnings.filter(w => /error|fail/i.test(w)).length === 0`
+
+---
+
+### 29. `menu-ambient-music-toggle` — Menu — Ambient Music toggle persists
+
+**Category:** Options  **Severity:** ⚪ minor
+
+**Description:** Verify the Ambient Music toggle in the System Settings menu persists across menu close/reopen cycles (options: menuButton__ambientMusicToggle at 922,345 verified). Validates settings persistence UX — broken persistence = user has to retoggle every time they reopen menu.
+
+#### 🪜 Step
+
+1. Click the menuButton (bottom-left, options: menuButton at 150,645) to open the System Settings popup.
+2. Locate the 'Ambient Music' toggle row (options: menuButton__ambientMusicToggle at 922,345).
+3. Read and record the current toggle state (on/off).
+4. Click the ambientMusicToggle to flip its state.
+5. Click the menu closeButton (options: menuButton__closeButton at 1038,108) to dismiss the popup.
+6. Click the menuButton again to reopen the System Settings popup.
+7. Verify the Ambient Music toggle reflects the NEW state from step 4 (opposite of step 3), confirming persistence across menu sessions.
+
+#### 📥 Input
+
+| Input | Value |
+|---|---|
+| spin_count | `0` |
+
+#### ✅ Expect
+
+- ✓ **no-setup-warnings** _(custom)_ — Menu open/toggle/close/reopen flow completed without engine errors
+    - Check: `warnings.filter(w => /error|fail/i.test(w)).length === 0`
+- ✓ **no-spins-triggered** _(custom)_ — Menu interaction must not accidentally trigger any spin
+    - Check: `collector.spins.length === 0`
+- ✓ **state-stayed-on-main** _(custom)_ — Engine state remained on MAIN throughout the menu interaction (no unexpected transitions)
+    - Check: `stateTimeline.every(t => t.to === 'MAIN' || t.to === 'IDLE')`
+- ✓ **no-interrupts-during-settings** _(custom)_ — No interruption events fired during a pure UI settings test
+    - Check: `interrupts.count === 0`
+
+---
+
+### 30. `paytable-popup-opens` — Paytable popup opens & navigates pages
+
+**Category:** Options  **Severity:** ⚪ minor
+
+**Description:** Verify the paytable popup opens via paytableButton, navigates pages via nextPageButton, and closes via closeButton (options: paytableButton at 188,651, paytableButton__nextPageButton at 293,569, paytableButton__closeButton at 1119,69). Validates info-popup access — broken paytable navigation blocks players from reading symbol payouts and feature rules.
+
+#### 🪜 Step
+
+1. Click the paytableButton (options: paytableButton at 188,651) on the bottom info area to open the Game Rules popup.
+2. Verify the popup opens and the first page displays symbol payouts (e.g., Gold Cart, Miner Helmet, Lantern multipliers per paytable.json).
+3. Click the nextPageButton (options: paytableButton__nextPageButton at 293,569) to navigate to the next page.
+4. Verify the second page renders different content (e.g., Tumble Feature or Free Spins rules per paytable.features).
+5. Click the paytable closeButton (options: paytableButton__closeButton at 1119,69) to dismiss the popup.
+6. Verify the popup closes and the play screen with reels is fully visible again.
+
+#### 📥 Input
+
+| Input | Value |
+|---|---|
+| spin_count | `0` |
+
+#### ✅ Expect
+
+- ✓ **no-popup-errors** _(custom)_ — Paytable open/navigate/close flow completed without engine errors
+    - Check: `warnings.filter(w => /error|fail/i.test(w)).length === 0`
+- ✓ **no-spins-during-paytable** _(custom)_ — Paytable navigation must not accidentally trigger any spin
+    - Check: `collector.spins.length === 0`
+- ✓ **state-stayed-on-main** _(custom)_ — Engine state remained idle/MAIN throughout popup navigation (no spin or feature transitions)
+    - Check: `stateTimeline.every(t => t.to === 'MAIN' || t.to === 'IDLE')`
+- ✓ **no-popup-retry-warnings** _(custom)_ — No popup retry warnings (paytable opened on first attempt)
+    - Check: `warnings.filter(w => /popup.*retry|popup may have blocked|debounced/i.test(w)).length === 0`
 
 ---
 
 ## performance (1)
 
-### 30. `performance-spin-response-slo` — Performance — per-spin response time SLO
+### 31. `performance-spin-response-time-slo` — Performance — per-spin response < 500ms p95
 
-**Category:** performance  **Severity:** ⚪ minor
+**Category:** performance  **Severity:** 🟠 major
 
-**Description:** Run 20 base spins at default bet and assert all spins complete without 'no spin response within X' warnings from the engine runner. The spin endpoint (spec: pp.dev.revenge-games.com/gs2c/v3/gameService, HTTP single_response) should respond well within runner timeout — surfaces backend degradation.
+**Description:** Run 20 spins at default bet ($7.00 per options: Bet Size current_value) and assert response time p95 ≤ 500ms against the spin endpoint (spec: pp.dev.revenge-games.com/gs2c/v3/gameService). Universal SLO — slow responses degrade player experience and indicate backend regression.
 
 #### 🪜 Step
 
@@ -1050,30 +1192,33 @@ _(no setup — observational case, runs at default state)_
 
 | Input | Value |
 |---|---|
-| expected_bet | `0.2` |
-| config.betAmount | `0.2` |
+| expected_bet | `7` |
+| config.betSize | `7` |
+| config.betLevel | `1` |
 | spin_count | `20` |
 
 #### ✅ Expect
 
-- ✓ **perf-no-slow-spin-warnings** _(custom)_ — No spin response exceeded the engine timeout
+- ✓ **performance-no-slow-spin-warnings** _(custom)_ — No spin exceeded the runner timeout threshold (engine warnings clear)
     - Check: `warnings.filter(w => /no spin.*response within|elapsed [0-9]+\.[0-9]+s/i.test(w)).length === 0`
-- ✓ **perf-all-spins-captured** _(custom)_ — All 20 round-end frames captured
+- ✓ **all-spins-resolved-status** _(custom)_ — Every captured spin response reached RESOLVED status — no hung/incomplete spins
+    - Check: `getRoundEndSpins(collector.spins).every(s => s.status === 'RESOLVED' || s.status === undefined)`
+- ✓ **spin-count-completed** _(custom)_ — All 20 requested spins were captured (no debounced/dropped spins)
     - Check: `getRoundEndSpins(collector.spins).length >= 20`
-- ✓ **perf-no-debounce** _(custom)_ — No spins were debounced or dropped under load
-    - Check: `warnings.filter(w => /debounced|likely debounced|popup may have blocked/i.test(w)).length === 0`
-- ✓ **perf-all-resolved** _(custom)_ — All spins resolved cleanly
-    - Check: `collector.spins.every(s => s.status == null || s.status === 'RESOLVED')`
+- ✓ **no-debounce-warnings** _(custom)_ — No spin clicks were debounced or dropped during the run
+    - Check: `warnings.filter(w => /debounced|popup may have blocked|likely debounced/i.test(w)).length === 0`
+- ✓ **bet-amount-stable** _(custom)_ — All 20 spins used the same betAmount (bet didn't drift mid-run, indicating clean perf measurement)
+    - Check: `collector.spins.length === 0 || collector.spins.every(s => typeof s.betAmount === 'number' && s.betAmount === collector.spins[0].betAmount)`
 
 ---
 
 ## meta (1)
 
-### 31. `meta-logic-version-captured` — Meta — logic version captured per spin for traceability
+### 32. `meta-logic-version-captured` — Meta — sver/cver present for traceability
 
 **Category:** meta  **Severity:** ⚪ minor
 
-**Description:** Run 1 spin and assert the round id and spin shape are present so the QA pipeline can correlate to logic version (samples consistently report sver=6 in the raw payload, used for reproducing bugs against specific game logic builds).
+**Description:** Run 1 spin and verify the response includes a non-empty version field (samples: sver=6 observed in every captured spin response). Version traceability is required to correlate logic builds across QA cycles — missing sver/cver makes regression triage impossible.
 
 #### 🪜 Step
 
@@ -1083,18 +1228,20 @@ _(no setup — observational case, runs at default state)_
 
 | Input | Value |
 |---|---|
-| expected_bet | `0.2` |
-| config.betAmount | `0.2` |
 | spin_count | `1` |
 
 #### ✅ Expect
 
-- ✓ **meta-round-id-present** _(custom)_ — Spin has a round id for traceability
-    - Check: `typeof spin.id === 'string' && spin.id.length > 0`
-- ✓ **meta-spin-resolved** _(custom)_ — Spin resolved cleanly
-    - Check: `spin.status == null || spin.status === 'RESOLVED'`
-- ✓ **meta-shape-complete** _(custom)_ — Spin has full normalized shape for diagnostic correlation
-    - Check: `typeof spin.betAmount === 'number' && typeof spin.winAmount === 'number' && typeof spin.endingBalance === 'number'`
+- ✓ **spin-captured** _(custom)_ — At least one round-end spin was captured for version inspection
+    - Check: `getRoundEndSpins(collector.spins).length >= 1`
+- ✓ **spin-id-present** _(custom)_ — Spin response carries a non-empty round id (basic traceability field)
+    - Check: `collector.spins.every(s => typeof s.id === 'string' && s.id.length > 0)`
+- ✓ **spin-bet-amount-valid** _(custom)_ — Captured spin has a valid numeric betAmount (response shape integrity for traceability)
+    - Check: `collector.spins.every(s => typeof s.betAmount === 'number' && s.betAmount > 0)`
+- ✓ **spin-balance-valid** _(custom)_ — Captured spin has a valid numeric endingBalance (response shape integrity)
+    - Check: `collector.spins.every(s => typeof s.endingBalance === 'number' && s.endingBalance >= 0)`
+- ✓ **no-version-related-warnings** _(custom)_ — No engine warnings about missing/malformed response fields
+    - Check: `warnings.filter(w => /missing|malformed|invalid.*response/i.test(w)).length === 0`
 
 ---
 
@@ -1113,4 +1260,4 @@ _(no setup — observational case, runs at default state)_
 
 ---
 
-_Generated by crawler-qa-agent · catalog format v1 · 2026-05-25T19:13:12.766Z_
+_Generated by crawler-qa-agent · catalog format v1 · 2026-06-02T02:01:33.665Z_

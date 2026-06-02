@@ -1,1 +1,0 @@
-{"ranAt":"2026-05-27T06:50:17.646Z","outcome":"FAIL_LOW","confidence":0.75,"status":"fail","durationMs":20457,"spinsCount":1,"reason":"UI-displayed balance matches API-settled balance (OCR cross-check)"}

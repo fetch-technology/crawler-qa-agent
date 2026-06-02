@@ -19,13 +19,19 @@ export type UiElement = {
   selector?: string;
   baselineScreenshot?: string;
   detectedAt: string;
-  /** Human-verified mark. Set by manual-verify dashboard when QA confirms or
-   * manually updates the coord. Used by warm-start to skip pixel-diff validation
-   * for human-verified entries (humans trump auto-detection).
+  /** What promoted this element to `status: "verified"`:
+   *   - "QA" — a human clicked Confirm or supplied coords via Pick.
+   *   - "probe" — runtime self-validation: clicked the AI-proposed coord, observed
+   *     the expected signal (network response / pixel diff / OCR change). Equally
+   *     trusted as QA for use, but flagged so QA can spot-check.
+   *   - null/undefined — not yet promoted.
    */
-  verifiedBy?: "QA" | null;
+  verifiedBy?: "QA" | "probe" | null;
   status?: UiVerifyStatus;
   verifiedAt?: string;
+  /** When verifiedBy === "probe", a short tag describing the signal that
+   *  confirmed (e.g. "spinResponse", "pixelDiff+OCR", "betOcrChanged"). */
+  probeSignal?: string;
 };
 
 export type UiRegistry = {
@@ -215,6 +221,44 @@ export type PaytableEntry = {
 export type Paytable = {
   symbols: PaytableEntry[];
   features?: Array<{ name: string; description?: string }>;
+};
+
+/**
+ * Self-calibrated payout model — for each numeric reel symbol index, the
+ * coin-INVARIANT unit rate per N-of-a-kind count, measured from the server's
+ * own win breakdown and confirmed to match the published paytable.
+ *
+ * Predicted combo win = curve[count] * ways * coin   (ways absent/0 => 1).
+ *
+ * Derived from captured spins (>= 2 coin levels) + paytable, then GATED by
+ * self-validation: `trusted` only when it reproduces 100% of observed combos
+ * AND the measured rates agree with the paytable (so "verify vs paytable" is
+ * real). Verification is a NO-OP unless trusted → never false-fails.
+ */
+export type PayoutModel = {
+  mechanic: GameMechanics["mechanic"];
+  /** index (as string) -> { curve: count -> coin-invariant unit rate
+   *  (win/ways/coin); names: candidate paytable symbol names (>1 when several
+   *  share an identical curve — harmless, same pay); paytableAgreement }. */
+  symbolCurves: Record<string, {
+    curve: Record<string, number>;
+    names: string[];
+    paytableAgreement: boolean;
+  }>;
+  calibration: {
+    coinLevels: number[];      // distinct coin values observed during calibration
+    spinsUsed: number;
+    combosTotal: number;
+    combosMatched: number;     // combos reproduced within tolerance
+    reproducedAll: boolean;    // combosMatched === combosTotal
+    paytableAgreement: boolean; // measured rates matched the paytable (all named symbols)
+    derivedBy: "deterministic" | "ai" | "deterministic+ai";
+  };
+  /** Only true when reproducedAll AND coinLevels.length >= 2 AND paytable
+   *  agreement. Verification is a NO-OP unless trusted (never false-fails). */
+  trusted: boolean;
+  generatedAt: string;
+  notes?: string[];
 };
 
 export type PopupRegions = {

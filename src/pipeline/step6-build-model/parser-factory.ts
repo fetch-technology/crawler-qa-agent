@@ -25,8 +25,19 @@ type WithBetMultiplier = BaseParser & {
   setBetMultiplier(m: number | undefined): void;
 };
 
+/** Optional setter for mechanic ("lines"/"ways"/"cluster"/"unknown") — lets
+ *  the parser choose the right bet formula (e.g. lines games use request `l`
+ *  directly; ways games rely on the per-level multiplier instead). */
+type WithMechanic = BaseParser & {
+  setMechanic(m: string | undefined): void;
+};
+
 function supportsBetMultiplier(parser: BaseParser): parser is WithBetMultiplier {
   return typeof (parser as { setBetMultiplier?: unknown }).setBetMultiplier === "function";
+}
+
+function supportsMechanic(parser: BaseParser): parser is WithMechanic {
+  return typeof (parser as { setMechanic?: unknown }).setMechanic === "function";
 }
 
 export type ParserFactoryOptions = {
@@ -65,10 +76,15 @@ export async function createParserForGame(
   }
   const parser = pickParserByKind(kind);
 
-  if (!opts.skipBetMultiplier && supportsBetMultiplier(parser)) {
+  if (!opts.skipBetMultiplier) {
     const mechanics = await gameMechanics.load(gameSlug);
-    if (mechanics && mechanics.betMultiplier > 0) {
-      parser.setBetMultiplier(mechanics.betMultiplier);
+    if (mechanics) {
+      if (supportsBetMultiplier(parser) && mechanics.betMultiplier > 0) {
+        parser.setBetMultiplier(mechanics.betMultiplier);
+      }
+      if (supportsMechanic(parser) && mechanics.mechanic) {
+        parser.setMechanic(mechanics.mechanic);
+      }
     }
   }
 

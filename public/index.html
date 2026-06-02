@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>QA · Games Overview</title>
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    main { max-width: 1280px; margin: 24px auto; padding: 0 32px; }
+    .header-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+    .actions { display: flex; gap: 8px; align-items: center; }
+    .add-game { display: flex; gap: 8px; align-items: center; margin: 16px 0 24px; padding: 12px 16px; background: var(--card); border: 1px solid var(--border); border-radius: 6px; }
+    .add-game input { flex: 1; padding: 6px 10px; background: var(--card-soft); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-family: var(--mono); font-size: 12px; }
+    .add-game button { background: var(--accent); color: #fff; border: 0; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 13px; }
+    .add-game button:hover { background: var(--accent-strong); }
+    button.gray { background: #374151; }
+    button.gray:hover { background: #4b5563; }
+
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px 18px; transition: border-color .15s, transform .15s; cursor: pointer; }
+    .card:hover { border-color: var(--accent); transform: translateY(-1px); }
+    .card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .card-slug { font-weight: 600; font-size: 15px; font-family: var(--mono); }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+    .badge-active { background: rgba(16,185,129,0.15); color: var(--ok); border: 1px solid rgba(16,185,129,0.3); }
+    .badge-idle { background: rgba(156,163,175,0.15); color: var(--muted); border: 1px solid rgba(156,163,175,0.3); }
+    .badge-busy { background: rgba(245,158,11,0.15); color: var(--warn); border: 1px solid rgba(245,158,11,0.3); }
+
+    .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 8px 0; }
+    .stat { background: var(--card-soft); padding: 6px 10px; border-radius: 4px; }
+    .stat-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+    .stat-val { font-size: 16px; font-weight: 600; font-family: var(--mono); }
+
+    .card-url { font-size: 11px; color: var(--muted); font-family: var(--mono); margin-top: 6px; word-break: break-all; max-height: 32px; overflow: hidden; }
+    .card-actions { display: flex; gap: 6px; margin-top: 12px; }
+    .card-actions button { flex: 1; padding: 5px 8px; font-size: 12px; border-radius: 4px; border: 1px solid var(--border); background: var(--card-soft); color: var(--text); cursor: pointer; }
+    .card-actions button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .card-actions button.primary:hover { background: var(--accent-strong); }
+    .card-actions button.danger { color: var(--err); border-color: var(--err); background: transparent; }
+    .card-actions button.danger:hover { background: var(--err-bg); }
+
+    .empty { padding: 36px; text-align: center; color: var(--muted); border: 1px dashed var(--border); border-radius: 8px; background: var(--card); }
+
+    .footer { margin-top: 32px; padding-top: 16px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; }
+    .footer code { background: var(--card-soft); padding: 2px 6px; border-radius: 3px; font-family: var(--mono); }
+  </style>
+</head>
+<body>
+  <!-- Full-page loading overlay shown during Start/Resume — these can take
+       10-30s while Playwright launches Chrome and dismisses pre-game popups. -->
+  <div id="loadingOverlay" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(8,10,14,0.78);backdrop-filter:blur(3px);align-items:center;justify-content:center;flex-direction:column;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+    <div style="width:54px;height:54px;border:4px solid rgba(99,102,241,0.18);border-top-color:#6366f1;border-radius:50%;animation:la-spin 0.9s linear infinite;"></div>
+    <div id="loadingOverlayLabel" style="margin-top:18px;font-size:14px;color:#e5e7eb;font-weight:600;letter-spacing:0.02em;text-align:center;max-width:520px;line-height:1.45;">Working…</div>
+    <div id="loadingOverlaySub" style="margin-top:6px;font-size:12px;color:#9ca3af;font-family:ui-monospace,SFMono-Regular,monospace;text-align:center;"></div>
+  </div>
+  <style>@keyframes la-spin { to { transform: rotate(360deg); } }</style>
+
+  <div class="topbar">
+    <h1>QA · Games Overview</h1>
+    <span class="topbar-status" id="poolStatus">— sessions</span>
+  </div>
+
+  <main>
+    <div class="header-row">
+      <div>
+        <strong id="gamesCount">…</strong> games registered ·
+        <span id="activeCount" style="color: var(--ok);">0</span> active sessions
+      </div>
+      <div class="actions">
+        <button class="gray" id="btnRefresh" title="Reload list">Refresh</button>
+      </div>
+    </div>
+
+    <div class="add-game">
+      <input id="newGameUrl" type="text" placeholder="https://pp.dev.revenge-games.com/<slug>/?t=…&oc=demo&l=en&r=…" />
+      <label style="font-size: 12px; color: var(--muted);"><input type="checkbox" id="autoDiscoverChk" /> auto-discover on start</label>
+      <button id="btnStart" title="Start a new session for this URL (slug auto-derived, then opens detail)">Start Session</button>
+    </div>
+
+    <div id="grid" class="grid">
+      <div class="empty">Loading…</div>
+    </div>
+
+    <div class="footer">
+      Multi-game pool active. <code>GET /api/qa/manual/sessions</code> lists live sessions ·
+      Each game opens in its own detail page <code>/game/&lt;slug&gt;</code>.
+    </div>
+  </main>
+
+  <script>
+    const $ = (q) => document.querySelector(q);
+
+    async function fetchJson(path, opts) {
+      const r = await fetch(path, opts);
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+      return body;
+    }
+
+    function fmtRel(iso) {
+      if (!iso) return "—";
+      const ts = new Date(iso).getTime();
+      const dt = Math.max(0, Date.now() - ts);
+      if (dt < 60_000) return Math.floor(dt / 1000) + "s ago";
+      if (dt < 3_600_000) return Math.floor(dt / 60_000) + "m ago";
+      if (dt < 86_400_000) return Math.floor(dt / 3_600_000) + "h ago";
+      return Math.floor(dt / 86_400_000) + "d ago";
+    }
+
+    function escapeHtml(s) {
+      return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    }
+
+    async function refresh() {
+      try {
+        // Fetch on-disk games + live sessions in parallel.
+        const [games, sessions] = await Promise.all([
+          fetchJson("/api/qa/manual/games").then((r) => r.games || []),
+          fetchJson("/api/qa/manual/sessions").then((r) => r.sessions || []).catch(() => []),
+        ]);
+
+        // Index live sessions by slug for fast lookup.
+        const liveBySlug = new Map();
+        for (const s of sessions) liveBySlug.set(s.gameSlug, s.status || {});
+
+        const merged = games.map((g) => {
+          const live = liveBySlug.get(g.gameSlug) || null;
+          return {
+            slug: g.gameSlug,
+            url: g.gameUrl,
+            createdAt: g.createdAt,
+            live,
+            registryCount: live ? Object.keys(live.registry || {}).length : null,
+            verifiedCount: live ? Object.values(live.registry || {}).filter((e) => e?.status === "verified").length : null,
+          };
+        });
+
+        // Active count
+        $("#gamesCount").textContent = merged.length;
+        $("#activeCount").textContent = sessions.length;
+        $("#poolStatus").textContent = `${sessions.length} live · ${merged.length} on disk`;
+
+        const grid = $("#grid");
+        if (merged.length === 0) {
+          grid.innerHTML = `<div class="empty">No games registered yet. Paste a game URL above and click Start Session.</div>`;
+          return;
+        }
+        grid.innerHTML = merged
+          .sort((a, b) => (b.live ? 1 : 0) - (a.live ? 1 : 0) || a.slug.localeCompare(b.slug))
+          .map((g) => renderCard(g))
+          .join("");
+        // Wire card actions
+        grid.querySelectorAll("[data-action]").forEach((el) => {
+          el.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            const action = el.dataset.action;
+            const slug = el.dataset.slug;
+            if (action === "open") location.href = `/game/${encodeURIComponent(slug)}`;
+            else if (action === "resume") resumeGame(slug);
+            else if (action === "delete") deleteGame(slug);
+          });
+        });
+        // Card click = open
+        grid.querySelectorAll(".card").forEach((el) => {
+          el.addEventListener("click", () => {
+            const slug = el.dataset.slug;
+            if (slug) location.href = `/game/${encodeURIComponent(slug)}`;
+          });
+        });
+      } catch (err) {
+        $("#grid").innerHTML = `<div class="empty" style="color: var(--err);">Failed to load: ${escapeHtml(err.message)}</div>`;
+      }
+    }
+
+    function renderCard(g) {
+      const badge = g.live
+        ? `<span class="badge badge-active">live</span>`
+        : `<span class="badge badge-idle">idle</span>`;
+      const reg = g.registryCount !== null
+        ? `<div class="stat"><div class="stat-label">Registry</div><div class="stat-val">${g.registryCount}</div></div>`
+        : `<div class="stat"><div class="stat-label">Registry</div><div class="stat-val" style="color: var(--muted);">—</div></div>`;
+      const verified = g.verifiedCount !== null
+        ? `<div class="stat"><div class="stat-label">Verified</div><div class="stat-val" style="color: ${g.verifiedCount === g.registryCount && g.registryCount > 0 ? 'var(--ok)' : 'var(--text)'};">${g.verifiedCount}</div></div>`
+        : `<div class="stat"><div class="stat-label">Verified</div><div class="stat-val" style="color: var(--muted);">—</div></div>`;
+      const created = `<div class="stat"><div class="stat-label">Created</div><div class="stat-val" style="font-size: 12px;">${escapeHtml(fmtRel(g.createdAt))}</div></div>`;
+
+      return `
+        <div class="card" data-slug="${escapeHtml(g.slug)}">
+          <div class="card-head">
+            <div class="card-slug">${escapeHtml(g.slug)}</div>
+            ${badge}
+          </div>
+          <div class="stats">${reg}${verified}${created}</div>
+          <div class="card-url">${escapeHtml(g.url || "")}</div>
+          <div class="card-actions">
+            <button class="primary" data-action="open" data-slug="${escapeHtml(g.slug)}">Open</button>
+            ${g.live
+              ? ``
+              : `<button data-action="resume" data-slug="${escapeHtml(g.slug)}">Resume</button>`}
+            <button class="danger" data-action="delete" data-slug="${escapeHtml(g.slug)}">Delete</button>
+          </div>
+        </div>
+      `;
+    }
+
+    function showLoading(label, sub) {
+      const ov = document.getElementById("loadingOverlay");
+      if (!ov) return;
+      document.getElementById("loadingOverlayLabel").textContent = label || "Working…";
+      document.getElementById("loadingOverlaySub").textContent = sub || "";
+      ov.style.display = "flex";
+    }
+    function hideLoading() {
+      const ov = document.getElementById("loadingOverlay");
+      if (ov) ov.style.display = "none";
+    }
+
+    async function resumeGame(slug) {
+      showLoading(`Resuming ${slug}…`, "Launching Playwright Chrome and attaching to the saved registry. Usually 5–15s.");
+      try {
+        await fetchJson("/api/qa/manual/resume", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ gameSlug: slug }),
+        });
+        // Navigate to the game's detail page once the session is up — keeps
+        // the spinner visible until the next page paints, which feels much
+        // smoother than flashing the cards back in between.
+        location.href = `/game/${encodeURIComponent(slug)}`;
+      } catch (err) {
+        hideLoading();
+        alert(`Resume failed: ${err.message}`);
+      }
+    }
+
+    async function deleteGame(slug) {
+      if (!confirm(`Delete game "${slug}" and ALL its fixtures? This cannot be undone.`)) return;
+      showLoading(`Deleting ${slug}…`, "Removing registry, test cases, scenarios, stats, and evidence files.");
+      try {
+        await fetchJson(`/api/qa/manual/game/${encodeURIComponent(slug)}`, { method: "DELETE" });
+        refresh();
+      } catch (err) {
+        alert(`Delete failed: ${err.message}`);
+      } finally { hideLoading(); }
+    }
+
+    $("#btnRefresh").addEventListener("click", refresh);
+    $("#btnStart").addEventListener("click", async () => {
+      const url = $("#newGameUrl").value.trim();
+      if (!url) return;
+      const autoDiscover = $("#autoDiscoverChk").checked;
+      showLoading("Starting session…", "Launching Playwright Chrome, loading the game URL, dismissing pre-game popups. May take 10–30s.");
+      try {
+        const status = await fetchJson("/api/qa/manual/start", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ url, autoDiscover }),
+        });
+        if (status.gameSlug) location.href = `/game/${encodeURIComponent(status.gameSlug)}`;
+        else hideLoading();
+      } catch (err) {
+        hideLoading();
+        alert(`Start failed: ${err.message}`);
+      }
+    });
+
+    refresh();
+    // Auto-refresh every 5s so live sessions tick.
+    setInterval(refresh, 5000);
+  </script>
+</body>
+</html>

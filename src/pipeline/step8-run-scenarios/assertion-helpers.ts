@@ -10,6 +10,11 @@
 // Each helper is pure (no I/O, no async, deterministic) → safe to expose
 // inside `new Function(...)` sandboxes.
 
+import type { WinCombo } from "../step6-build-model/win-breakdown.js";
+import { sumWinCombos } from "../step6-build-model/win-breakdown.js";
+import { checkCombosAgainstModel, type PayoutCheckResult } from "../step6-build-model/payout-model-eval.js";
+import type { PayoutModel } from "../registry/types.js";
+
 /** Loose spin shape — assertions are JS predicates run on adapted spins. */
 type LooseSpin = Record<string, unknown>;
 
@@ -117,4 +122,35 @@ export function detectBuyFeatureDeduction(
     ratio: baseBet > 0 ? deduction / baseBet : 0,
     spin: first,
   };
+}
+
+/**
+ * LAYER 1 (universal, no calibration) — sum the per-combo win breakdown the
+ * server itemized for a round (PP `wlc_v`, accumulated across tumble frames by
+ * cascade-dedup). Assertions compare this to the round's reported win to catch
+ * a "phantom win" — a win not backed by any winning symbol combination.
+ * Returns 0 when no breakdown present.
+ */
+export function sumWinBreakdown(spin: LooseSpin | null | undefined): number {
+  if (!spin) return 0;
+  const combos = spin.winBreakdown as WinCombo[] | undefined;
+  return sumWinCombos(combos);
+}
+
+/**
+ * LAYER 2 (self-calibrated) — verify each combo's win against the per-game
+ * payout model derived from (captured responses + paytable). NO-OP (ok=true,
+ * skipped=true) when no trusted model exists, so an uncalibrated game never
+ * false-fails. The `model` is bound into the sandbox as a closure over the
+ * executor ctx (see case-executor.ts).
+ */
+export function payoutModelCheck(
+  spin: LooseSpin | null | undefined,
+  model: PayoutModel | null | undefined,
+): PayoutCheckResult {
+  if (!spin) return { ok: true, skipped: true, reason: "no spin", checked: 0, matched: 0, mismatches: [] };
+  const combos = spin.winBreakdown as WinCombo[] | undefined;
+  const raw = (spin.raw ?? {}) as Record<string, unknown>;
+  const coin = Number(raw["c"]);
+  return checkCombosAgainstModel(model, combos, coin);
 }

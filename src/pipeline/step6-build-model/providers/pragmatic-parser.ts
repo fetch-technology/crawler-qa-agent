@@ -2,6 +2,7 @@ import { pragmaticProvider } from "../../../adapters/providers/pragmatic.js";
 import type { SpinResponse } from "../../../adapters/types.js";
 import type { BaseParser, ParserKind } from "../base-parser.js";
 import type { NormalizedSpinResult, SpinState } from "../normalized.js";
+import { parseWlcV } from "../win-breakdown.js";
 
 function deriveState(resp: SpinResponse): SpinState {
   if (resp.isFreeSpin) return "FREE_SPIN";
@@ -37,24 +38,29 @@ function buildRoundId(
  * PP bet computation from REQUEST fields, with optional per-game multiplier
  * override (from registry's game-mechanics.json).
  *
- * PP `c` = coin value, `l` = lines/ways, `bl` = bet level.
+ * PP request fields: `c` = coin value, `l` = lines (or ways count for
+ * ways games), `bl` = bet level (PP convention: when > 0, it IS the full
+ * stake multiplier; when 0, the game falls back to lines mode).
  *
- * Lines games (vs20rnriches): bet = c × l (or c × bl if bl > 0).
- * Ways games (vswaysmahwin2): `l` is ways count (1024, 2048, …) — actual
- *   stake uses a fixed multiplier (typically 20). Naive c × l is WRONG.
- *
- * Resolution order:
- *   1. If `betMultiplier` hint provided (from cached game-mechanics) → c × M
- *   2. Else if `bl > 0` → c × bl (bet-level mode)
- *   3. Else → c × l (lines mode; wrong for ways but safe default for first run)
- *
- * Detection of mechanic + multiplier is the job of step 6 (build-model) /
- * manualSession, which derives from observed balance change and persists to
- * registry — not the parser.
+ * Resolution order — mechanic-aware:
+ *   1. mechanic === "lines"  → PP lines convention:
+ *        bl > 0 → c × bl   (bet-level mode)
+ *        else   → c × l    (lines mode)
+ *      The `betMultiplier` from registry is IGNORED for lines games — it can
+ *      be stale (derived at a different bet level via balance-derived method),
+ *      and the request fields are always authoritative.
+ *   2. betMultiplier hint present (ways/cluster/unknown) → c × M.
+ *      Ways games can't use `l` directly (it's the ways count e.g. 1024,
+ *      not a stake multiplier) so the registry-stored per-level multiplier
+ *      is the only reliable source.
+ *   3. Naive fallback (no mechanic, no M):
+ *        bl > 0 → c × bl
+ *        else   → c × l
+ *      Same PP convention as #1.
  */
 function ppBetFromRequest(
   parsedRequest: Record<string, unknown> | null,
-  betMultiplier?: number,
+  opts: { mechanic?: string; betMultiplier?: number } = {},
 ): number {
   if (!parsedRequest) return 0;
   const num = (v: unknown): number => {
@@ -62,13 +68,21 @@ function ppBetFromRequest(
     return Number.isFinite(n) ? n : 0;
   };
   const c = num(parsedRequest["c"]);
+  if (c <= 0) return 0;
   const bl = num(parsedRequest["bl"]);
   const l = num(parsedRequest["l"]);
-  if (c > 0 && typeof betMultiplier === "number" && betMultiplier > 0) {
-    return c * betMultiplier;
+  const mechanic = (opts.mechanic ?? "").toLowerCase();
+
+  if (mechanic === "lines") {
+    if (bl > 0) return c * bl;
+    if (l > 0) return c * l;
+    return 0;
   }
-  if (c > 0 && bl > 0) return c * bl;
-  if (c > 0 && l > 0) return c * l;
+  if (typeof opts.betMultiplier === "number" && opts.betMultiplier > 0) {
+    return c * opts.betMultiplier;
+  }
+  if (bl > 0) return c * bl;
+  if (l > 0) return c * l;
   return 0;
 }
 
@@ -76,7 +90,7 @@ function toNormalized(
   resp: SpinResponse,
   rawReq: Record<string, unknown> | null,
   rawResp: Record<string, unknown>,
-  betMultiplier?: number,
+  betOpts: { mechanic?: string; betMultiplier?: number } = {},
 ): NormalizedSpinResult {
   // 2026-05-26: Free-spin frames carry the same `c` and `bl` in request as
   // normal spins (game UI fires identical doSpin requests during the
@@ -89,8 +103,10 @@ function toNormalized(
   //   - Signal Roll-up Rule check (balance arithmetic mismatch)
   // Fix: set bet=0 when isFreeSpin=true. Reflects what server actually did
   // (no deduction). NORMAL spins unchanged.
-  const requestBet = ppBetFromRequest(rawReq, betMultiplier);
+  const requestBet = ppBetFromRequest(rawReq, betOpts);
   const bet = resp.isFreeSpin ? 0 : requestBet;
+  const twRaw = rawResp["tw"];
+  const twNum = twRaw != null ? Number(twRaw) : NaN;
   return {
     roundId: buildRoundId(rawReq, rawResp),
     bet,
@@ -104,6 +120,8 @@ function toNormalized(
     isFreeSpin: resp.isFreeSpin,
     hasBonus: resp.hasBonus,
     raw: resp.raw,
+    winBreakdown: parseWlcV(rawResp),
+    serverTotalWin: Number.isFinite(twNum) ? twNum : undefined,
   };
 }
 
@@ -114,9 +132,16 @@ export class PragmaticParser implements BaseParser {
    *  setBetMultiplier() after construction (lets the parser stay pure of
    *  registry concerns; case-executor / manualSession injects this). */
   private betMultiplier: number | undefined;
+  /** Mechanic from registry's game-mechanics.json ("lines" / "ways" /
+   *  "cluster" / "unknown"). Decides whether bet uses request `l` directly
+   *  (lines) or the per-level multiplier (ways/cluster). */
+  private mechanic: string | undefined;
 
   setBetMultiplier(m: number | undefined): void {
     this.betMultiplier = m && m > 0 ? m : undefined;
+  }
+  setMechanic(m: string | undefined): void {
+    this.mechanic = m && m.length > 0 ? m : undefined;
   }
 
   canParseResponse(raw: string, url?: string): boolean {
@@ -131,7 +156,7 @@ export class PragmaticParser implements BaseParser {
   parseResponse(raw: string): NormalizedSpinResult {
     const parsed = pragmaticProvider.parseBody(raw);
     if (!parsed) throw new Error("PragmaticParser: cannot parse response body");
-    return toNormalized(pragmaticProvider.parseResponse(parsed), null, parsed, this.betMultiplier);
+    return toNormalized(pragmaticProvider.parseResponse(parsed), null, parsed, { mechanic: this.mechanic, betMultiplier: this.betMultiplier });
   }
 
   parseSpinPair(
@@ -145,6 +170,6 @@ export class PragmaticParser implements BaseParser {
     }
     const parsedReq = request ? pragmaticProvider.parseBody(request) : null;
     const res = pragmaticProvider.parseResponse(parsedRes);
-    return toNormalized(res, parsedReq, parsedRes, this.betMultiplier);
+    return toNormalized(res, parsedReq, parsedRes, { mechanic: this.mechanic, betMultiplier: this.betMultiplier });
   }
 }

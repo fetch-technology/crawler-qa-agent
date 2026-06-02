@@ -28,10 +28,25 @@ import { uiRegistry } from "../registry/ui-registry.js";
 import { initMeta, meta } from "../registry/meta.js";
 import { providerCache } from "../registry/provider-cache.js";
 import { gameMechanics, deriveGameMechanics } from "../registry/game-mechanics.js";
+import { payoutModel } from "../registry/payout-model.js";
+import { paytable as paytableStore } from "../registry/paytable.js";
+import { parseWlcV } from "../step6-build-model/win-breakdown.js";
+import { derivePayoutModel, type CalibrationCombo } from "../../ai/payout-model-derive.js";
+import { probeElement, inferProbeKind, type ProbeResult } from "../step2-detect-ui/element-probe.js";
+import { verifyClickAgent } from "../../ai/verify-click-agent.js";
+import { expectedBehaviorFor } from "../registry/expected-behavior.js";
+import { exploreUiGraph, explainSafety } from "../step2-detect-ui/graph-explorer.js";
+import { isSafeToClickForDiscovery } from "../step2-detect-ui/safe-click.js";
+import { filterMainOverlap, buildMainElementsHint } from "../step2-detect-ui/popup-filter.js";
+import { waitUntilStable } from "../utils/pixel-diff/index.js";
+import { cropVerifyAgent, type AgentLocateResult } from "../../ai/crop-verify-agent.js";
+import { describeCanonicalElement, enrichDescriptionWithSpinAnchor } from "../registry/canonical-element-hints.js";
+import { detectCanonicalCluster, discoverCanonicalPerElement } from "../step2-detect-ui/discover-canonical-per-element.js";
+import { saveDiscoverySnapshot } from "../registry/discovery-snapshots.js";
 import { pragmaticProvider } from "../../adapters/providers/pragmatic.js";
 import { dirForGame } from "../registry/paths.js";
 import { diffVsBaseline, regionAround } from "../utils/pixel-diff/index.js";
-import { dismissPopupsLoop, detectAnyPopup, detectDarkOverlay, isFreeSpinChainActive } from "../utils/ocr-popup.js";
+import { dismissPopupsLoop, detectAnyPopup, detectDarkOverlay, isFreeSpinChainActive, SUBSTATE_POPUP_KEYWORDS } from "../utils/ocr-popup.js";
 import { resolvePopupKeywords } from "../registry/popup-keywords.js";
 import { resolveSubStateHints, SUB_STATE_HINTS_DEFAULTS, interpolateSliderStops, type SubStateHint } from "../registry/sub-state-hints.js";
 import { readFile } from "node:fs/promises";
@@ -51,6 +66,11 @@ export type SessionStatus = {
   /** P3 — game-specific buttons auto-added to the registry beyond the expected
    *  list. Dashboard highlights these as AI-discovered extras to verify. */
   discoveryAutoAdded: Array<{ key: string; x: number; y: number; confidence: number; note?: string }>;
+  /** True while an auto-onboard run is executing in the background. Dashboard
+   *  uses this to restore the "Onboarding…" disabled-button state after a
+   *  page reload — without it the button re-enables and QA assumes the run
+   *  stopped, even though the server-side job is still running. */
+  autoOnboardInProgress: boolean;
 };
 
 export type SubStateSuggestion = {
@@ -191,13 +211,60 @@ function computeSuggestions(registry: UiRegistry | null): SubStateSuggestion[] {
   return out;
 }
 
-class ManualSessionManager {
+/** Snap a proposed bbox into the page viewport so `page.screenshot({clip})`
+ *  never throws ClipOutOfBounds. Used by the AI ocr-region detector when
+ *  the model returns a slightly-overshooting bbox (rounding, near-edge). */
+function clampBboxForViewport(
+  bbox: { x: number; y: number; width: number; height: number },
+  vp: { width: number; height: number },
+): { x: number; y: number; width: number; height: number } {
+  const x = Math.max(0, Math.min(vp.width - 1, Math.round(bbox.x)));
+  const y = Math.max(0, Math.min(vp.height - 1, Math.round(bbox.y)));
+  const w = Math.max(1, Math.min(vp.width - x, Math.round(bbox.width)));
+  const h = Math.max(1, Math.min(vp.height - y, Math.round(bbox.height)));
+  return { x, y, width: w, height: h };
+}
+
+/** Crop a PNG buffer in memory. Used to extract verify-crops from a
+ *  baseline screenshot WITHOUT touching the live Playwright page —
+ *  important when autoDetectOcrRegions runs in parallel with deepDiscover
+ *  (which is busy opening popups; a concurrent page.screenshot would
+ *  capture mid-popup state and break crop verification). */
+function cropPngBufferSync(
+  buf: Buffer,
+  clip: { x: number; y: number; width: number; height: number },
+): Buffer {
+  const { PNG } = require("pngjs") as typeof import("pngjs");
+  const src = PNG.sync.read(buf);
+  const sx = Math.max(0, Math.min(src.width, Math.round(clip.x)));
+  const sy = Math.max(0, Math.min(src.height, Math.round(clip.y)));
+  const sw = Math.max(1, Math.min(src.width - sx, Math.round(clip.width)));
+  const sh = Math.max(1, Math.min(src.height - sy, Math.round(clip.height)));
+  const dst = new PNG({ width: sw, height: sh });
+  for (let y = 0; y < sh; y++) {
+    const srcRow = ((sy + y) * src.width + sx) * 4;
+    const dstRow = y * sw * 4;
+    src.data.copy(dst.data, dstRow, srcRow, srcRow + sw * 4);
+  }
+  return PNG.sync.write(dst);
+}
+
+export class ManualSessionManager {
   private session: BrowserSession | null = null;
   private gameSlug: string | null = null;
   private gameUrl: string | null = null;
   private startedAt: string | null = null;
   private registry: UiRegistry | null = null;
   private verifyState: Record<string, "pending" | "confirmed" | "rejected"> = {};
+  /** 2026-06-01: mutex for expensive long-running ops (autoOnboard,
+   *  deepDiscover). Node's single-threaded event loop happily queues
+   *  multiple concurrent HTTP requests against the same route; without this
+   *  guard, a curl that was TaskStop'd CLIENT-SIDE still has its request
+   *  sitting in the server queue, ready to fire after the current one
+   *  completes. Observed: 4 prior curl tasks stacked up → server ran
+   *  autoOnboard 5 times in a row, last 4 overwriting the first's results.
+   *  Set when work begins, cleared in finally. Re-entries return 409. */
+  private autoOnboardInProgress = false;
   /** P3 — game-specific buttons the AI noticed beyond the expected list during
    *  the last discovery, AUTO-ADDED to the registry as pending. Tracked so the
    *  dashboard can highlight them for QA to verify / rename / remove. */
@@ -245,8 +312,9 @@ class ManualSessionManager {
     if (this.session) {
       throw new Error("Session already active — call stop() first");
     }
-    // Headed mode so QA can watch what the backend is doing.
-    this.session = await openBrowser(false);
+    // Headed by default so QA can watch what the backend is doing. Override
+    // with QA_HEADLESS=1 for CI / remote deploys / batch onboard without UI.
+    this.session = await openBrowser(process.env.QA_HEADLESS === "1");
     this.gameUrl = url;
     this.startedAt = new Date().toISOString();
     this.lastBalance = null;
@@ -274,6 +342,16 @@ class ManualSessionManager {
       if (r.attempts > 0) console.log(`[manual/ocr] popup dismiss: ok=${r.ok} attempts=${r.attempts} matched=${r.finalDetect.matchedKeywords.join(",")}`);
     } catch (err) {
       console.warn(`[manual/ocr] popup dismiss failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    // Server-side account state may carry an active autoplay from a previous
+    // browser session. Detect spontaneous spin responses + stop before discover
+    // runs (otherwise discover sees a moving game + AI vision drifts).
+    try {
+      const a = await this.stopAutoplayIfActive();
+      if (a.wasActive) console.log(`[manual/autoplay-stop] stopped leaked autoplay on start`);
+    } catch (err) {
+      console.warn(`[manual/autoplay-stop] failed on start (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
     }
 
     if (opts.autoDiscover !== false) {
@@ -318,6 +396,7 @@ class ManualSessionManager {
       subStateSuggestions: computeSuggestions(this.registry),
       expectedElements: [...this.expectedElementKeys],
       discoveryAutoAdded: [...this.discoveryAutoAdded],
+      autoOnboardInProgress: this.autoOnboardInProgress,
     };
   }
 
@@ -502,15 +581,59 @@ class ManualSessionManager {
       // matching by hint.stateLabel for ad-hoc / legacy labels.
       const hints = await resolveSubStateHints(this.gameSlug);
       const matched = hints[safeLabel] ?? Object.values(hints).find((h) => h.stateLabel === safeLabel);
-      const prompt = matched?.discoverHint
-        ? `${POPUP_FOCUS_PROMPT}\n\n--- STATE-SPECIFIC GUIDANCE (${safeLabel}) ---\n${matched.discoverHint}`
-        : POPUP_FOCUS_PROMPT;
+      // Build the popup-discovery prompt with 3 layers:
+      //   1. POPUP_FOCUS_PROMPT — general "this is a popup, ignore background".
+      //   2. State-specific discoverHint (e.g. autoplay slider anchor instructions).
+      //   3. Main-elements hint — explicit list of canonical main coords so AI
+      //      knows EXACTLY which buttons are background bleed-through and must
+      //      be skipped (matches the coord-based filter that runs post-AI).
+      const stateGuidance = matched?.discoverHint
+        ? `\n\n--- STATE-SPECIFIC GUIDANCE (${safeLabel}) ---\n${matched.discoverHint}`
+        : "";
+      const mainHint = buildMainElementsHint(this.registry);
+      const prompt = `${POPUP_FOCUS_PROMPT}${stateGuidance}${mainHint}`;
       if (matched?.discoverHint) {
         console.log(`[manual/discover] applied discover-hint for "${safeLabel}" (${matched.discoverHint.length} chars)`);
       }
       const result = await aiDiscoverState(this.session.page, debugDir, Date.now(), prompt);
       if (result.elements.length === 0) {
         return { ok: false, reason: "AI returned 0 elements — popup may not be visible" };
+      }
+
+      // Drop main-screen false positives — AI sometimes flags main controls
+      // visible THROUGH the dimmed popup background. Deterministic safety net
+      // on top of the prompt's "DO NOT include main-game buttons behind the
+      // popup" instruction (which AI doesn't always honor).
+      const filtered = filterMainOverlap(result.elements, this.registry);
+      if (filtered.dropped.length > 0) {
+        const sample = filtered.dropped.slice(0, 5).map((d) => `${d.key}@(${d.x},${d.y})→${d.overlapsMainKey}`).join("; ");
+        console.log(`[manual/discover] dropped ${filtered.dropped.length}/${result.elements.length} main-overlap false positives: ${sample}${filtered.dropped.length > 5 ? "…" : ""}`);
+      }
+      if (filtered.kept.length === 0) {
+        return { ok: false, reason: `AI returned ${result.elements.length} elements but ALL overlapped main-screen controls — popup likely not open or fully transparent. Re-open the popup and retry.` };
+      }
+      // Use the FILTERED list from here on (snapshot + registry).
+      const aiElements = filtered.kept;
+
+      // Persist the AI's view of this state for visual QA review. Save with
+      // NAMESPACED keys (matching the registry) so the dashboard can cross-ref
+      // each marker against current verify status by key. Non-fatal on error.
+      try {
+        await saveDiscoverySnapshot(
+          this.gameSlug,
+          safeLabel,
+          result.pngBuf,
+          aiElements.map((e) => ({
+            key: `${safeLabel}__${e.key}`,
+            x: e.x,
+            y: e.y,
+            confidence: e.confidence,
+            role: e.role,
+          })),
+          "discover-substate",
+        );
+      } catch (err) {
+        console.warn(`[manual/snapshot] failed to save discovery snapshot for ${safeLabel}: ${err instanceof Error ? err.message : String(err)}`);
       }
 
       // No dedup — QA wants every AI-returned element registered, even if
@@ -521,7 +644,7 @@ class ManualSessionManager {
       const addedKeys: string[] = [];
       const overwrittenKeys: string[] = [];
       const now = new Date().toISOString();
-      for (const e of result.elements) {
+      for (const e of aiElements) {
         const namespacedKey = `${safeLabel}__${e.key}`;
         const wasPresent = Boolean(this.registry[namespacedKey]);
         const el: UiElement = {
@@ -578,10 +701,979 @@ class ManualSessionManager {
       }
       console.log(`[manual/discover] ${addedKeys.length} new + ${overwrittenKeys.length} overwritten under ${safeLabel}__*`);
       await uiRegistry.save(this.gameSlug, this.registry);
-      return { ok: true, addedKeys };
+      // Auto-probe newly-added probeable elements (P1 of "AI auto-discover").
+      // Discover happens at the sub-state we just entered; only canonical
+      // main-screen-style keys (spinButton, betPlus, etc.) probe meaningfully
+      // here — sub-state-scoped keys typically aren't probeable in P1.
+      const probeable = addedKeys.filter((k) => inferProbeKind(k) != null);
+      let probe: Awaited<ReturnType<typeof this.probePendingElements>> | undefined;
+      if (probeable.length > 0) {
+        probe = await this.probePendingElements({ onlyKeys: probeable });
+      }
+      return { ok: true, addedKeys, ...(probe ? { probe } : {}) };
     } catch (err) {
       return { ok: false, reason: err instanceof Error ? err.message : String(err) };
     }
+  }
+
+  /**
+   * P1 of AI auto-discover — runtime self-validation gate. For each element
+   * with status="pending" that has a probe defined (inferProbeKind), click the
+   * proposed coord and observe a signal (network response / popup keyword).
+   * On success: flip to verified + verifiedBy="probe" + record the signal tag.
+   * On failure: stay pending for QA. Probes use offset retry (±5/10px) to
+   * absorb AI-vision coord drift. Each probe leaves the game on MAIN.
+   */
+  async probePendingElements(
+    opts: { onlyKeys?: string[] } = {},
+  ): Promise<{
+    ok: boolean;
+    reason?: string;
+    probed: number;
+    verified: number;
+    failed: number;
+    skipped: number;
+    results: Array<{ key: string; ok: boolean; probed: boolean; signal?: string; reason?: string; attempts: number }>;
+  }> {
+    if (!this.session || !this.registry || !this.gameSlug) {
+      return { ok: false, reason: "no active session", probed: 0, verified: 0, failed: 0, skipped: 0, results: [] };
+    }
+    // Pre-flight: ensure on main before probing (a leftover popup would
+    // sabotage every probe — main-state recovery is the runner's job here).
+    const pre = await this.waitForMainScreen({ maxWaitMs: 30_000 });
+    if (!pre.onMain) {
+      return { ok: false, reason: `not on main before probe (${pre.reason ?? "unknown"})`, probed: 0, verified: 0, failed: 0, skipped: 0, results: [] };
+    }
+
+    const allCandidates: Array<[string, UiElement]> = [];
+    for (const [key, el] of Object.entries(this.registry)) {
+      if (!el) continue;
+      if (opts.onlyKeys && !opts.onlyKeys.includes(key)) continue;
+      if (el.status !== "pending") continue;
+      allCandidates.push([key, el]);
+    }
+
+    // Split: canonical (key has NO `__`) vs sub-state (namespaced via __).
+    // Canonical probes assume game-on-main + look for kind-specific signals
+    // (gameService response, popup OCR, bet display change). Sub-state probes
+    // need the parent popup OPEN — handled in a separate sub-state loop
+    // below that walks the FULL trigger chain (level 1 → 2 → 3 …) for each
+    // candidate so probes can verify elements at any depth, not just
+    // first-level popups.
+    const candidates: Array<[string, UiElement]> = [];
+    const subStateCandidates: Array<[string, UiElement]> = [];
+    for (const [key, el] of allCandidates) {
+      if (key.includes("__")) {
+        subStateCandidates.push([key, el]);
+      } else {
+        candidates.push([key, el]);
+      }
+    }
+    // Sort sub-state candidates by depth ascending (level 1 first, then 2,
+    // then 3) — probing a parent before its descendants means the parent
+    // is verified by the time we walk the chain, satisfying the
+    // "trigger-chain fully verified" check below.
+    subStateCandidates.sort(([a], [b]) => a.split("__").length - b.split("__").length);
+
+    const results: Array<{ key: string; ok: boolean; probed: boolean; signal?: string; reason?: string; attempts: number }> = [];
+    let probed = 0, verified = 0, failed = 0, skipped = 0;
+    for (const [key, el] of candidates) {
+      // Re-ensure main between probes (the previous popup-kind probe just
+      // recovered, but be defensive — a slow dismiss could leak otherwise).
+      await this.waitForMainScreen({ maxWaitMs: 15_000 }).catch(() => undefined);
+      const r: ProbeResult = await probeElement(this.session.page, key, el);
+      results.push({ key, ok: r.ok, probed: r.probed, signal: r.signal, reason: r.reason, attempts: r.attempts });
+      if (!r.probed) { skipped++; continue; }
+      probed++;
+      if (r.ok) {
+        verified++;
+        if (r.finalCoord) { el.x = r.finalCoord.x; el.y = r.finalCoord.y; }
+        el.status = "verified";
+        el.verifiedBy = "probe";
+        el.verifiedAt = new Date().toISOString();
+        el.probeSignal = r.signal;
+        this.verifyState[key] = "confirmed";
+        console.log(`[manual/probe] ${key} VERIFIED via ${r.signal} (attempts=${r.attempts})`);
+      } else {
+        // Option B: probe failed (signal not seen after offset retries). For
+        // CANONICAL keys we have a description for, invoke the stateful
+        // crop-verify AGENT (Claude Agent SDK with conversation memory — the
+        // agent iteratively crops + verifies + adjusts, learning from previous
+        // attempts within ONE session). Then re-probe with the refined coord.
+        const baseDescription = describeCanonicalElement(key);
+        if (baseDescription) {
+          // Enrich with spin anchor when spinButton has a finite coord.
+          // Adjacent canonical buttons (autoButton, betPlus/Minus) commonly
+          // drift onto spin without a measurable reference. The agent's
+          // description now carries "spinButton is at (X, Y); your target is
+          // ~80px right of it" which materially cuts the drift rate.
+          const spinCoord =
+            this.registry.spinButton && Number.isFinite(this.registry.spinButton.x) && Number.isFinite(this.registry.spinButton.y)
+              ? { x: this.registry.spinButton.x, y: this.registry.spinButton.y }
+              : null;
+          const description = enrichDescriptionWithSpinAnchor(key, baseDescription, spinCoord);
+          console.log(`[manual/probe] ${key} probe failed — invoking stateful crop-verify agent${spinCoord && key !== "spinButton" ? ` (anchor=spin@(${spinCoord.x},${spinCoord.y}))` : ""}…`);
+          await this.waitForMainScreen({ maxWaitMs: 15_000 }).catch(() => undefined);
+          const cdpEndpoint = this.session.cdpEndpoint;
+          let cv: AgentLocateResult;
+          if (!cdpEndpoint) {
+            cv = { ok: false, reason: "no CDP endpoint on session — cannot run Playwright-MCP agent" };
+          } else {
+            try {
+              cv = await cropVerifyAgent({ description, label: key, cdpEndpoint, outputDir: path.join(dirForGame(this.gameSlug), "debug-agent") });
+            } catch (err) {
+              cv = { ok: false, reason: err instanceof Error ? err.message : String(err) };
+            }
+          }
+          if (cv.ok && typeof cv.x === "number" && typeof cv.y === "number") {
+            const moved = Math.abs(cv.x - el.x) > 5 || Math.abs(cv.y - el.y) > 5;
+            if (moved) {
+              el.x = cv.x;
+              el.y = cv.y;
+              el.strategy = "ai_vision";
+              el.confidence = 0.85; // agent converged on a verified-centered crop
+              console.log(`[manual/probe] ${key} agent refined → (${cv.x},${cv.y}) turns=${cv.turnsUsed ?? "?"}; re-probing…`);
+              await this.waitForMainScreen({ maxWaitMs: 15_000 }).catch(() => undefined);
+              const r2 = await probeElement(this.session.page, key, el);
+              if (r2.ok) {
+                verified++;
+                if (r2.finalCoord) { el.x = r2.finalCoord.x; el.y = r2.finalCoord.y; }
+                el.status = "verified";
+                el.verifiedBy = "probe";
+                el.verifiedAt = new Date().toISOString();
+                el.probeSignal = `${r2.signal} (via crop-verify agent fallback)`;
+                this.verifyState[key] = "confirmed";
+                const row = results[results.length - 1]!;
+                row.ok = true;
+                row.signal = el.probeSignal;
+                row.reason = undefined;
+                console.log(`[manual/probe] ${key} VERIFIED after agent refine (signal=${r2.signal})`);
+                continue;
+              }
+              console.log(`[manual/probe] ${key} still fails after agent refine — stays pending`);
+            } else {
+              console.log(`[manual/probe] ${key} agent returned same coord (drift ≤ 5px) — skipping re-probe`);
+            }
+          } else {
+            console.log(`[manual/probe] ${key} agent did not commit a coord — ${cv.reason ?? "unknown"}`);
+          }
+        }
+        failed++;
+        console.log(`[manual/probe] ${key} stays pending — ${r.reason} (attempts=${r.attempts})`);
+      }
+    }
+
+    // Sub-state pass — multi-level trigger-chain navigation. For each
+    // candidate key like "paytableButton__nextPageButton__symbolButton" the
+    // chain is ["paytableButton", "paytableButton__nextPageButton"]: click
+    // them in sequence from main and we end up in the state where
+    // symbolButton lives. After probing, dismiss everything so the next
+    // candidate starts from main again.
+    //
+    // Why per-candidate (not per-trigger group): probing one element in a
+    // popup can flip a toggle / advance a page / open a sub-popup. The next
+    // candidate's coord was discovered against the ORIGINAL popup baseline,
+    // not the post-click state. Re-opening from main between probes is the
+    // simplest way to guarantee a clean baseline — slower but correct.
+    //
+    // Ordering: candidates were sorted by depth ascending above, so level-1
+    // elements are probed BEFORE their level-2 descendants. By the time we
+    // walk a level-3 chain like [A, A__B, A__B__C], A and A__B will have
+    // been verified earlier in the same run.
+    const triggerChainOf = (uiKey: string): string[] => {
+      const parts = uiKey.split("__");
+      if (parts.length < 2) return [];
+      const chain: string[] = [];
+      for (let i = 1; i < parts.length; i++) chain.push(parts.slice(0, i).join("__"));
+      return chain;
+    };
+
+    for (const [key, el] of subStateCandidates) {
+      const chain = triggerChainOf(key);
+      // Verify every trigger in the chain is verified — clicking an
+      // unverified trigger risks landing on a wrong button (e.g. spin →
+      // costs real bet). If even one link is unverified, skip the
+      // candidate; it'll get re-tried in a subsequent run after QA
+      // verifies the parents.
+      let chainOk = true;
+      let badLink: string | null = null;
+      for (const t of chain) {
+        const tEl = this.registry[t];
+        if (!tEl || (tEl.verifiedBy !== "QA" && tEl.verifiedBy !== "probe")) {
+          chainOk = false;
+          badLink = t;
+          break;
+        }
+      }
+      if (!chainOk) {
+        results.push({ key, ok: false, probed: false, reason: `trigger chain broken at "${badLink}" (not verified)`, attempts: 0 });
+        skipped++;
+        continue;
+      }
+
+      // Ensure main → walk trigger chain → probe → dismiss.
+      const main1 = await this.waitForMainScreen({ maxWaitMs: 15_000 }).catch(() => undefined);
+      if (!main1 || !main1.onMain) {
+        results.push({ key, ok: false, probed: false, reason: "couldn't reach main before opening popup chain", attempts: 0 });
+        skipped++;
+        continue;
+      }
+      let navOk = true;
+      for (const t of chain) {
+        const tEl = this.registry[t]!;
+        try {
+          await this.session.page.mouse.click(tEl.x, tEl.y);
+          await this.session.page.waitForTimeout(2000);
+        } catch (err) {
+          results.push({ key, ok: false, probed: false, reason: `chain nav click failed at "${t}": ${err instanceof Error ? err.message : String(err)}`, attempts: 0 });
+          navOk = false;
+          break;
+        }
+      }
+      if (!navOk) {
+        skipped++;
+        try { await dismissPopupsLoop(this.session.page, { maxAttempts: 3 }); } catch {}
+        continue;
+      }
+      if (chain.length > 1) {
+        console.log(`[manual/probe] navigating ${chain.length}-deep chain for ${key}: ${chain.join(" → ")}`);
+      }
+
+      // Verify via AI agent (2026-06-01 — replaces pixel-diff probe).
+      // The agent clicks the coord ONCE, screenshots before/after, reads
+      // recent network requests, and reasons about whether the response
+      // matches the expected behavior derived from the key name. This is
+      // the same observe-and-judge pattern the upstream code-gen tool
+      // (logic-data-crawler-creator) uses, adapted to per-element
+      // verification.
+      //
+      // WHY agent over pixel-diff: pixel-diff just measures "did the
+      // screen change", which 10+ ghost namespaces in the previous run
+      // exploited — clicking at wrong coord still produced visible
+      // change (canvas tap → spin, click on spin coord through namespace
+      // → reels spin → 67.9% pixDiff falsely "verified"). The agent
+      // reads the SAME signals a human QA would (screenshot, network)
+      // and rejects ghost responses ("you clicked spinButton again,
+      // not a sub-state element"). No hardcoded threshold can substitute
+      // for that judgment.
+      let finalResult: ProbeResult;
+      let agentTurns: number | undefined;
+      if (!this.session.cdpEndpoint) {
+        finalResult = { ok: false, probed: false, attempts: 0, reason: "no CDP endpoint — cannot run verify agent" };
+      } else {
+        const stateContext = chain.length > 0
+          ? `Inside the popup opened by the trigger chain: ${chain.join(" → ")}.`
+          : undefined;
+        const expectedBehavior = expectedBehaviorFor(key);
+        try {
+          const v = await verifyClickAgent({
+            cdpEndpoint: this.session.cdpEndpoint,
+            coord: { x: el.x, y: el.y },
+            elementKey: key,
+            expectedBehavior,
+            stateContext,
+            outputDir: path.join(dirForGame(this.gameSlug), "debug-agent"),
+          });
+          agentTurns = v.turnsUsed;
+          if (v.ok) {
+            finalResult = {
+              ok: true,
+              probed: true,
+              signal: `agentVerified: ${v.reason.slice(0, 120)}`,
+              attempts: 1,
+              finalCoord: { x: el.x, y: el.y },
+            };
+          } else {
+            finalResult = {
+              ok: false,
+              probed: true,
+              attempts: 1,
+              reason: `agent rejected: ${v.reason.slice(0, 160)}`,
+            };
+          }
+        } catch (err) {
+          finalResult = {
+            ok: false,
+            probed: true,
+            attempts: 1,
+            reason: `agent threw: ${err instanceof Error ? err.message : String(err)}`,
+          };
+        }
+      }
+
+      results.push({ key, ok: finalResult.ok, probed: finalResult.probed, signal: finalResult.signal, reason: finalResult.reason, attempts: finalResult.attempts });
+      if (!finalResult.probed) {
+        skipped++;
+      } else if (finalResult.ok) {
+        probed++;
+        verified++;
+        if (finalResult.finalCoord) { el.x = finalResult.finalCoord.x; el.y = finalResult.finalCoord.y; }
+        el.status = "verified";
+        el.verifiedBy = "probe";
+        el.verifiedAt = new Date().toISOString();
+        el.probeSignal = finalResult.signal;
+        this.verifyState[key] = "confirmed";
+        console.log(`[manual/probe] ${key} VERIFIED via agent (turns=${agentTurns ?? "?"}): ${finalResult.signal}`);
+      } else {
+        probed++;
+        failed++;
+        console.log(`[manual/probe] ${key} stays pending (turns=${agentTurns ?? "?"}) — ${finalResult.reason}`);
+      }
+      // Aggressive state recovery between sub-state probes (2026-06-01 — max
+      // quality requirement). A single dismissPopupsLoop is not enough when
+      // the agent's click triggered a real action with delayed side-effects:
+      //   - startAutoplayButton → autoplay loop fires N spins; until stopped,
+      //     every subsequent probe sees autoplay state instead of expected
+      //     parent popup and gets rejected on context mismatch.
+      //   - confirmButton (buy bonus) → free-spin chain starts; chain takes
+      //     5-15 minutes to play out by itself.
+      //   - Any click that opens a popup chain → may need ESC + corner-click
+      //     multiple times.
+      //
+      // forceRecoverToMain loops: stopAutoplayIfActive (catches auto-spin),
+      // waits for FS chain to end (OCR no longer matches "free spins"
+      // without popup-content discriminators), dismisses popups, and only
+      // returns when game is verifiably on main. Times out at 15 min — at
+      // that point caller logs and moves on (rare edge case where game
+      // is stuck and QA must intervene).
+      try {
+        await this.forceRecoverToMain({ maxWaitMs: 15 * 60 * 1000 });
+      } catch (err) {
+        console.warn(`[manual/probe] force-recover after ${key} threw: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    await uiRegistry.save(this.gameSlug, this.registry);
+    return { ok: true, probed, verified, failed, skipped, results };
+  }
+
+  /**
+   * Synthesize slider-stop chips for every trigger whose sub-state-hints have
+   * a `sliderMarks` config (e.g. autoButton → autoCountSlide-{10,20,30,50,
+   * 70,100,500,1000}). Reads the min/max anchor elements the AI detected,
+   * interpolates the discrete values evenly between them, writes the chip
+   * keys, then removes the raw anchors. Idempotent — chip keys already in the
+   * registry are not overwritten. Used by both discoverSubState (per-row
+   * Discover) and deepDiscover (Deep Discover / Auto-Onboard).
+   */
+  private async synthesizeSliderStopsForAllHints(): Promise<string[]> {
+    const warnings: string[] = [];
+    if (!this.gameSlug || !this.registry) return warnings;
+    const hints = await resolveSubStateHints(this.gameSlug);
+    let synthesizedAny = false;
+    for (const [triggerKey, hint] of Object.entries(hints)) {
+      const sm = hint.sliderMarks;
+      if (!sm) continue;
+      const minEl = this.registry[`${triggerKey}__${sm.minAnchor}`];
+      const maxEl = this.registry[`${triggerKey}__${sm.maxAnchor}`];
+      if (!minEl || !maxEl || sm.values.length === 0) {
+        const msg = `slider-synth ${triggerKey}: anchors not found (min=${!!minEl} max=${!!maxEl}) — ${sm.keyPrefix}-N chips NOT registered. Re-run Discover on ${triggerKey} row, or Pick the missing anchor(s) manually.`;
+        console.warn(`[manual/slider-synth] ${msg}`);
+        warnings.push(msg);
+        continue;
+      }
+      const stops = interpolateSliderStops(minEl, maxEl, sm.values);
+      const now = new Date().toISOString();
+      let added = 0;
+      for (const stop of stops) {
+        const key = `${triggerKey}__${sm.keyPrefix}-${stop.value}`;
+        if (this.registry[key]) continue;
+        this.registry[key] = {
+          x: stop.x,
+          y: stop.y,
+          strategy: "ai_vision",
+          confidence: 0.4,
+          detectedAt: now,
+          status: "pending",
+        };
+        this.verifyState[key] = "pending";
+        added++;
+      }
+      // Remove the raw anchors so the chips supersede them.
+      delete this.registry[`${triggerKey}__${sm.minAnchor}`];
+      delete this.registry[`${triggerKey}__${sm.maxAnchor}`];
+      delete this.verifyState[`${triggerKey}__${sm.minAnchor}`];
+      delete this.verifyState[`${triggerKey}__${sm.maxAnchor}`];
+      console.log(`[manual/slider-synth] ${triggerKey}: synthesized ${added}/${sm.values.length} ${sm.keyPrefix}-{${sm.values.join(",")}} between anchors`);
+      synthesizedAny = true;
+    }
+    if (synthesizedAny) await uiRegistry.save(this.gameSlug, this.registry);
+    return warnings;
+  }
+
+  /**
+   * P2 of AI auto-discover — recursive deep exploration. Reuses the cold-start
+   * `exploreUiGraph` (DFS with safe-click whitelist, state hashing/dedup,
+   * navigate-back, bounded by maxDepth/maxAiCalls/maxStates). After the explorer
+   * merges newly-discovered states' elements into the registry, we auto-probe
+   * any probeable new keys via `probePendingElements` (P1 chain). End result:
+   * one click → graph of UI states explored → elements auto-verified where
+   * possible → only un-probeable elements left pending for QA.
+   */
+  async deepDiscover(
+    opts: { maxDepth?: number; maxAiCalls?: number; maxStates?: number; triggerHints?: Record<string, string> } = {},
+  ): Promise<{
+    ok: boolean;
+    reason?: string;
+    addedKeys?: string[];
+    statesDiscovered?: number;
+    transitionsRecorded?: number;
+    aiCallsUsed?: number;
+    elapsedMs?: number;
+    warnings?: string[];
+    /** Per-key explanation of why the explorer did or didn't try a click.
+     *  Critical for diagnosing "0 elements discovered" — usually means every
+     *  registry key was skipped by the safe-click whitelist. */
+    safetyReport?: { clickable: string[]; skipped: Array<{ key: string; reason: string }> };
+    probe?: Awaited<ReturnType<typeof this.probePendingElements>>;
+  }> {
+    if (!this.session || !this.registry || !this.gameSlug) {
+      return { ok: false, reason: "no active session" };
+    }
+    const pre = await this.waitForMainScreen({ maxWaitMs: 30_000 });
+    if (!pre.onMain) return { ok: false, reason: `not on main before deep-discover (${pre.reason ?? "unknown"})` };
+
+    // Re-detect policy (2026-05-29): Deep Discover treats unverified entries as
+    // stale candidates from prior AI runs and CLEARS them before re-detecting.
+    // QA-verified and probe-verified entries are preserved as ground truth.
+    const cleared: string[] = [];
+    for (const [key, el] of Object.entries(this.registry)) {
+      if (!el) continue;
+      if (el.verifiedBy === "QA" || el.verifiedBy === "probe") continue;
+      delete this.registry[key];
+      delete this.verifyState[key];
+      cleared.push(key);
+    }
+    if (cleared.length > 0) {
+      await uiRegistry.save(this.gameSlug, this.registry);
+      console.log(`[manual/deep-discover] cleared ${cleared.length} unverified entries for re-detection: ${cleared.slice(0, 8).join(",")}${cleared.length > 8 ? "…" : ""}`);
+    }
+
+    // Seed main-screen via AI vision when canonical keys are missing — lets
+    // Start session be cheap (browser only) and concentrate ALL AI work in this
+    // deep-discover / auto-onboard flow. Captured AFTER the clear so re-detected
+    // keys count as `addedKeys` and downstream probe runs on them.
+    const before = new Set(Object.keys(this.registry));
+    // Seed main-screen via batch ai-vision (one call returns all detected
+    // elements). Fast — ~5-10s. The trade-off vs the crop-verify locator is
+    // coord drift (~10-50px on canvas slots), which is handled DOWNSTREAM by
+    // the probe step + a crop-verify fallback when probe fails (Option B
+    // 2026-05-30). Verified entries (QA/probe) are preserved.
+    const CANONICAL_MAIN = ["spinButton", "betPlus", "betMinus", "menuButton", "paytableButton", "autoButton", "buyBonusButton", "historyButton"];
+    const missingCanonical = CANONICAL_MAIN.filter((k) => {
+      const el = this.registry[k];
+      if (!el) return true;
+      return el.verifiedBy !== "QA" && el.verifiedBy !== "probe";
+    });
+    if (missingCanonical.length > 0) {
+      console.log(`[manual/deep-discover] ${this.gameSlug}: missing canonical main keys [${missingCanonical.join(",")}] — waiting for canvas to settle before AI seed…`);
+      try {
+        await waitUntilStable(this.session.page, {
+          maxIterations: 10,
+          changeThreshold: 0.01,
+          consecutiveStable: 2,
+        });
+      } catch (err) {
+        console.warn(`[manual/deep-discover] waitUntilStable warning: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      await this.session.page.waitForTimeout(2000);
+      console.log(`[manual/deep-discover] canvas settled — running AI vision`);
+      const prevVerify = process.env.QA_UI_VERIFY_LOOP;
+      process.env.QA_UI_VERIFY_LOOP = "0";
+      try {
+        const { uiMap } = await discoverUi(this.session.page, { slug: this.gameSlug });
+        let seededCount = 0;
+        for (const [key, el] of Object.entries(uiMap)) {
+          if (!el) continue;
+          const existing = this.registry[key];
+          if (existing && (existing.verifiedBy === "QA" || existing.verifiedBy === "probe")) continue;
+          this.registry[key] = el;
+          this.verifyState[key] = "pending";
+          seededCount++;
+        }
+        await uiRegistry.save(this.gameSlug, this.registry);
+        console.log(`[manual/deep-discover] seeded ${seededCount} main-screen elements (verified entries preserved): ${Object.keys(uiMap).slice(0, 12).join(",")}${Object.keys(uiMap).length > 12 ? "…" : ""}`);
+        if (seededCount === 0 && Object.keys(this.registry).length === 0) {
+          return {
+            ok: false,
+            reason: "AI seeded 0 elements — the game canvas may still be loading or the screen is unrecognizable. Wait 10–20s after Start, then try again.",
+          };
+        }
+
+        // Cluster check (2026-05-31). The batch AI-vision occasionally returns
+        // a tight cluster of canonical coords (≥3 within ~80px), which is
+        // virtually always a vision-failure mode — real slot UIs spread main
+        // controls across the bottom row. When that happens, every cluster
+        // entry will fail probe AND the crop-verify fallback gets pulled
+        // toward the same wrong region (one wrong neighbor → same wrong
+        // coord). Detect it here and re-discover the cluster keys per-element
+        // BEFORE probe runs, so each element gets the agent's full attention
+        // with a clean spinButton anchor.
+        //
+        // Hybrid policy: batch is the default path (cheap, usually correct);
+        // per-element kicks in ONLY when the cluster heuristic trips. Cost
+        // stays low on healthy games; recovery is automatic on broken ones.
+        const cluster = detectCanonicalCluster(this.registry, CANONICAL_MAIN);
+        if (cluster.detected && this.session.cdpEndpoint) {
+          console.warn(
+            `[manual/deep-discover] batch seed produced suspicious cluster: ` +
+            `[${cluster.keys.join(",")}] within 80px of centroid (${cluster.centroid?.x},${cluster.centroid?.y}) — ` +
+            `re-discovering per-element with spinButton anchor`,
+          );
+          // Clear the cluster entries (verified ones stay; cluster detection
+          // already excluded them). Per-element will rebuild from scratch
+          // with crop-verify agent.
+          for (const k of cluster.keys) {
+            delete this.registry[k];
+            delete this.verifyState[k];
+          }
+          const pe = await discoverCanonicalPerElement(this.session.page, {
+            cdpEndpoint: this.session.cdpEndpoint,
+            existingRegistry: this.registry,
+            onlyKeys: cluster.keys,
+            outputDir: path.join(dirForGame(this.gameSlug), "debug-agent"),
+          });
+          for (const [key, el] of Object.entries(pe.registry)) {
+            if (!el) continue;
+            // Preserve any QA/probe-verified entry from this.registry — pe
+            // already skipped overwriting them, but guard here too in case
+            // verification raced.
+            const existing = this.registry[key];
+            if (existing && (existing.verifiedBy === "QA" || existing.verifiedBy === "probe")) continue;
+            this.registry[key] = el;
+            this.verifyState[key] = this.verifyState[key] ?? "pending";
+          }
+          await uiRegistry.save(this.gameSlug, this.registry);
+          console.log(
+            `[manual/deep-discover] per-element re-discovery: ` +
+            `discovered=[${pe.discovered.join(",")}] notFound=[${pe.notFound.join(",")}] failed=${pe.failed.length}`,
+          );
+        }
+      } finally {
+        if (prevVerify === undefined) delete process.env.QA_UI_VERIFY_LOOP;
+        else process.env.QA_UI_VERIFY_LOOP = prevVerify;
+      }
+    }
+
+    // Pre-compute safe-click report so the user can SEE why exploration may
+    // have nothing to click (e.g., all registry keys conservative-skipped).
+    const safetyReport: { clickable: string[]; skipped: Array<{ key: string; reason: string }> } = {
+      clickable: [],
+      skipped: [],
+    };
+    for (const key of Object.keys(this.registry)) {
+      const reason = explainSafety(key);
+      if (reason === "safe") safetyReport.clickable.push(key);
+      else safetyReport.skipped.push({ key, reason });
+    }
+    const aggressiveMode = process.env.QA_AGGRESSIVE_DISCOVER === "1";
+    console.log(`[manual/deep-discover] ${this.gameSlug}: safety report — ${safetyReport.clickable.length} clickable, ${safetyReport.skipped.length} skipped (mode: ${aggressiveMode ? "AGGRESSIVE (QA_AGGRESSIVE_DISCOVER=1)" : "PRODUCTION-SAFE"})`);
+    if (safetyReport.clickable.length === 0) {
+      return {
+        ok: false,
+        reason: `no safe-to-click elements in registry — the explorer can't open anything to explore (${safetyReport.skipped.length} elements skipped). See safetyReport for details.`,
+        safetyReport,
+      };
+    }
+
+    // Pre-explorer canonical probe (2026-06-01). The explorer iterates the
+    // safe-clickable canonical buttons and OPENS THEIR POPUPS to discover
+    // sub-state elements. If the canonical coords are still WRONG at this
+    // point (typical when batch AI vision misplaces them but the cluster
+    // heuristic didn't trip — observed 2026-06-01 on vswaysmahwin2 where
+    // spinButton was at (1130,685) but real was (985,685)), explorer clicks
+    // miss every popup → popup-filter drops the AI-hallucinated main
+    // elements → 0 sub-state in registry → no level 2 at all. Refining
+    // canonical coords HERE — via the standard probe flow with agent
+    // fallback — costs ~$3-8 extra but is the difference between a fully
+    // populated registry and an empty one.
+    const PRE_EXPLORE_CANONICAL = ["spinButton", "betPlus", "betMinus", "menuButton", "paytableButton", "autoButton", "buyBonusButton", "historyButton"];
+    const preProbeKeys = PRE_EXPLORE_CANONICAL.filter((k) => {
+      const el = this.registry[k];
+      if (!el) return false;
+      return el.status === "pending"; // verified entries skip
+    });
+    if (preProbeKeys.length > 0) {
+      console.log(`[manual/deep-discover] ${this.gameSlug}: pre-explorer probe refining ${preProbeKeys.length} canonical: [${preProbeKeys.join(",")}]`);
+      const preProbe = await this.probePendingElements({ onlyKeys: preProbeKeys });
+      console.log(`[manual/deep-discover] pre-explorer probe done: verified=${preProbe.verified} failed=${preProbe.failed} skipped=${preProbe.skipped}`);
+    }
+
+    console.log(`[manual/deep-discover] ${this.gameSlug}: starting recursive UI graph exploration (depth<=${opts.maxDepth ?? 3}, aiCalls<=${opts.maxAiCalls ?? 25}, states<=${opts.maxStates ?? 15}, clickable=${safetyReport.clickable.join(",")})…`);
+    // Per-trigger hints to pin AI labels to real values where the popup
+    // contents are predictable. For bet selector (opened via betPlus or
+    // betMinus), inject the exact gameSpec.betLadder so each bet cell is
+    // labeled with a value that actually exists in the ladder — otherwise
+    // the AI interpolates plausible-looking values like "bet-87.50" that
+    // don't exist, and downstream agent-verify rejects every such probe.
+    const triggerHints: Record<string, string> = {};
+    if (this.gameSpec?.betLadder?.length) {
+      const ladder = this.gameSpec.betLadder
+        .map((v) => v.toFixed(2))
+        .join(", ");
+      const betHint =
+        `This popup is the BET SELECTOR. Emit ONE element per VISIBLE bet ` +
+        `button. The button shows a numeric bet value (often prefixed with $). ` +
+        `READ the value rendered on each button and use key format "bet-<value>" ` +
+        `where <value> is the number you READ (e.g. a button showing "$0.20" → ` +
+        `key "bet-0.20"; "$100" → "bet-100.00"; format with 2 decimal places). ` +
+        `For reference the game's full bet ladder is [${ladder}]. If a value ` +
+        `you read is close to one of those, use the ladder value verbatim. ` +
+        `Do NOT generate keys for values not visibly rendered on a button. ` +
+        `Also emit "closeButton" for the X / dismiss control if visible.`;
+      triggerHints["betPlus"] = betHint;
+      triggerHints["betMinus"] = betHint;
+    }
+    // Inject per-trigger discoverHints from sub-state-hints (autoplay slider
+    // anchors, paytable nextButton, menu historyButton, etc.). Without this
+    // the explorer's AI runs unguided through autoButton → inconsistently
+    // labels the slider track ends → slider-stop synthesis below silently
+    // skips and autoCountSlide-N chips never register. Existing hints (bet
+    // selector) take priority. See sub-state-hints.ts for the full list.
+    const subHints = await resolveSubStateHints(this.gameSlug);
+    for (const [triggerKey, hint] of Object.entries(subHints)) {
+      if (!hint.discoverHint) continue;
+      if (triggerHints[triggerKey]) continue;
+      triggerHints[triggerKey] = hint.discoverHint;
+    }
+    const result = await exploreUiGraph(
+      this.session.page,
+      this.gameSlug,
+      this.registry,
+      { ...opts, triggerHints: { ...(opts.triggerHints ?? {}), ...triggerHints } },
+    );
+
+    // Migrate stale state-id-namespaced keys to trigger-namespaced. The explorer
+    // now namespaces sub-state elements by the TRIGGER KEY (matching
+    // discoverSubState's convention). Older runs used the AI-assigned state
+    // label as namespace (e.g. autoplay_settings_popup__*). Re-running picks up
+    // the same physical popup but creates new keys under the trigger → the
+    // dashboard would show TWO duplicate groups. Rename the stale ones so the
+    // tree groups everything under the trigger (autoButton__*).
+    let migrated = 0;
+    for (const fromStateId of Object.keys(result.graph.states ?? {})) {
+      const fromState = result.graph.states[fromStateId];
+      if (!fromState) continue;
+      for (const [trigger, targetStateId] of Object.entries(fromState.transitions ?? {})) {
+        if (!trigger || !targetStateId || trigger === targetStateId) continue;
+        const stalePrefix = `${targetStateId}__`;
+        const newPrefix = `${trigger}__`;
+        if (stalePrefix === newPrefix) continue;
+        for (const k of Object.keys(this.registry)) {
+          if (!k.startsWith(stalePrefix)) continue;
+          const tail = k.slice(stalePrefix.length);
+          const newKey = newPrefix + tail;
+          if (this.registry[newKey]) {
+            // Conflict — fresh trigger-namespaced entry already exists from
+            // this same explore. Stale loses; delete it.
+            delete this.registry[k];
+            delete this.verifyState[k];
+          } else {
+            this.registry[newKey] = this.registry[k];
+            this.verifyState[newKey] = this.verifyState[k] ?? "pending";
+            delete this.registry[k];
+            delete this.verifyState[k];
+          }
+          migrated++;
+        }
+      }
+    }
+    if (migrated > 0) console.log(`[manual/deep-discover] migrated ${migrated} stale stateId-namespaced keys to trigger-namespaced`);
+
+    // Merge new elements as pending. Explorer returns a mergedRegistry that
+    // includes initial + all discovered; pick out the genuinely-new keys.
+    const now = new Date().toISOString();
+    const addedKeys: string[] = [];
+    for (const [key, el] of Object.entries(result.registry)) {
+      if (!el) continue;
+      if (before.has(key)) continue;
+      this.registry[key] = {
+        ...el,
+        status: el.status ?? "pending",
+        detectedAt: el.detectedAt ?? now,
+      };
+      this.verifyState[key] = "pending";
+      addedKeys.push(key);
+    }
+    await uiRegistry.save(this.gameSlug, this.registry);
+    console.log(`[manual/deep-discover] explored ${result.graph.exploration.statesDiscovered} states, ${result.graph.exploration.transitionsRecorded} transitions, ${result.graph.exploration.aiCallsUsed} AI calls, +${addedKeys.length} new elements`);
+
+    // Slider-stop synthesis: per-row Discover already does this in
+    // discoverSubState; mirror here so Deep Discover (which goes through the
+    // explorer, not discoverSubState) also synthesizes the discrete chips
+    // (e.g. autoButton's autoCountSlide-{10,20,30,50,70,100,500,1000}).
+    const synthWarnings = await this.synthesizeSliderStopsForAllHints();
+    if (synthWarnings.length > 0) {
+      (result.warnings ?? (result.warnings = [])).push(...synthWarnings);
+    }
+
+    // Auto-probe all pending probeable elements (P1 chain). With the new
+    // re-detect policy (clear unverified at start), even keys that EXISTED
+    // before but were re-seeded as pending should be re-probed — calling with
+    // no `onlyKeys` filter scans the full registry and skips verified ones.
+    const probe = await this.probePendingElements({});
+    return {
+      ok: true,
+      addedKeys,
+      statesDiscovered: result.graph.exploration.statesDiscovered,
+      transitionsRecorded: result.graph.exploration.transitionsRecorded,
+      aiCallsUsed: result.graph.exploration.aiCallsUsed,
+      elapsedMs: result.graph.exploration.elapsedMs,
+      warnings: result.warnings,
+      safetyReport,
+      probe,
+    };
+  }
+
+  /**
+   * P3 of AI auto-discover — one-click onboarding. Runs the full chain:
+   *   1. deepDiscover (P2) — recursive UI graph exploration + element probe.
+   *   2. calibratePayoutModel — multi-bet spins + payout-model derivation.
+   * Returns combined summary. Skips PayoutModel calibration silently for
+   * non-PP games (calibratePayoutModel will return ok=false with a reason).
+   *
+   * Note: paytable extraction is NOT part of auto-onboard in v1 — it's
+   * performed during cold-start (`qa:cold`) and persisted to paytable.json.
+   * If the game's paytable.json is stale/missing, payout calibration will
+   * complete but with `paytableAgreement=false` → model untrusted (a safe,
+   * informative outcome). Re-running cold-start is the path to refresh it.
+   */
+  async autoOnboard(
+    opts: {
+      deepDiscover?: { maxDepth?: number; maxAiCalls?: number; maxStates?: number };
+      calibrationSpinsPerLevel?: number;
+    } = {},
+  ): Promise<{
+    ok: boolean;
+    reason?: string;
+    discover?: Awaited<ReturnType<typeof this.deepDiscover>>;
+    verify?: Awaited<ReturnType<typeof this.verifyRegistry>>;
+    ocr?: Awaited<ReturnType<typeof this.autoDetectOcrRegions>> | { ok: false; reason: string; saved: never[]; proposed: never[]; skipped: never[] };
+    payout?: Awaited<ReturnType<typeof this.calibratePayoutModel>>;
+    testRun?: Awaited<ReturnType<typeof this.runAllTestcases>>;
+  }> {
+    if (!this.session || !this.registry || !this.gameSlug) {
+      return { ok: false, reason: "no active session" };
+    }
+    // Mutex: reject if another autoOnboard is already running on this
+    // session (handles queued duplicate HTTP requests that survived a
+    // client-side TaskStop — server keeps processing them otherwise).
+    if (this.autoOnboardInProgress) {
+      console.warn(`[manual/auto-onboard] ${this.gameSlug}: REJECTED — another autoOnboard is already in progress (duplicate request likely queued)`);
+      return { ok: false, reason: "another autoOnboard is already in progress for this session" };
+    }
+    this.autoOnboardInProgress = true;
+    try {
+      console.log(`[manual/auto-onboard] ${this.gameSlug}: starting — deep-discover → verify → payout`);
+
+      // PARALLEL: kick off OCR-region auto-detection now using a baseline
+      // screenshot of the (currently-main) game canvas. The detection chain
+      // makes ~5 Claude vision calls + in-memory crops — completes in ~40s,
+      // overlaps with deepDiscover's ~5-15 min runtime. No live screenshots
+      // taken inside the chain, so deepDiscover's popup navigation can't
+      // race against it. Failures here are non-fatal (returned in `ocr`).
+      let ocrPromise: Promise<Awaited<ReturnType<typeof this.autoDetectOcrRegions>> | { ok: false; reason: string; saved: never[]; proposed: never[]; skipped: never[] }> = Promise.resolve(
+        { ok: false, reason: "no baseline captured", saved: [], proposed: [], skipped: [] },
+      );
+      if (this.session) {
+        try {
+          const baseline = await this.session.page.screenshot({ type: "png" });
+          ocrPromise = this.autoDetectOcrRegions({ baselineScreenshot: baseline }).catch((err) => ({
+            ok: false as const,
+            reason: err instanceof Error ? err.message : String(err),
+            saved: [] as never[], proposed: [] as never[], skipped: [] as never[],
+          }));
+          console.log(`[manual/auto-onboard] ${this.gameSlug}: ocr-region detection running in parallel`);
+        } catch (err) {
+          console.warn(`[manual/auto-onboard] ${this.gameSlug}: baseline screenshot for OCR detection threw: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+
+      const discover = await this.deepDiscover(opts.deepDiscover ?? {});
+      if (!discover.ok) {
+        // Still await the parallel OCR detection so we don't leave a dangling
+        // Claude call running in the background after we return.
+        const ocr = await ocrPromise;
+        return { ok: false, reason: `deep-discover failed: ${discover.reason ?? "unknown"}`, discover, ocr };
+      }
+      const ocr = await ocrPromise;
+      console.log(`[manual/auto-onboard] ${this.gameSlug}: ocr-region detection done — saved=${ocr.saved.length} proposed=${ocr.proposed.length} skipped=${ocr.skipped.length}`);
+
+      // Registry-verify phase (2026-06-02). After deep-discover, audit the
+      // registry against the per-parent EXPECTED_CHILDREN rules: prune legacy
+      // namespace dups, re-discover missing required/dynamic children via
+      // discoverVia(), then bidirectionally mirror verified entries across
+      // partner pairs (betPlus ↔ betMinus popup is identical). Bounded — one
+      // discoverVia call per missing trigger, no infinite re-audit loops.
+      const verify = await this.verifyRegistry();
+      console.log(
+        `[manual/auto-onboard] ${this.gameSlug}: verify — pruned=${verify.pruned.length} ` +
+        `re-discovered=${verify.reDiscoveredTriggers.length} ` +
+        `mirrored=${verify.mirrored.length}`,
+      );
+
+      let payout: Awaited<ReturnType<typeof this.calibratePayoutModel>>;
+      try {
+        payout = await this.calibratePayoutModel({ spinsPerLevel: opts.calibrationSpinsPerLevel });
+      } catch (err) {
+        payout = { ok: false, reason: err instanceof Error ? err.message : String(err) };
+      }
+
+      // Phase 4 (2026-06-02): auto-run all test cases in the catalog. Skips
+      // gracefully when the catalog doesn't exist yet (game hasn't been
+      // cold-started for testcase-gen). For now, generation lives in
+      // cold-start (`qa:cold` → generateAiCatalog with full network capture);
+      // auto-onboard only RUNS the cases. Future: invoke a generator hook
+      // here when AI catalog generation is decoupled from cold-start.
+      const testRun = await this.runAllTestcases({ continueOnFail: true });
+      console.log(
+        `[manual/auto-onboard] ${this.gameSlug}: test-run ${testRun.ok ? "complete" : "skipped"}` +
+        (testRun.ok ? ` — ${testRun.results.length} cases, ${testRun.passed} pass, ${testRun.failed} fail, ${testRun.skipped} skip` : ` — ${testRun.reason}`),
+      );
+
+      console.log(`[manual/auto-onboard] ${this.gameSlug}: done — discover.added=${discover.addedKeys?.length ?? 0} verify.mirrored=${verify.mirrored.length} ocr.saved=${ocr.saved.length} payout.trusted=${payout.trusted ?? false} test=${testRun.ok ? `${testRun.passed}/${testRun.results.length}p` : "skip"}`);
+      return { ok: true, discover, verify, ocr, payout, testRun };
+    } finally {
+      this.autoOnboardInProgress = false;
+    }
+  }
+
+  /**
+   * Run every test case in the AI-generated catalog sequentially. Used as
+   * the final step of `autoOnboard()`. Skips gracefully when the catalog
+   * doesn't exist (game not yet cold-started for testcase gen).
+   *
+   * Returns per-case results + aggregated counts. When `continueOnFail` is
+   * true (default), keeps running after a fail; when false, bails on first
+   * non-pass. Each case runs through `previewCase()` so the standard
+   * pre-flight ensure-main + post-case eval still applies.
+   */
+  async runAllTestcases(
+    opts: { continueOnFail?: boolean; caseFilter?: (id: string) => boolean } = {},
+  ): Promise<{
+    ok: boolean;
+    reason?: string;
+    results: Array<{ caseId: string; status: string; durationMs: number; skipReason?: string }>;
+    passed: number;
+    failed: number;
+    skipped: number;
+  }> {
+    if (!this.session || !this.gameSlug) {
+      return { ok: false, reason: "no active session", results: [], passed: 0, failed: 0, skipped: 0 };
+    }
+    const catalog = await loadAiCatalog(this.gameSlug);
+    if (!catalog) {
+      return {
+        ok: false,
+        reason: "test-cases.json not found — run cold-start (qa:cold) to generate the catalog first",
+        results: [], passed: 0, failed: 0, skipped: 0,
+      };
+    }
+    const continueOnFail = opts.continueOnFail ?? true;
+    const cases = catalog.cases.filter((c) => !opts.caseFilter || opts.caseFilter(c.id));
+    const results: Array<{ caseId: string; status: string; durationMs: number; skipReason?: string }> = [];
+    let passed = 0; let failed = 0; let skipped = 0;
+    console.log(`[manual/run-all] ${this.gameSlug}: starting — ${cases.length} cases (continueOnFail=${continueOnFail})`);
+    for (let i = 0; i < cases.length; i++) {
+      const c = cases[i]!;
+      console.log(`[manual/run-all] [${i + 1}/${cases.length}] ${c.id} (${c.severity ?? "?"}) — ${c.name}`);
+      let runResult: Awaited<ReturnType<typeof this.previewCase>>;
+      try {
+        runResult = await this.previewCase(c.id, { ensureMain: true });
+      } catch (err) {
+        runResult = { ok: false, reason: err instanceof Error ? err.message : String(err) };
+      }
+      const status = runResult.result?.status ?? (runResult.ok ? "unknown" : "error");
+      const durationMs = runResult.result?.durationMs ?? 0;
+      results.push({ caseId: c.id, status, durationMs, skipReason: runResult.result?.skipReason });
+      if (status === "pass") passed++;
+      else if (status === "skip") skipped++;
+      else failed++;
+      console.log(`[manual/run-all] [${i + 1}/${cases.length}] ${c.id} → ${status} (${(durationMs / 1000).toFixed(1)}s)`);
+      if (!continueOnFail && status === "fail") {
+        console.log(`[manual/run-all] bailing after fail (continueOnFail=false)`);
+        break;
+      }
+    }
+    console.log(`[manual/run-all] ${this.gameSlug}: done — ${passed} pass / ${failed} fail / ${skipped} skip`);
+    return { ok: true, results, passed, failed, skipped };
+  }
+
+  /**
+   * Post-discover registry audit pass. Reads EXPECTED_CHILDREN rules to:
+   *  1. Prune LEGACY_NAMESPACES dups (old discoverVia calls using stateLabel
+   *     as prefix when canonical trigger-key prefix also exists).
+   *  2. For each parent missing REQUIRED children, call discoverVia(trigger,
+   *     trigger) to re-open the popup and discover its elements (then probe
+   *     the new entries).
+   *  3. For each parent below dynamicPrefix threshold (e.g. bet popup with
+   *     <5 bet-X entries), same as #2.
+   *  4. Bidirectionally mirror verified entries across mirrorPartner pairs
+   *     (betPlus ↔ betMinus): if betMinus__bet-1.00 is verified and
+   *     betPlus__bet-1.00 isn't, copy verification (same coord, same popup).
+   *
+   *  No iterative re-audit — runs each phase once, bounded.
+   */
+  async verifyRegistry(): Promise<{
+    ok: boolean;
+    pruned: string[];
+    reDiscoveredTriggers: Array<{ trigger: string; addedKeys: string[]; reason?: string }>;
+    mirrored: Array<{ from: string; to: string }>;
+  }> {
+    if (!this.registry || !this.gameSlug) {
+      return { ok: false, pruned: [], reDiscoveredTriggers: [], mirrored: [] };
+    }
+    const { auditRegistry, applyMirrorRules, pruneLegacyNamespaces } = await import("../registry/expected-children.js");
+
+    // Phase 1 — prune legacy-namespace dups.
+    const pruned = pruneLegacyNamespaces(this.registry as Record<string, any>);
+    if (pruned.length > 0) {
+      console.log(`[manual/verify] pruned ${pruned.length} legacy-namespace dups: ${pruned.slice(0, 4).join(",")}${pruned.length > 4 ? ",…" : ""}`);
+      for (const k of pruned) delete this.verifyState[k];
+    }
+
+    // Phase 2 — find missing required & dynamic-prefix gaps.
+    const audit = auditRegistry(this.registry as Record<string, any>);
+    const triggersToReDiscover = new Set<string>();
+    for (const m of audit.missingRequired) triggersToReDiscover.add(m.trigger);
+    for (const m of audit.missingDynamic) triggersToReDiscover.add(m.trigger);
+
+    const reDiscoveredTriggers: Array<{ trigger: string; addedKeys: string[]; reason?: string }> = [];
+    for (const trigger of Array.from(triggersToReDiscover)) {
+      console.log(`[manual/verify] re-discovering ${trigger} children…`);
+      try {
+        const r = await this.discoverVia(trigger, trigger);
+        if (r.ok) {
+          reDiscoveredTriggers.push({ trigger, addedKeys: r.addedKeys ?? [] });
+          // Probe the freshly added children so we know which actually work.
+          if ((r.addedKeys?.length ?? 0) > 0) {
+            try {
+              await this.probePendingElements({ onlyKeys: r.addedKeys });
+            } catch (err) {
+              console.warn(`[manual/verify] probe new ${trigger} children threw: ${err instanceof Error ? err.message : String(err)}`);
+            }
+          }
+        } else {
+          reDiscoveredTriggers.push({ trigger, addedKeys: [], reason: r.reason });
+        }
+      } catch (err) {
+        reDiscoveredTriggers.push({ trigger, addedKeys: [], reason: err instanceof Error ? err.message : String(err) });
+      }
+      // Ensure we're back on main between re-discover invocations.
+      try { await this.forceRecoverToMain({ maxWaitMs: 60_000 }); } catch {}
+    }
+
+    // Phase 3 — mirror partner pairs.
+    const mirrored = applyMirrorRules(this.registry as Record<string, any>, new Date().toISOString());
+    for (const m of mirrored) {
+      this.verifyState[m.to] = "confirmed";
+    }
+    if (mirrored.length > 0) {
+      console.log(`[manual/verify] mirrored ${mirrored.length} entries via partner-pair (e.g. ${mirrored[0]!.from} → ${mirrored[0]!.to})`);
+    }
+
+    await uiRegistry.save(this.gameSlug, this.registry);
+    return { ok: true, pruned, reDiscoveredTriggers, mirrored };
   }
 
   /**
@@ -779,6 +1871,208 @@ class ManualSessionManager {
     return { ok: true, regions: next };
   }
 
+  /** AI auto-detect OCR-region bboxes via Claude vision. Takes a current
+   *  screenshot, asks the model to locate the Balance / Bet / Win / FS-counter
+   *  widgets, and merges the high-confidence results into ocr-regions.json
+   *  (low-confidence ones are returned but NOT persisted — QA reviews them).
+   *
+   *  Replaces the manual "Draw bbox by clicking two corners" flow for games
+   *  where these widgets are positioned conventionally. The endpoint stays
+   *  available alongside Draw so QA can override AI guesses.
+   *
+   *  @param opts.regions  Subset of region keys to detect; defaults to all four.
+   *  @param opts.minConfidence  Only persist regions with confidence ≥ this
+   *    threshold (default 0.7). Lower-confidence picks come back as
+   *    `proposed` for QA to review before saving.
+   */
+  async autoDetectOcrRegions(
+    opts: {
+      regions?: ReadonlyArray<"balanceArea" | "betArea" | "winArea" | "freeSpinCounter">;
+      /** Pre-captured main-screen PNG. When provided, all crop verification
+       *  is done in-memory against this buffer — no live `page.screenshot`
+       *  calls. Used by `autoOnboard` to parallelise OCR-region detection
+       *  with deep-discover (which is busy opening popups; concurrent
+       *  page.screenshot would race against its state changes). */
+      baselineScreenshot?: Buffer;
+    } = {},
+  ): Promise<{
+    ok: boolean;
+    reason?: string;
+    saved: Array<{ key: string; region: { x: number; y: number; width: number; height: number }; visionConfidence: number; aiValueRead: string | null; aiReason: string; ocrText?: string; ocrParsed?: number | null }>;
+    proposed: Array<{ key: string; region: { x: number; y: number; width: number; height: number }; visionConfidence: number; aiValueRead: string | null; aiReason: string; ocrText?: string; ocrParsed?: number | null; rejectReason: string }>;
+    skipped: Array<{ key: string; reason: string }>;
+    regions?: import("../registry/types.js").OcrRegions;
+  }> {
+    if (!this.session || !this.gameSlug) {
+      return { ok: false, reason: "no active session", saved: [], proposed: [], skipped: [] };
+    }
+    const page = this.session.page;
+    // Use the caller-supplied baseline when present (parallel autoOnboard
+    // path); otherwise grab a fresh shot (standalone dashboard call).
+    const usingBaseline = Boolean(opts.baselineScreenshot);
+    const shot = opts.baselineScreenshot ?? await page.screenshot({ type: "png" });
+    const shotBase64 = shot.toString("base64");
+    const vp = page.viewportSize() ?? { width: 1280, height: 720 };
+    const { detectOcrRegions, verifyOcrRegionCrop } = await import("../../ai/detect-ocr-regions.js");
+    const detection = await detectOcrRegions({ screenshotBase64: shotBase64, viewport: vp, regions: opts.regions });
+
+    const saved: Array<{ key: string; region: { x: number; y: number; width: number; height: number }; visionConfidence: number; aiValueRead: string | null; aiReason: string; ocrText?: string; ocrParsed?: number | null }> = [];
+    const proposed: Array<{ key: string; region: { x: number; y: number; width: number; height: number }; visionConfidence: number; aiValueRead: string | null; aiReason: string; ocrText?: string; ocrParsed?: number | null; rejectReason: string }> = [];
+    const skipped: Array<{ key: string; reason: string }> = [];
+
+    const { ocrRegions } = await import("../registry/ocr-regions.js");
+    let merged: Record<string, any> = { ...((await ocrRegions.load(this.gameSlug)) ?? {}) };
+
+    const NUMERIC_KEYS = new Set(["balanceArea", "betArea", "winArea"]);
+    const MAX_REFINEMENT_ITERS = 3; // initial pick + up to 3 refinements
+
+    for (const [key, entry] of Object.entries(detection)) {
+      if (!entry) continue;
+      if ((entry as { skipped?: boolean }).skipped) {
+        skipped.push({ key, reason: (entry as { reason?: string }).reason ?? "skipped" });
+        continue;
+      }
+      const r = entry as { x: number; y: number; width: number; height: number; confidence: number; reason: string };
+      let bbox = { x: r.x, y: r.y, width: r.width, height: r.height };
+      let visionConfidence = r.confidence;
+      let visionReason = r.reason;
+      let aiValueRead: string | null = null;
+      let lastVerdictReason = "";
+      let verified = false;
+      const rejectedHistory: Array<{ bbox: { x: number; y: number; width: number; height: number }; reason: string }> = [];
+
+      // CROP-AND-VERIFY LOOP with anti-oscillation + OCR ground-truth.
+      // AI vision can hallucinate `value_read` ("I see $99,991,116.99" when
+      // the crop is empty/wrong widget); we Tesseract-OCR the EXACT cropped
+      // pixels AI approved and confirm the digits match before promoting
+      // to `verified`. If AI says verified but OCR disagrees, treat as
+      // rejected and feed the mismatch into rejectedHistory so the next
+      // refinement aims somewhere new.
+      const { ocrBuffer, parseNumericFromOcr } = await import("../utils/ocr-popup.js");
+      let ocrText: string | undefined;
+      let ocrParsed: number | null | undefined;
+
+      for (let iter = 0; iter < MAX_REFINEMENT_ITERS + 1; iter++) {
+        let cropBuf: Buffer;
+        try {
+          const clip = clampBboxForViewport(bbox, vp);
+          cropBuf = usingBaseline
+            ? cropPngBufferSync(shot, clip)
+            : await page.screenshot({ type: "png", clip });
+        } catch (err) {
+          lastVerdictReason = `crop screenshot failed: ${err instanceof Error ? err.message : String(err)}`;
+          break;
+        }
+        const verdict = await verifyOcrRegionCrop({
+          cropBase64: cropBuf.toString("base64"),
+          fullScreenshotBase64: shotBase64,
+          bbox,
+          region: key as "balanceArea" | "betArea" | "winArea" | "freeSpinCounter",
+          viewport: vp,
+          rejectedHistory,
+        });
+        lastVerdictReason = verdict.reason;
+        aiValueRead = verdict.valueRead;
+
+        if (verdict.verified) {
+          // Ground-truth: Tesseract on the SAME crop. Numeric widgets must
+          // yield a parseable number. FS counter just needs non-empty text.
+          let groundTruthOk = true;
+          let groundTruthDetail = "";
+          try {
+            const ocr = await ocrBuffer(cropBuf);
+            ocrText = ocr.text;
+            ocrParsed = parseNumericFromOcr(ocr.text);
+            const isNumericKey = NUMERIC_KEYS.has(key);
+            groundTruthOk = isNumericKey
+              ? typeof ocrParsed === "number" && Number.isFinite(ocrParsed)
+              : ocr.text.trim().length > 0;
+            groundTruthDetail = `OCR read "${ocr.text.trim().slice(0, 80)}" (parsed=${ocrParsed ?? "null"})`;
+          } catch (err) {
+            groundTruthOk = false;
+            groundTruthDetail = `Tesseract threw: ${err instanceof Error ? err.message : String(err)}`;
+          }
+
+          if (groundTruthOk) {
+            verified = true;
+            console.log(`[manual/ocr-region/auto-detect] ${this.gameSlug}: ${key} iter ${iter} VERIFIED — AI: "${aiValueRead}" / ${groundTruthDetail}`);
+            break;
+          }
+          // AI claimed verified but Tesseract couldn't read a number → AI
+          // hallucinated. Demote to rejected, feed back into history so the
+          // next refinement aims away from this empty/wrong-widget bbox.
+          console.warn(`[manual/ocr-region/auto-detect] ${this.gameSlug}: ${key} iter ${iter} AI said verified ("${aiValueRead}") but Tesseract DISAGREES (${groundTruthDetail}) — treating as REJECTED`);
+          lastVerdictReason = `AI hallucinated value_read="${aiValueRead}" — Tesseract: ${groundTruthDetail}`;
+          rejectedHistory.push({ bbox, reason: lastVerdictReason });
+          if (iter === MAX_REFINEMENT_ITERS) break;
+          // No AI-suggested refinement here (AI thought it was right), so
+          // we widen the bbox by 50% and re-try in case the issue was a
+          // too-tight crop clipping digits. Bail if widening doesn't help.
+          const widened = {
+            x: Math.max(0, Math.round(bbox.x - bbox.width * 0.25)),
+            y: Math.max(0, Math.round(bbox.y - bbox.height * 0.25)),
+            width: Math.round(bbox.width * 1.5),
+            height: Math.round(bbox.height * 1.5),
+          };
+          // If widening would overlap a previously-rejected bbox, bail.
+          const widenOverlaps = rejectedHistory.slice(0, -1).some((h) =>
+            Math.abs(h.bbox.x - widened.x) <= 10 && Math.abs(h.bbox.y - widened.y) <= 10,
+          );
+          if (widenOverlaps) {
+            console.log(`[manual/ocr-region/auto-detect] ${this.gameSlug}: ${key} widened bbox overlaps already-rejected — bailing`);
+            break;
+          }
+          bbox = widened;
+          continue;
+        }
+
+        if (!verdict.refinedBbox || iter === MAX_REFINEMENT_ITERS) break;
+
+        // Anti-oscillation: reject refinement within ±10 px of a previously-
+        // rejected bbox — AI is just looping on the same wrong place.
+        const overlapsRejected = rejectedHistory.some((h) =>
+          Math.abs(h.bbox.x - verdict.refinedBbox!.x) <= 10
+          && Math.abs(h.bbox.y - verdict.refinedBbox!.y) <= 10,
+        );
+        if (overlapsRejected) {
+          console.log(`[manual/ocr-region/auto-detect] ${this.gameSlug}: ${key} iter ${iter + 1} refined bbox overlaps already-rejected — bailing (no convergence)`);
+          lastVerdictReason = `refinement oscillated near already-rejected bbox — no convergence (${verdict.reason})`;
+          break;
+        }
+        rejectedHistory.push({ bbox, reason: verdict.reason });
+        console.log(`[manual/ocr-region/auto-detect] ${this.gameSlug}: ${key} iter ${iter + 1} refining bbox → ${JSON.stringify(verdict.refinedBbox)} (${verdict.reason})`);
+        bbox = verdict.refinedBbox;
+      }
+
+      const isNumericKey = NUMERIC_KEYS.has(key);
+      const row = {
+        key,
+        region: bbox,
+        visionConfidence,
+        aiValueRead,
+        aiReason: lastVerdictReason || visionReason,
+        ocrText,
+        ocrParsed,
+      };
+      if (verified) {
+        merged[key] = bbox;
+        saved.push(row);
+      } else {
+        const why = isNumericKey
+          ? `AI rejected crop: ${lastVerdictReason || "unverified"}`
+          : `AI could not verify crop: ${lastVerdictReason || "unverified"}`;
+        proposed.push({ ...row, rejectReason: why });
+      }
+    }
+    if (saved.length > 0) {
+      await ocrRegions.save(this.gameSlug, merged as import("../registry/types.js").OcrRegions);
+      console.log(`[manual/ocr-region/auto-detect] ${this.gameSlug}: AI vision-verified ${saved.length} regions (${saved.map((s) => `${s.key}→${s.aiValueRead ?? s.ocrParsed ?? "?"}`).join(", ")}); ${proposed.length} need review, ${skipped.length} skipped`);
+    } else {
+      console.log(`[manual/ocr-region/auto-detect] ${this.gameSlug}: no vision-verified picks — ${proposed.length} proposed for review, ${skipped.length} skipped`);
+    }
+    return { ok: true, saved, proposed, skipped, regions: merged as import("../registry/types.js").OcrRegions };
+  }
+
   /** Delete one region entry from ocr-regions.json. */
   async removeOcrRegion(
     key: "balanceArea" | "betArea" | "winArea" | "freeSpinCounter",
@@ -888,7 +2182,18 @@ class ManualSessionManager {
       layers.overlay = { overlayPresent: overlay.overlayPresent, cornerBrightness: overlay.cornerBrightness, durationMs: overlay.durationMs };
       console.log(`[ensure-main] attempt ${attempt} overlay: present=${overlay.overlayPresent} corners=[${overlay.cornerBrightness.join(",")}]`);
 
-      const popupSignalB = ocr.hasPopup || overlay.overlayPresent;
+      // Overlay detector false-positives on games whose main UI has dark
+      // corners (vs20rnriches, vsfiestamagenta…). Symptom: OCR consistently
+      // reports no popup keywords but overlay flags present every attempt →
+      // recover loop spins forever without making progress.
+      // Policy: trust overlay on the FIRST attempt only (catches transient
+      // dark popups + lets recovery try). On subsequent attempts, when OCR
+      // remains "no popup", treat overlay as game-UI decoration and proceed.
+      const overlayBlocking = overlay.overlayPresent && (attempt === 1 || ocr.hasPopup);
+      const popupSignalB = ocr.hasPopup || overlayBlocking;
+      if (overlay.overlayPresent && !overlayBlocking) {
+        console.log(`[ensure-main] attempt ${attempt}: overlay still present but OCR clean — treating as game-UI decoration (not a popup), proceeding`);
+      }
 
       // Distinguish an ACTIVE free-spin chain (FS counter / in-progress text,
       // no "press anywhere" dismiss affordance) from a dismissable popup. An
@@ -994,6 +2299,214 @@ class ManualSessionManager {
    *   4. Wait 1500ms for animations to settle
    * Doesn't return success; caller re-runs detection to verify.
    */
+  /**
+   * Detect + stop autoplay leaked from a prior session. Slot game servers
+   * persist account state — if the previous QA browser exited mid-autoplay,
+   * reopening the same game URL resumes spinning automatically. Manifests as
+   * spontaneous /gameService POST responses with no QA input.
+   *
+   * Detection: watch for spontaneous spin responses for ~3s. Stop: click the
+   * spinButton (shows STOP icon during autoplay) + dismiss the "Stop
+   * Autoplay?" confirmation popup. If spinButton isn't registered yet (start()
+   * before Discover), fall back to a viewport-center click.
+   *
+   * Called from start() + resume() after popup dismiss, before any operation
+   * that assumes the game is idle. Adds ~3s when no autoplay (cheap insurance).
+   */
+  private async stopAutoplayIfActive(): Promise<{ wasActive: boolean }> {
+    if (!this.session) return { wasActive: false };
+    const page = this.session.page;
+    let spinObserved = false;
+    const handler = (res: import("playwright").Response) => {
+      if (/gameService|doSpin/.test(res.url()) && res.request().method() === "POST") {
+        spinObserved = true;
+      }
+    };
+    page.on("response", handler);
+    try {
+      await page.waitForTimeout(3000);
+    } finally {
+      page.off("response", handler);
+    }
+    if (!spinObserved) return { wasActive: false };
+
+    console.log("[manual/autoplay-stop] spontaneous gameService POST observed within 3s → autoplay likely active, stopping");
+    const sb = this.registry?.spinButton;
+    try {
+      if (sb && Number.isFinite(sb.x) && Number.isFinite(sb.y)) {
+        await page.mouse.click(sb.x, sb.y);
+      } else {
+        const vp = page.viewportSize() ?? { width: 1280, height: 720 };
+        await page.mouse.click(Math.round(vp.width / 2), Math.round(vp.height / 2));
+      }
+      await page.waitForTimeout(2500);
+    } catch (err) {
+      console.warn(`[manual/autoplay-stop] click failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    try {
+      const r = await dismissPopupsLoop(page, { maxAttempts: 3 });
+      if (r.attempts > 0) console.log(`[manual/autoplay-stop] post-stop popup dismiss: ok=${r.ok} attempts=${r.attempts}`);
+    } catch {}
+    // Verify autoplay actually stopped — if spins still firing, log loudly so
+    // QA can intervene manually (don't loop here; the manual session can
+    // continue once QA stops it via UI).
+    let stillSpinning = false;
+    const verifyHandler = (res: import("playwright").Response) => {
+      if (/gameService|doSpin/.test(res.url()) && res.request().method() === "POST") {
+        stillSpinning = true;
+      }
+    };
+    page.on("response", verifyHandler);
+    try {
+      await page.waitForTimeout(2000);
+    } finally {
+      page.off("response", verifyHandler);
+    }
+    if (stillSpinning) {
+      console.warn("[manual/autoplay-stop] autoplay still firing after stop attempt — QA intervention required");
+    } else {
+      console.log("[manual/autoplay-stop] autoplay successfully stopped");
+    }
+    return { wasActive: true };
+  }
+
+  /**
+   * Aggressive state recovery — used between sub-state probes when the agent
+   * verify click may have triggered a side-effect that persists past a single
+   * dismissPopupsLoop call (autoplay loop, free-spin chain, nested popup
+   * cascade). Loops until the game is verifiably back on the main play
+   * screen OR maxWaitMs elapses.
+   *
+   * Steps per iteration:
+   *   1. stopAutoplayIfActive — clicks the spin button (= STOP during
+   *      autoplay) if spontaneous gameService POSTs are observed.
+   *   2. dismissPopupsLoop — ESC + corner-click to close any popup.
+   *   3. Re-check via OCR + overlay. If popup gone AND not a FS chain →
+   *      return. If FS chain detected, wait 5s + retry (chains play out
+   *      autonomously, can only be waited out).
+   *
+   * The 15-min default cap accommodates worst-case 100-spin autoplay or a
+   * deep free-spin chain. Most recoveries finish in 5-30s.
+   */
+  private async forceRecoverToMain(opts: { maxWaitMs?: number } = {}): Promise<{ onMain: boolean; reason?: string; elapsedMs: number }> {
+    if (!this.session) return { onMain: false, reason: "no session", elapsedMs: 0 };
+    const page = this.session.page;
+    const maxWaitMs = opts.maxWaitMs ?? 5 * 60 * 1000;
+    const start = Date.now();
+    let attempt = 0;
+    // Stuck-popup detection (2026-06-01 — observed substate popups like the
+    // autoplay settings panel survive dismissPopupsLoop's ESC+corner-click
+    // strategy because they require explicit close-X clicks at game-specific
+    // coords. detectAnyPopup sees them via substate keywords; dismissPopupsLoop
+    // doesn't. Without an exit, the loop spins for the full maxWaitMs (15 min
+    // by default) printing "ocr/popup-detect: hasPopup=false" lines forever).
+    // If the SAME popup signature appears 3 iterations in a row AND it's not a
+    // free-spin chain (chains naturally complete in time), bail out with
+    // "stuck-substate" — caller logs and moves on. The loss is acceptable: a
+    // single sub-state probe failing to recover its parent popup state means
+    // its downstream candidates skip, but the rest of the registry still
+    // progresses.
+    let prevSignature = "";
+    let unchangedCount = 0;
+    while (Date.now() - start < maxWaitMs) {
+      attempt++;
+      // Phase 0: close any extra browser tabs the verify-click agent may have
+      // opened (e.g. gameHistoryButton opens a new tab — without this, all
+      // downstream probes see the history tab as the active page and reject
+      // their parent-state context).
+      try {
+        const ctx = page.context();
+        const pages = ctx.pages();
+        if (pages.length > 1) {
+          for (const p of pages) {
+            if (p !== page) {
+              try { await p.close(); } catch {}
+            }
+          }
+          await page.bringToFront();
+          console.log(`[force-recover] attempt ${attempt}: closed ${pages.length - 1} extra tab(s), restored game tab`);
+        }
+      } catch {}
+
+      // Phase 1: stop autoplay if active.
+      try {
+        const a = await this.stopAutoplayIfActive();
+        if (a.wasActive) {
+          console.log(`[force-recover] attempt ${attempt}: autoplay stopped`);
+        }
+      } catch {}
+
+      // Phase 2: dismiss popups.
+      try {
+        await dismissPopupsLoop(page, { maxAttempts: 3 });
+      } catch {}
+
+      // Phase 2.5: dismiss FREE SPINS COMPLETED result banner via Space/Enter.
+      // OCR's suppressResultBannerMatches correctly classifies the COMPLETED
+      // overlay as "on-main" (not a popup), so dismissPopupsLoop skips it.
+      // But the overlay VISUALLY blocks canvas clicks — every subsequent
+      // probe sees the COMPLETED banner instead of the expected popup
+      // state. PP slot games typically dismiss it via Space/Enter without
+      // triggering a spin (canvas-click would spin instead). Press once
+      // per recovery attempt; harmless when banner is absent.
+      try {
+        const { ON_MAIN_RESULT_PHRASES } = await import("../utils/ocr-popup.js");
+        const probe = await detectAnyPopup(page, { substateKeywords: [] });
+        if (ON_MAIN_RESULT_PHRASES.some((p) => probe.detectedText.includes(p))) {
+          console.log(`[force-recover] attempt ${attempt}: FS-completed banner detected — dismissing via Space/Enter`);
+          await page.keyboard.press("Space");
+          await page.waitForTimeout(800);
+          await page.keyboard.press("Enter");
+          await page.waitForTimeout(800);
+        }
+      } catch {}
+
+      // Phase 3: verify clean main state.
+      let det: Awaited<ReturnType<typeof detectAnyPopup>>;
+      try {
+        det = await detectAnyPopup(page, { substateKeywords: SUBSTATE_POPUP_KEYWORDS });
+      } catch {
+        await page.waitForTimeout(2000);
+        continue;
+      }
+      if (!det.hasPopup) {
+        // No popup signals → clean main.
+        console.log(`[force-recover] attempt ${attempt}: clean main reached in ${Date.now() - start}ms`);
+        return { onMain: true, elapsedMs: Date.now() - start };
+      }
+      // Popup signals present. Is it a free-spin chain (uncloseable)?
+      const isFs = isFreeSpinChainActive(det.matchedKeywords);
+      if (isFs) {
+        // Reset unchanged-count: FS chains DO progress (we're not stuck, just
+        // waiting for the chain to play out).
+        unchangedCount = 0;
+        prevSignature = "";
+        console.log(`[force-recover] attempt ${attempt}: free-spin chain active (matched=[${det.matchedKeywords.join(",")}]) — waiting`);
+        await page.waitForTimeout(5000);
+        continue;
+      }
+      // Non-FS popup: check whether we're making progress (signature changes
+      // each iteration) or stuck (same signature repeating).
+      const signature = [...det.matchedKeywords].sort().join(",");
+      if (signature === prevSignature) {
+        unchangedCount++;
+        if (unchangedCount >= 6) {
+          console.warn(`[force-recover] STUCK on substate popup [${signature}] for ${unchangedCount} consecutive attempts — bailing out (ESC + corner-click can't dismiss this popup; needs an explicit close-X click QA must wire up)`);
+          return {
+            onMain: false,
+            reason: `stuck on popup [${signature}] — dismissPopupsLoop cannot close it (substate popup needs game-specific close affordance)`,
+            elapsedMs: Date.now() - start,
+          };
+        }
+      } else {
+        unchangedCount = 1;
+        prevSignature = signature;
+      }
+      await page.waitForTimeout(1500);
+    }
+    return { onMain: false, reason: `timeout after ${Math.round((Date.now() - start) / 1000)}s`, elapsedMs: Date.now() - start };
+  }
+
   private async recoverToMain(): Promise<void> {
     if (!this.session) return;
     const page = this.session.page;
@@ -1071,7 +2584,8 @@ class ManualSessionManager {
       await uiRegistry.save(gameSlug, reg);
     }
 
-    this.session = await openBrowser(false);
+    // Headed by default; QA_HEADLESS=1 to run headless on resume.
+    this.session = await openBrowser(process.env.QA_HEADLESS === "1");
     this.gameUrl = m.gameUrl;
     this.gameSlug = gameSlug;
     this.startedAt = new Date().toISOString();
@@ -1099,6 +2613,19 @@ class ManualSessionManager {
       if (r.attempts > 0) console.log(`[manual/ocr] popup dismiss on resume: ok=${r.ok} attempts=${r.attempts} matched=${r.finalDetect.matchedKeywords.join(",")}`);
     } catch (err) {
       console.warn(`[manual/ocr] popup dismiss failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    // Same autoplay-leakage check as start() — server-side account state
+    // commonly persists across browser sessions for slot platforms. Without
+    // this, deep-discover sees autoplay-induced spin animations + the explorer
+    // tries to interact with a moving target (observed 2026-05-30 on
+    // vs20rnriches → explorer found `stop_autoplay_prompt` state instead of
+    // autoplay's normal settings popup).
+    try {
+      const a = await this.stopAutoplayIfActive();
+      if (a.wasActive) console.log(`[manual/autoplay-stop] stopped leaked autoplay on resume`);
+    } catch (err) {
+      console.warn(`[manual/autoplay-stop] failed on resume (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
     }
 
     return this.status();
@@ -1437,6 +2964,9 @@ class ManualSessionManager {
       actions: translated.actions,
       skipReason: translated.skipReason,
     };
+    // Load the self-calibrated payout model (PP wlc_v games). Null/untrusted →
+    // payoutModelCheck is a no-op, so cases run identically on uncalibrated games.
+    const loadedPayoutModel = await payoutModel.load(this.gameSlug).catch(() => null);
     const ctx = {
       page: this.session.page,
       uiMap: this.registry,
@@ -1447,6 +2977,7 @@ class ManualSessionManager {
       // uses this to seed balanceBefore for the first spin of each attempt.
       liveBalance: () => this.lastBalance,
       gameSlug: this.gameSlug,
+      payoutModel: loadedPayoutModel,
     };
 
     // Retry loop. If the catalog declares a retry_policy, honor it. Otherwise
@@ -1485,6 +3016,127 @@ class ManualSessionManager {
       ];
     }
     return { ok: true, result };
+  }
+
+  /**
+   * Calibrate the per-game payout model (Layer 2 of payout verification).
+   * Spins live at >= 2 bet levels, captures the server's per-combo win
+   * breakdown (PP `wlc_v`) tagged with the ACTUAL coin from each response, then
+   * derives + self-validates a PayoutModel (deterministic fit, AI assist only if
+   * needed). Stores it to registry/payout-model.json. The model is only
+   * `trusted` if it reproduces 100% of observed combos across >= 2 coin levels
+   * AND agrees with the paytable — otherwise verification stays a no-op.
+   *
+   * Runs as its OWN flow (NOT through previewCase) so the retry loop / AI review
+   * never interferes with capture.
+   */
+  async calibratePayoutModel(
+    opts: { spinsPerLevel?: number } = {},
+  ): Promise<{
+    ok: boolean;
+    reason?: string;
+    trusted?: boolean;
+    coinLevels?: number[];
+    combosTotal?: number;
+    combosMatched?: number;
+    paytableAgreement?: boolean;
+    symbolsModeled?: number;
+    notes?: string[];
+  }> {
+    if (!this.session || !this.gameSlug || !this.registry) return { ok: false, reason: "no active session" };
+    const page = this.session.page;
+    const K = Math.max(8, Math.min(60, opts.spinsPerLevel ?? 25));
+
+    // Side-channel capture: parse wlc_v + actual coin `c` from EVERY spin
+    // response (initial + cascade frames) — independent of executeCase's own
+    // dedup listener, and robust to set_bet not landing an exact coin.
+    const combos: CalibrationCombo[] = [];
+    const onResp = async (res: import("playwright").Response) => {
+      try {
+        const url = res.url();
+        if (!/gameService|doSpin/i.test(url)) return;
+        if (res.request().method() !== "POST") return;
+        const body = await res.text();
+        const parsed = pragmaticProvider.parseBody(body);
+        if (!parsed) return;
+        const coin = Number((parsed as Record<string, unknown>)["c"]);
+        if (!Number.isFinite(coin) || coin <= 0) return;
+        for (const wc of parseWlcV(parsed as Record<string, unknown>)) {
+          combos.push({ ...wc, coin });
+        }
+      } catch {
+        /* ignore individual response parse errors */
+      }
+    };
+    page.on("response", onResp);
+
+    try {
+      // Pick two distinct bet levels (=> two distinct coins) from the ladder.
+      const ladder = this.gameSpec?.betLadder ?? [];
+      const higherIdx = ladder.length > 1 ? Math.min(Math.floor(ladder.length / 2) || 1, ladder.length - 1) : -1;
+      const higherBet = higherIdx > 0 ? ladder[higherIdx]! : null;
+
+      const actions: import("../step7-testcase-gen/case-action-translator.js").CaseAction[] = [
+        { kind: "set_bet_to_min" },
+        { kind: "wait_ms", ms: 800 },
+      ];
+      for (let i = 0; i < K; i++) { actions.push({ kind: "spin" }); actions.push({ kind: "wait_ms", ms: 2500 }); }
+      if (higherBet != null) {
+        actions.push({ kind: "set_bet_to_value", value: higherBet, reason: "calibration: second coin level" });
+        actions.push({ kind: "wait_ms", ms: 800 });
+        for (let i = 0; i < K; i++) { actions.push({ kind: "spin" }); actions.push({ kind: "wait_ms", ms: 2500 }); }
+      }
+
+      const parser = await createParserForGame(this.gameSlug);
+      const ctx = {
+        page,
+        uiMap: this.registry,
+        parser,
+        priorBalance: this.lastBalance,
+        liveBalance: () => this.lastBalance,
+        gameSlug: this.gameSlug,
+        payoutModel: null,
+      };
+      console.log(`[calibrate-payout] ${this.gameSlug}: spinning ${K}×${higherBet != null ? 2 : 1} level(s) to capture combos…`);
+      await executeCase(ctx, {
+        id: "payout-calibration",
+        name: "Payout model calibration",
+        category: "payout_correctness",
+        severity: "minor",
+        actions,
+        allowed_interruptions: ["FREE_SPIN_TRIGGERED", "BIG_WIN_POPUP", "BONUS_POPUP"],
+        on_feature_triggered: "handle_and_continue",
+      });
+    } finally {
+      page.off("response", onResp);
+    }
+
+    const distinctCoins = [...new Set(combos.map((c) => c.coin))];
+    console.log(`[calibrate-payout] ${this.gameSlug}: captured ${combos.length} combos across coins [${distinctCoins.join(", ")}]`);
+    if (combos.length === 0) {
+      return { ok: false, reason: "no winning combos captured — try more spins or a higher-volatility bet" };
+    }
+
+    const paytableData = await paytableStore.load(this.gameSlug).catch(() => null);
+    const mech = await gameMechanics.load(this.gameSlug).catch(() => null);
+    const model = await derivePayoutModel({
+      combos,
+      paytable: paytableData,
+      mechanic: mech?.mechanic ?? "unknown",
+    });
+    await payoutModel.save(this.gameSlug, model);
+    console.log(`[calibrate-payout] ${this.gameSlug}: model trusted=${model.trusted} reproduced=${model.calibration.combosMatched}/${model.calibration.combosTotal} coins=${model.calibration.coinLevels.length} paytableAgreement=${model.calibration.paytableAgreement}`);
+
+    return {
+      ok: true,
+      trusted: model.trusted,
+      coinLevels: model.calibration.coinLevels,
+      combosTotal: model.calibration.combosTotal,
+      combosMatched: model.calibration.combosMatched,
+      paytableAgreement: model.calibration.paytableAgreement,
+      symbolsModeled: Object.keys(model.symbolCurves).length,
+      notes: model.notes,
+    };
   }
 
   /**
@@ -1785,6 +3437,12 @@ class ManualSessionManager {
     const lMatch = body.match(/(?:^|&)l=(\d+)/);
     const defcMatch = body.match(/(?:^|&)defc=([\d.]+)/);
     const blsMatch = body.match(/(?:^|&)bls=([\d.,]+)/);
+    // PP do_init also carries `defbl` (default bet level, 1-indexed into bls).
+    // Without applying it, defaultBet only reflects coin×lines and ignores
+    // the Ante Bet / Bonus Bet multiplier the server actually bills, so
+    // catalog "default-bet-equals-X" assertions diverge from real spins
+    // (e.g. UI 7 vs API 13.30 for 1.9× ante).
+    const defblMatch = body.match(/(?:^|&)defbl=(\d+)/);
     const minMatch = body.match(/(?:^|&)total_bet_min=([\d.]+)/);
     const maxMatch = body.match(/(?:^|&)total_bet_max=([\d.]+)/);
     if (!scMatch || !lMatch) return;
@@ -1792,8 +3450,23 @@ class ManualSessionManager {
     const lines = Number(lMatch[1]);
     const defaultCoin = defcMatch ? Number(defcMatch[1]) : coinValues[0]!;
     const betLevels = blsMatch ? blsMatch[1]!.split(",").map(Number).filter(Number.isFinite) : [];
-    const betMin = minMatch ? Number(minMatch[1]) : coinValues[0]! * lines;
-    const betMax = maxMatch ? Number(maxMatch[1]) : coinValues[coinValues.length - 1]! * lines;
+    const defaultBetLevelIdx = defblMatch ? Math.max(1, Number(defblMatch[1])) - 1 : 0;
+    const defaultBetLevel = betLevels.length > 0 ? (betLevels[defaultBetLevelIdx] ?? betLevels[0] ?? 1) : 1;
+    const betMin = minMatch ? Number(minMatch[1]) : coinValues[0]! * lines * (betLevels[0] ?? 1);
+    const betMax = maxMatch
+      ? Number(maxMatch[1])
+      : coinValues[coinValues.length - 1]! * lines * (betLevels[betLevels.length - 1] ?? 1);
+    // betLadder: every achievable coin×lines×level. Sorted + deduped so the
+    // translator can compute step distance for set_bet_to_value. Round to 2
+    // decimals to avoid floating-noise duplicates (e.g. 13.3 vs 13.299...).
+    const ladderSet = new Set<number>();
+    const levelsForLadder = betLevels.length > 0 ? betLevels : [1];
+    for (const c of coinValues) {
+      for (const lvl of levelsForLadder) {
+        ladderSet.add(Math.round(c * lines * lvl * 100) / 100);
+      }
+    }
+    const betLadder = Array.from(ladderSet).sort((a, b) => a - b);
     this.gameSpec = {
       coinValues,
       lines,
@@ -1801,10 +3474,10 @@ class ManualSessionManager {
       betLevels,
       betMin,
       betMax,
-      defaultBet: defaultCoin * lines,
-      betLadder: coinValues.map((c) => c * lines),
+      defaultBet: Math.round(defaultCoin * lines * defaultBetLevel * 100) / 100,
+      betLadder,
     };
-    console.log(`[manual/spec] captured: ladder=${this.gameSpec.betLadder.slice(0, 5).join(",")}…(${this.gameSpec.betLadder.length}) default=${this.gameSpec.defaultBet} min=${betMin} max=${betMax}`);
+    console.log(`[manual/spec] captured: ladder=${this.gameSpec.betLadder.slice(0, 5).join(",")}…(${this.gameSpec.betLadder.length}) default=${this.gameSpec.defaultBet} (coin=${defaultCoin}×lines=${lines}×bl=${defaultBetLevel}) min=${betMin} max=${betMax}`);
   }
 
   /**

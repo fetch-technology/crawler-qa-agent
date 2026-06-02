@@ -1,14 +1,502 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-05-26T01:18:16.632Z",
+  "generatedAt": "2026-06-02T04:44:00.970Z",
   "cases": {
+    "payout-integrity": {
+      "caseId": "payout-integrity",
+      "actions": [
+        {
+          "kind": "set_bet_to_min"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 800
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        }
+      ]
+    },
     "base-default-bet-single-spin": {
       "caseId": "base-default-bet-single-spin",
       "actions": [
         {
+          "kind": "set_bet_to_value",
+          "value": 7,
+          "reason": "assertion pins betAmount=7"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 800
+        },
+        {
+          "kind": "spin"
+        }
+      ]
+    },
+    "base-default-bet-multi-spin-conservation": {
+      "caseId": "base-default-bet-multi-spin-conservation",
+      "actions": [
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        }
+      ],
+      "aiCalled": false
+    },
+    "base-tumble-feature-aggregation": {
+      "caseId": "base-tumble-feature-aggregation",
+      "actions": [
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        }
+      ],
+      "aiCalled": false
+    },
+    "bet-variation-min-0.20": {
+      "caseId": "bet-variation-min-0.20",
+      "actions": [
+        {
           "kind": "click",
-          "uiKey": "betMinus",
-          "reason": "open bet ladder panel"
+          "uiKey": "betPlus",
+          "reason": "open bet selection panel"
         },
         {
           "kind": "wait_ms",
@@ -16,8 +504,8 @@
         },
         {
           "kind": "click",
-          "uiKey": "betMinus__bet-0.20",
-          "reason": "select minimum bet 0.20"
+          "uiKey": "betPlus__bet-0.20",
+          "reason": "select 0.20 bet tile"
         },
         {
           "kind": "wait_ms",
@@ -25,32 +513,21 @@
         },
         {
           "kind": "spin"
-        }
-      ]
-    },
-    "base-multi-spin-integrity": {
-      "caseId": "base-multi-spin-integrity",
-      "actions": [
+        },
         {
-          "kind": "spin"
+          "kind": "wait_ms",
+          "ms": 2500
         }
-      ]
+      ],
+      "aiCalled": true
     },
-    "base-response-shape-fields": {
-      "caseId": "base-response-shape-fields",
-      "actions": [
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "bet-variation-min-0-20": {
-      "caseId": "bet-variation-min-0-20",
+    "bet-variation-low-1.00": {
+      "caseId": "bet-variation-low-1.00",
       "actions": [
         {
           "kind": "click",
-          "uiKey": "betMinus",
-          "reason": "open bet panel"
+          "uiKey": "betPlus",
+          "reason": "open bet selection panel"
         },
         {
           "kind": "wait_ms",
@@ -58,8 +535,30 @@
         },
         {
           "kind": "click",
-          "uiKey": "betMinus__bet-0.20",
-          "reason": "select 0.20 bet (min)"
+          "uiKey": "betPlus__bet-1.00",
+          "reason": "select 1.00 bet tile"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        }
+      ],
+      "aiCalled": true
+    },
+    "bet-variation-mid-10.00": {
+      "caseId": "bet-variation-mid-10.00",
+      "actions": [
+        {
+          "kind": "click",
+          "uiKey": "betPlus",
+          "reason": "open bet selection panel"
         },
         {
           "kind": "wait_ms",
@@ -67,7 +566,53 @@
         },
         {
           "kind": "click",
-          "uiKey": "betMinus__closeButton",
+          "uiKey": "betPlus__bet-10.00",
+          "reason": "select 10.00 bet tile"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        }
+      ],
+      "aiCalled": true
+    },
+    "bet-variation-high-50.00": {
+      "caseId": "bet-variation-high-50.00",
+      "actions": [],
+      "skipReason": "AI translator failed: [case-translator/bet-variation-high-50.00] Claude Code process exited with code 1\n--- captured Claude CLI stderr (5695 chars) ---\n…_vision]\\n  - betPlus__bet-50.00 → bet-50.00 (770,472) ✓ verified [human-verified] [ai_vision]\\n  - betPlus__bet-6.00 → bet-6.00 (492,410) ✓ verified [human-verified] [ai_vision]\\n  - betPlus__bet-60.00 → bet-60.00 (909,472) ✓ verified [human-verified] [ai_vision]\\n  - betPlus__bet-7.00-selected → bet-7.00-selected (631,410) ✓ verified [human-verified] [ai_vision]\\n  - betPlus__bet-70.00 → bet-70.00 (1048,472) ✓ verified [human-verified] [ai_vision]\\n  - betPlus__bet-8.00 → bet-8.00 (770,410) ✓ verified [human-verified] [ai_vision]\\n  - betPlus__bet-80.00 → bet-80.00 (353,534) ✓ verified [human-verified] [ai_vision]\\n  - betPlus__bet-9.00 → bet-9.00 (909,410) ✓ verified [human-verified] [ai_vision]\\n  - betPlus__bet-90.00 → bet-90.00 (492,534) ✓ verified [human-verified] [ai_vision]\\n  - betPlus__closeButton → closeButton (1097,220) ✓ verified [human-verified] [ai_vision]\\n- buyBonusButton → buyBonusButton (130,230) ✓ verified [ai_vision]\\n  - buyBonusButton__betMinusButton → betMinusButton (506,442) ✓ verified [human-verified] [ai_vision]\\n  - buyBonusButton__betPlusButton → betPlusButton (748,442) ✓ verified [human-verified] [ai_vision]\\n  - buyBonusButton__closeButton → closeButton (915,222) ✓ verified [human-verified] [ai_vision]\\n  - buyBonusButton__freeSpinsButton → freeSpinsButton (388,325) ✓ verified [human-verified] [ai_vision]\\n  - buyBonusButton__superFreeSpins1Button → superFreeSpins1Button (627,325) ✓ verified [human-verified] [ai_vision]\\n  - buyBonusButton__superFreeSpins2Button → superFreeSpins2Button (867,325) ✓ verified [human-verified] [ai_vision]\\n- menuButton → menuButton (150,645) ✓ verified [ai_vision]\\n  - menuButton__ambientMusicToggle → ambientMusicToggle (922,345) ✓ verified [human-verified] [ai_vision]\\n  - menuButton__batterySaverToggle → batterySaverToggle (922,270) ✓ verified [human-verified] [ai_vision]\\n  - menuButton__betMinusButton → betMinusButton (348,403) ✓ verified [human-veri: SyntaxError: JSON Parse error: Unterminated string",
+      "aiCalled": true
+    },
+    "bet-variation-max-100.00": {
+      "caseId": "bet-variation-max-100.00",
+      "actions": [
+        {
+          "kind": "click",
+          "uiKey": "betPlus",
+          "reason": "open bet selection panel"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1500
+        },
+        {
+          "kind": "click",
+          "uiKey": "betPlus__bet-100.00",
+          "reason": "select $100.00 max bet"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 500
+        },
+        {
+          "kind": "click",
+          "uiKey": "betPlus__closeButton",
           "reason": "close bet panel"
         },
         {
@@ -81,124 +626,8 @@
           "kind": "wait_ms",
           "ms": 2500
         }
-      ]
-    },
-    "bet-variation-low-0-50": {
-      "caseId": "bet-variation-low-0-50",
-      "actions": [
-        {
-          "kind": "click",
-          "uiKey": "betMinus",
-          "reason": "Open bet selection panel"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1800
-        },
-        {
-          "kind": "click",
-          "uiKey": "betMinus__bet-0.50",
-          "reason": "Select bet 0.50"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1800
-        },
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "bet-variation-mid-5-00": {
-      "caseId": "bet-variation-mid-5-00",
-      "actions": [
-        {
-          "kind": "click",
-          "uiKey": "betPlus",
-          "reason": "open bet selection panel"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1800
-        },
-        {
-          "kind": "click",
-          "uiKey": "betPlus__bet-5-00",
-          "reason": "select bet 5.00"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1800
-        },
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "bet-variation-high-50-00": {
-      "caseId": "bet-variation-high-50-00",
-      "actions": [
-        {
-          "kind": "click",
-          "uiKey": "betPlus",
-          "reason": "Open bet selection panel"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2000
-        },
-        {
-          "kind": "click",
-          "uiKey": "betPlus__bet-50-00",
-          "reason": "Select bet 50.00"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2000
-        },
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "bet-variation-max-100-00": {
-      "caseId": "bet-variation-max-100-00",
-      "actions": [
-        {
-          "kind": "click",
-          "uiKey": "betMinus",
-          "reason": "Open bet selection panel"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "click",
-          "uiKey": "betMinus__bet-100.00",
-          "reason": "Select 100.00 bet"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "click",
-          "uiKey": "betMinus__closeButton",
-          "reason": "Close bet panel"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        }
-      ]
+      ],
+      "aiCalled": true
     },
     "bet-boundary-above-max-clamped": {
       "caseId": "bet-boundary-above-max-clamped",
@@ -206,26 +635,35 @@
         {
           "kind": "click",
           "uiKey": "betPlus",
-          "reason": "Open bet selection panel"
+          "reason": "open bet selection grid"
         },
         {
           "kind": "wait_ms",
-          "ms": 1800
+          "ms": 1500
         },
         {
           "kind": "click",
-          "uiKey": "betPlus__bet-100-00",
-          "reason": "Select max bet 100.00"
+          "uiKey": "betPlus__bet-100.00",
+          "reason": "select max bet $100"
         },
         {
           "kind": "wait_ms",
-          "ms": 1800
+          "ms": 500
+        },
+        {
+          "kind": "click",
+          "uiKey": "betPlus__closeButton",
+          "reason": "close bet panel"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1500
         },
         {
           "kind": "click",
           "uiKey": "betPlus",
-          "times": 5,
-          "reason": "Attempt to overshoot above max five times"
+          "times": 3,
+          "reason": "attempt overshoot above ladder max"
         },
         {
           "kind": "wait_ms",
@@ -233,35 +671,49 @@
         },
         {
           "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
         }
-      ]
+      ],
+      "aiCalled": true
     },
     "bet-boundary-below-min-clamped": {
       "caseId": "bet-boundary-below-min-clamped",
       "actions": [
         {
           "kind": "click",
-          "uiKey": "betMinus",
-          "reason": "Open bet selection panel"
+          "uiKey": "betPlus",
+          "reason": "open bet selection grid"
         },
         {
           "kind": "wait_ms",
-          "ms": 2000
+          "ms": 1500
         },
         {
           "kind": "click",
-          "uiKey": "betMinus__bet-0.20",
-          "reason": "Select minimum bet 0.20"
+          "uiKey": "betPlus__bet-0.20",
+          "reason": "select minimum bet 0.20"
         },
         {
           "kind": "wait_ms",
-          "ms": 2000
+          "ms": 1500
+        },
+        {
+          "kind": "click",
+          "uiKey": "betPlus__closeButton",
+          "reason": "close bet panel"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1500
         },
         {
           "kind": "click",
           "uiKey": "betMinus",
-          "times": 5,
-          "reason": "Attempt to undershoot below min five times"
+          "times": 3,
+          "reason": "attempt to go below min floor — should clamp at 0.20"
         },
         {
           "kind": "wait_ms",
@@ -269,77 +721,21 @@
         },
         {
           "kind": "spin"
-        }
-      ]
-    },
-    "autoplay-small-batch-5": {
-      "caseId": "autoplay-small-batch-5",
-      "actions": [
-        {
-          "kind": "click",
-          "uiKey": "autoButton",
-          "reason": "Open autoplay panel"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2000
-        },
-        {
-          "kind": "click",
-          "uiKey": "autoButton__startAutoplayButton",
-          "reason": "Start autoplay (5 rounds assumed default or closest selection)"
         },
         {
           "kind": "wait_ms",
           "ms": 2500
-        },
-        {
-          "kind": "spin"
         }
-      ]
+      ],
+      "aiCalled": true
     },
-    "autoplay-medium-batch-25": {
-      "caseId": "autoplay-medium-batch-25",
+    "autoplay-10-rounds": {
+      "caseId": "autoplay-10-rounds",
       "actions": [
         {
           "kind": "click",
           "uiKey": "autoButton",
-          "reason": "Open autoplay panel"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2000
-        },
-        {
-          "kind": "click",
-          "uiKey": "autoButton__startAutoplayButton",
-          "reason": "Start autoplay with selected rounds"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2000
-        },
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "autoplay-quick-spin-toggle": {
-      "caseId": "autoplay-quick-spin-toggle",
-      "actions": [
-        {
-          "kind": "click",
-          "uiKey": "autoButton",
-          "reason": "Open autoplay panel"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1800
-        },
-        {
-          "kind": "click",
-          "uiKey": "autoButton__quickSpinToggle",
-          "reason": "Enable quick spin toggle"
+          "reason": "open autoplay popup"
         },
         {
           "kind": "wait_ms",
@@ -347,14 +743,70 @@
         },
         {
           "kind": "click",
-          "uiKey": "autoButton__startAutoplayButton",
-          "reason": "Start autoplay (10 rounds preset not available as uiKey, proceed with start)"
+          "uiKey": "autoButton__autoCountSlide-10",
+          "reason": "select 10 rounds"
         },
         {
           "kind": "wait_ms",
-          "ms": 2000
+          "ms": 500
+        },
+        {
+          "kind": "click",
+          "uiKey": "autoButton__startAutoplayButton",
+          "reason": "start autoplay batch"
+        },
+        {
+          "kind": "wait_until_no_spin_response",
+          "quietMs": 5000,
+          "maxMs": 180000,
+          "reason": "wait autoplay batch of 10 to complete"
         }
-      ]
+      ],
+      "aiCalled": true
+    },
+    "autoplay-50-rounds": {
+      "caseId": "autoplay-50-rounds",
+      "actions": [
+        {
+          "kind": "click",
+          "uiKey": "autoButton",
+          "reason": "open autoplay popup"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 1500
+        },
+        {
+          "kind": "click",
+          "uiKey": "autoButton__quickSpinToggle",
+          "reason": "enable quick spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 500
+        },
+        {
+          "kind": "click",
+          "uiKey": "autoButton__autoCountSlide-50",
+          "reason": "select 50 rounds"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 500
+        },
+        {
+          "kind": "click",
+          "uiKey": "autoButton__startAutoplayButton",
+          "reason": "start autoplay batch"
+        },
+        {
+          "kind": "wait_until_no_spin_response",
+          "quietMs": 5000,
+          "maxMs": 300000,
+          "reason": "wait autoplay batch of 50 to complete"
+        }
+      ],
+      "aiCalled": true
     },
     "turbo-spin-toggle": {
       "caseId": "turbo-spin-toggle",
@@ -362,7 +814,7 @@
         {
           "kind": "click",
           "uiKey": "autoButton",
-          "reason": "open autoplay panel"
+          "reason": "open autoplay popup"
         },
         {
           "kind": "wait_ms",
@@ -375,16 +827,16 @@
         },
         {
           "kind": "wait_ms",
-          "ms": 800
+          "ms": 500
         },
         {
           "kind": "click",
           "uiKey": "autoButton__closeButton",
-          "reason": "close autoplay panel"
+          "reason": "close popup without starting autoplay"
         },
         {
           "kind": "wait_ms",
-          "ms": 1200
+          "ms": 1500
         },
         {
           "kind": "spin"
@@ -403,218 +855,28 @@
         {
           "kind": "spin"
         }
-      ]
+      ],
+      "aiCalled": true
     },
-    "buy-feature-freespins-option": {
-      "caseId": "buy-feature-freespins-option",
-      "actions": [
-        {
-          "kind": "click",
-          "uiKey": "buyBonusButton",
-          "reason": "Open Buy Feature panel"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2000
-        },
-        {
-          "kind": "click",
-          "uiKey": "buyBonusButton__freeSpinsOption",
-          "reason": "Select Free Spins option tile"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2000
-        },
-        {
-          "kind": "click",
-          "uiKey": "buyBonusButton__freeSpinsOption__yesButton",
-          "reason": "Confirm purchase"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "buy-feature-super-freespins-1": {
-      "caseId": "buy-feature-super-freespins-1",
-      "actions": [
-        {
-          "kind": "click",
-          "uiKey": "buyBonusButton",
-          "reason": "open buy feature panel"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2000
-        },
-        {
-          "kind": "click",
-          "uiKey": "buyBonusButton__superFreeSpins1Option",
-          "reason": "select Super Free Spins 1 option"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2000
-        },
-        {
-          "kind": "click",
-          "uiKey": "buyBonusButton__superFreeSpins1Option__yesButton",
-          "reason": "confirm purchase"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2000
-        },
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "buy-feature-super-freespins-2": {
-      "caseId": "buy-feature-super-freespins-2",
+    "buy-feature-free-spins-700": {
+      "caseId": "buy-feature-free-spins-700",
       "actions": [],
-      "skipReason": "missing uiKey buyBonusButton__superFreeSpins2Option__yesButton"
+      "skipReason": "AI output not parseable as JSON",
+      "aiCalled": true
     },
-    "buy-feature-cancel-no-deduction": {
-      "caseId": "buy-feature-cancel-no-deduction",
-      "actions": [
-        {
-          "kind": "click",
-          "uiKey": "buyBonusButton",
-          "reason": "open buy feature panel"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2000
-        },
-        {
-          "kind": "click",
-          "uiKey": "buyBonusButton__freeSpinsOption",
-          "reason": "select free spins option"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2000
-        },
-        {
-          "kind": "click",
-          "uiKey": "buyBonusButton__freeSpinsOption__cancelButton",
-          "reason": "cancel confirmation - no deduction"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        }
-      ]
-    },
-    "special-bet-ante-on": {
-      "caseId": "special-bet-ante-on",
+    "buy-feature-super-free-spins-1-1750": {
+      "caseId": "buy-feature-super-free-spins-1-1750",
       "actions": [],
-      "skipReason": "missing uiKey specialBetsToggle"
+      "skipReason": "AI translator failed: [case-translator/buy-feature-super-free-spins-1] Claude Code process exited with code 1\n--- captured Claude CLI stderr (5703 chars) ---\n…erified] [ai_vision]\\n  - betPlus__bet-4.00 → bet-4.00 (1048,347) ✓ verified [human-verified] [ai_vision]\\n  - betPlus__bet-40.00 → bet-40.00 (631,472) ✓ verified [human-verified] [ai_vision]\\n  - betPlus__bet-5.00 → bet-5.00 (353,410) ✓ verified [human-verified] [ai_vision]\\n  - betPlus__bet-50.00 → bet-50.00 (770,472) ✓ verified [human-verified] [ai_vision]\\n  - betPlus__bet-6.00 → bet-6.00 (492,410) ✓ verified [human-verified] [ai_vision]\\n  - betPlus__bet-60.00 → bet-60.00 (909,472) ✓ verified [human-verified] [ai_vision]\\n  - betPlus__bet-7.00-selected → bet-7.00-selected (631,410) ✓ verified [human-verified] [ai_vision]\\n  - betPlus__bet-70.00 → bet-70.00 (1048,472) ✓ verified [human-verified] [ai_vision]\\n  - betPlus__bet-8.00 → bet-8.00 (770,410) ✓ verified [human-verified] [ai_vision]\\n  - betPlus__bet-80.00 → bet-80.00 (353,534) ✓ verified [human-verified] [ai_vision]\\n  - betPlus__bet-9.00 → bet-9.00 (909,410) ✓ verified [human-verified] [ai_vision]\\n  - betPlus__bet-90.00 → bet-90.00 (492,534) ✓ verified [human-verified] [ai_vision]\\n  - betPlus__closeButton → closeButton (1097,220) ✓ verified [human-verified] [ai_vision]\\n- buyBonusButton → buyBonusButton (130,230) ✓ verified [ai_vision]\\n  - buyBonusButton__betMinusButton → betMinusButton (506,442) ✓ verified [human-verified] [ai_vision]\\n  - buyBonusButton__betPlusButton → betPlusButton (748,442) ✓ verified [human-verified] [ai_vision]\\n  - buyBonusButton__closeButton → closeButton (915,222) ✓ verified [human-verified] [ai_vision]\\n  - buyBonusButton__freeSpinsButton → freeSpinsButton (388,325) ✓ verified [human-verified] [ai_vision]\\n  - buyBonusButton__superFreeSpins1Button → superFreeSpins1Button (627,325) ✓ verified [human-verified] [ai_vision]\\n  - buyBonusButton__superFreeSpins2Button → superFreeSpins2Button (867,325) ✓ verified [human-verified] [ai_vision]\\n- menuButton → menuButton (150,645) ✓ verified [ai_vision]\\n  - menuButton__ambientMusi: SyntaxError: JSON Parse error: Unterminated string",
+      "aiCalled": true
     },
-    "free-spins-trigger-watch": {
-      "caseId": "free-spins-trigger-watch",
-      "actions": [
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "free-spins-result-shape": {
-      "caseId": "free-spins-result-shape",
+    "buy-feature-super-free-spins-2-7000": {
+      "caseId": "buy-feature-super-free-spins-2-7000",
       "actions": [
         {
           "kind": "click",
           "uiKey": "buyBonusButton",
-          "reason": "Open buy bonus panel"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2000
-        },
-        {
-          "kind": "click",
-          "uiKey": "buyBonusButton__freeSpinsOption",
-          "reason": "Select Free Spins option"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2000
-        },
-        {
-          "kind": "click",
-          "uiKey": "buyBonusButton__freeSpinsOption__yesButton",
-          "reason": "Confirm purchase"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "tumble-cascade-chain-integrity": {
-      "caseId": "tumble-cascade-chain-integrity",
-      "actions": [
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "payout-base-correctness": {
-      "caseId": "payout-base-correctness",
-      "actions": [
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "wild-substitution-watch": {
-      "caseId": "wild-substitution-watch",
-      "actions": [
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "rules-consistency-spec-vs-response": {
-      "caseId": "rules-consistency-spec-vs-response",
-      "actions": [
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "history-rows-match-spins": {
-      "caseId": "history-rows-match-spins",
-      "actions": [
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "ui-consistency-balance-display": {
-      "caseId": "ui-consistency-balance-display",
-      "actions": [
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "ui-consistency-bet-display": {
-      "caseId": "ui-consistency-bet-display",
-      "actions": [
-        {
-          "kind": "click",
-          "uiKey": "betPlus",
-          "reason": "open bet selection panel"
+          "reason": "open buy feature popup"
         },
         {
           "kind": "wait_ms",
@@ -622,8 +884,8 @@
         },
         {
           "kind": "click",
-          "uiKey": "betPlus__bet-10-00",
-          "reason": "select 10.00 bet option"
+          "uiKey": "buyBonusButton__superFreeSpins2Button",
+          "reason": "select Super Free Spins 2 option"
         },
         {
           "kind": "wait_ms",
@@ -631,276 +893,6 @@
         },
         {
           "kind": "spin"
-        }
-      ]
-    },
-    "ui-consistency-last-win-display": {
-      "caseId": "ui-consistency-last-win-display",
-      "actions": [
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "options-sound-toggle": {
-      "caseId": "options-sound-toggle",
-      "actions": [
-        {
-          "kind": "click",
-          "uiKey": "menuButton",
-          "reason": "Open settings panel"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1800
-        },
-        {
-          "kind": "click",
-          "uiKey": "menuButton__soundFxToggle",
-          "reason": "Toggle Sound FX"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1000
-        },
-        {
-          "kind": "click",
-          "uiKey": "menuButton__closeButton",
-          "reason": "Close menu"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "options-ambient-music-toggle": {
-      "caseId": "options-ambient-music-toggle",
-      "actions": [
-        {
-          "kind": "click",
-          "uiKey": "menuButton",
-          "reason": "Open menu settings panel"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1800
-        },
-        {
-          "kind": "click",
-          "uiKey": "menuButton__ambientMusicToggle",
-          "reason": "Toggle ambient music"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 800
-        },
-        {
-          "kind": "click",
-          "uiKey": "menuButton__batterySaverToggle",
-          "reason": "Toggle battery saver"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 800
-        },
-        {
-          "kind": "click",
-          "uiKey": "menuButton__closeButton",
-          "reason": "Close menu"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "performance-spin-response-time-slo": {
-      "caseId": "performance-spin-response-time-slo",
-      "actions": [
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "meta-logic-version-captured": {
-      "caseId": "meta-logic-version-captured",
-      "actions": [
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "currency-consistency-across-spins": {
-      "caseId": "currency-consistency-across-spins",
-      "actions": [
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "base-multi-spin-balance-integrity": {
-      "caseId": "base-multi-spin-balance-integrity",
-      "actions": [
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "base-response-shape-required-fields": {
-      "caseId": "base-response-shape-required-fields",
-      "actions": [
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "bet-variation-low-1-00": {
-      "caseId": "bet-variation-low-1-00",
-      "actions": [
-        {
-          "kind": "click",
-          "uiKey": "betPlus",
-          "reason": "open bet selector panel"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1800
-        },
-        {
-          "kind": "click",
-          "uiKey": "betPlus__bet-1-00",
-          "reason": "select bet 1.00"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "bet-variation-mid-10-00": {
-      "caseId": "bet-variation-mid-10-00",
-      "actions": [
-        {
-          "kind": "click",
-          "uiKey": "betPlus",
-          "times": 1,
-          "reason": "open bet selector panel"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2000
-        },
-        {
-          "kind": "click",
-          "uiKey": "betPlus__bet-10-00",
-          "times": 1,
-          "reason": "select 10.00 bet option"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "click",
-          "uiKey": "betPlus__closeButton",
-          "times": 1,
-          "reason": "close bet selector panel"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "autoplay-with-quick-spin-toggle": {
-      "caseId": "autoplay-with-quick-spin-toggle",
-      "actions": [
-        {
-          "kind": "click",
-          "uiKey": "autoButton",
-          "reason": "Open autoplay panel"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2000
-        },
-        {
-          "kind": "click",
-          "uiKey": "autoButton__quickSpinToggle",
-          "reason": "Enable Quick Spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "click",
-          "uiKey": "autoButton__startAutoplayButton",
-          "reason": "Start autoplay (10 rounds option not in uiMap, proceeding with default/start)"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2000
-        }
-      ]
-    },
-    "turbo-spin-toggle-effect": {
-      "caseId": "turbo-spin-toggle-effect",
-      "actions": [],
-      "skipReason": "AI output not parseable as JSON"
-    },
-    "buy-feature-free-spins": {
-      "caseId": "buy-feature-free-spins",
-      "actions": [
-        {
-          "kind": "click",
-          "uiKey": "buyBonusButton",
-          "reason": "open buy bonus panel"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "click",
-          "uiKey": "buyBonusButton__freeSpinsOption",
-          "reason": "select free spins option"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "click",
-          "uiKey": "buyBonusButton__freeSpinsOption__yesButton",
-          "reason": "confirm purchase"
         },
         {
           "kind": "wait_ms",
@@ -908,187 +900,190 @@
         },
         {
           "kind": "dismiss",
-          "reason": "clear celebration popup"
+          "reason": "clear celebration popup before FS chain"
+        },
+        {
+          "kind": "wait_until_state",
+          "state": "MAIN",
+          "maxMs": 120000,
+          "reason": "wait FS chain to complete"
         }
-      ]
-    },
-    "buy-feature-super-free-spins-1": {
-      "caseId": "buy-feature-super-free-spins-1",
-      "actions": [
-        {
-          "kind": "click",
-          "uiKey": "buyBonusButton",
-          "reason": "Open Buy Bonus panel"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2000
-        },
-        {
-          "kind": "click",
-          "uiKey": "buyBonusButton__superFreeSpins1Option",
-          "reason": "Select Super Free Spins 1 option"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2000
-        },
-        {
-          "kind": "click",
-          "uiKey": "buyBonusButton__superFreeSpins1Option__yesButton",
-          "reason": "Confirm purchase"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "buy-feature-super-free-spins-2": {
-      "caseId": "buy-feature-super-free-spins-2",
-      "actions": [
-        {
-          "kind": "click",
-          "uiKey": "buyBonusButton",
-          "reason": "open buy bonus panel"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2000
-        },
-        {
-          "kind": "click",
-          "uiKey": "buyBonusButton__superFreeSpins2Option",
-          "reason": "select Super Free Spins 2 option"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2000
-        },
-        {
-          "kind": "click",
-          "uiKey": "buyBonusButton__superFreeSpins1Option__yesButton",
-          "reason": "confirm purchase via rightmost positive yes button (~745,475)"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        }
-      ]
+      ],
+      "aiCalled": true
     },
     "special-bet-toggle-on": {
       "caseId": "special-bet-toggle-on",
-      "actions": [],
-      "skipReason": "missing uiKey specialBetsToggle"
-    },
-    "history-normal-bet-rows-match": {
-      "caseId": "history-normal-bet-rows-match",
       "actions": [
         {
-          "kind": "spin"
+          "kind": "click",
+          "uiKey": "special_bets",
+          "reason": "open Special Bets variant selector"
         }
-      ]
+      ],
+      "aiCalled": true
     },
-    "history-freespin-row-distinct": {
-      "caseId": "history-freespin-row-distinct",
+    "free-spins-trigger-organic-watch": {
+      "caseId": "free-spins-trigger-organic-watch",
       "actions": [
         {
-          "kind": "click",
-          "uiKey": "menuButton",
-          "times": 1,
-          "reason": "Open menu"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2000
-        },
-        {
-          "kind": "click",
-          "uiKey": "menuButton__gameHistoryButton",
-          "times": 1,
-          "reason": "Open game history panel"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2000
-        }
-      ]
-    },
-    "options-sound-fx-toggle": {
-      "caseId": "options-sound-fx-toggle",
-      "actions": [
-        {
-          "kind": "click",
-          "uiKey": "menuButton",
-          "reason": "Open menu"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1800
-        },
-        {
-          "kind": "click",
-          "uiKey": "menuButton__soundFxToggle",
-          "reason": "Flip Sound FX toggle"
+          "kind": "set_bet_to_value",
+          "value": 7,
+          "reason": "ensure bet is $7.00 per setup"
         },
         {
           "kind": "wait_ms",
           "ms": 1000
         },
         {
-          "kind": "click",
-          "uiKey": "menuButton__closeButton",
-          "reason": "Close menu"
+          "kind": "spin"
         },
         {
           "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "click",
-          "uiKey": "menuButton",
-          "reason": "Reopen menu to verify persistence"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1800
+          "ms": 2500
         },
         {
           "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
         }
-      ]
+      ],
+      "aiCalled": true
     },
-    "options-battery-saver-toggle": {
-      "caseId": "options-battery-saver-toggle",
+    "free-spins-result-shape": {
+      "caseId": "free-spins-result-shape",
       "actions": [
         {
-          "kind": "click",
-          "uiKey": "menuButton",
-          "reason": "Open menu"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2000
-        },
-        {
-          "kind": "click",
-          "uiKey": "menuButton__batterySaverToggle",
-          "reason": "Enable Battery Saver"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "click",
-          "uiKey": "menuButton__closeButton",
-          "reason": "Close menu"
+          "kind": "set_bet_to_value",
+          "value": 7,
+          "reason": "ensure bet at $7.00 per setup step 1-3"
         },
         {
           "kind": "wait_ms",
@@ -1096,8 +1091,961 @@
         },
         {
           "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
         }
-      ]
+      ],
+      "aiCalled": true
+    },
+    "tumble-multiplier-overlay-watch": {
+      "caseId": "tumble-multiplier-overlay-watch",
+      "actions": [
+        {
+          "kind": "set_bet_to_value",
+          "value": 7,
+          "reason": "ensure bet at $7.00 per setup"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        }
+      ],
+      "aiCalled": true
+    },
+    "payout-correctness-base-game": {
+      "caseId": "payout-correctness-base-game",
+      "actions": [
+        {
+          "kind": "set_bet_to_value",
+          "value": 7,
+          "reason": "set bet to $7.00 per setup step 2"
+        }
+      ],
+      "aiCalled": true
+    },
+    "payout-zero-on-no-winline": {
+      "caseId": "payout-zero-on-no-winline",
+      "actions": [
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        }
+      ],
+      "aiCalled": false
+    },
+    "rules-symbol-count-match": {
+      "caseId": "rules-symbol-count-match",
+      "actions": [
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        }
+      ],
+      "aiCalled": false
+    },
+    "history-normal-bet-rows": {
+      "caseId": "history-normal-bet-rows",
+      "actions": [
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        },
+        {
+          "kind": "wait_ms",
+          "ms": 2500
+        },
+        {
+          "kind": "spin"
+        }
+      ],
+      "aiCalled": false
     },
     "ui-balance-display-after-spin": {
       "caseId": "ui-balance-display-after-spin",
@@ -1105,7 +2053,8 @@
         {
           "kind": "spin"
         }
-      ]
+      ],
+      "aiCalled": false
     },
     "ui-bet-display-reflects-selection": {
       "caseId": "ui-bet-display-reflects-selection",
@@ -1113,231 +2062,7 @@
         {
           "kind": "click",
           "uiKey": "betPlus",
-          "times": 1,
-          "reason": "Open bet selector"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1800
-        },
-        {
-          "kind": "click",
-          "uiKey": "betPlus__bet-5-00",
-          "times": 1,
-          "reason": "Select bet 5.00"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "ui-last-win-display": {
-      "caseId": "ui-last-win-display",
-      "actions": [
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "rules-symbol-and-config-consistency": {
-      "caseId": "rules-symbol-and-config-consistency",
-      "actions": [
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "payout-correctness-winline-math": {
-      "caseId": "payout-correctness-winline-math",
-      "actions": [
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "tumble-cascade-chain-progression": {
-      "caseId": "tumble-cascade-chain-progression",
-      "actions": [
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "performance-spin-response-slo": {
-      "caseId": "performance-spin-response-slo",
-      "actions": [
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "menu-open-close-no-side-effect": {
-      "caseId": "menu-open-close-no-side-effect",
-      "actions": [
-        {
-          "kind": "click",
-          "uiKey": "menuButton",
-          "reason": "Open menu panel"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2000
-        },
-        {
-          "kind": "click",
-          "uiKey": "menuButton__closeButton",
-          "reason": "Close menu without modifying any toggle"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        }
-      ]
-    },
-    "ui-balance-after-multi-spin-reconciles": {
-      "caseId": "ui-balance-after-multi-spin-reconciles",
-      "actions": [
-        {
-          "kind": "click",
-          "uiKey": "betPlus",
-          "reason": "Open bet selector"
+          "reason": "open bet picker popup"
         },
         {
           "kind": "wait_ms",
@@ -1345,120 +2070,17 @@
         },
         {
           "kind": "click",
-          "uiKey": "betPlus__bet-1-00",
-          "reason": "Select bet 1.00"
+          "uiKey": "betPlus__bet-20.00",
+          "reason": "select bet 20.00"
         },
         {
           "kind": "wait_ms",
-          "ms": 1500
+          "ms": 500
         },
         {
           "kind": "click",
           "uiKey": "betPlus__closeButton",
-          "reason": "Close bet selector panel"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "base-default-bet-shape": {
-      "caseId": "base-default-bet-shape",
-      "actions": [
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "base-multi-spin-balance-conservation": {
-      "caseId": "base-multi-spin-balance-conservation",
-      "actions": [
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "base-resolved-status-all": {
-      "caseId": "base-resolved-status-all",
-      "actions": [
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "bet-variation-1-00": {
-      "caseId": "bet-variation-1-00",
-      "actions": [],
-      "skipReason": "AI translator failed: [case-translator/bet-variation-1-00] Claude Code process exited with code 1\n--- captured Claude CLI stderr (4440 chars) ---\n…ied [human-verified] [ai_vision]\\n  - betMinus__bet-30.00 → bet-30.00 (492,472) ✓ verified [human-verified] [ai_vision]\\n  - betMinus__bet-4.00 → bet-4.00 (1048,347) ✓ verified [human-verified] [ai_vision]\\n  - betMinus__bet-40.00 → bet-40.00 (631,472) ✓ verified [human-verified] [ai_vision]\\n  - betMinus__bet-5.00 → bet-5.00 (353,410) ✓ verified [human-verified] [ai_vision]\\n  - betMinus__bet-50.00 → bet-50.00 (770,472) ✓ verified [human-verified] [ai_vision]\\n  - betMinus__bet-6.00 → bet-6.00 (492,410) ✓ verified [human-verified] [ai_vision]\\n  - betMinus__bet-60.00 → bet-60.00 (909,472) ✓ verified [human-verified] [ai_vision]\\n  - betMinus__bet-7.00 → bet-7.00 (631,410) ✓ verified [human-verified] [ai_vision]\\n  - betMinus__bet-70.00 → bet-70.00 (1048,472) ✓ verified [human-verified] [ai_vision]\\n  - betMinus__bet-8.00 → bet-8.00 (770,410) ✓ verified [human-verified] [ai_vision]\\n  - betMinus__bet-80.00 → bet-80.00 (353,534) ✓ verified [human-verified] [ai_vision]\\n  - betMinus__bet-9.00 → bet-9.00 (909,410) ✓ verified [human-verified] [ai_vision]\\n  - betMinus__bet-90.00 → bet-90.00 (492,534) ✓ verified [human-verified] [ai_vision]\\n  - betMinus__closeButton → closeButton (1097,222) ✓ verified [human-verified] [ai_vision]\\n- betPlus → betPlus (1097,656) ✓ verified [human-verified] [ai_vision]\\n  - betPlus__bet-0-20 → bet-0-20 (353,284) ✓ verified [human-verified] [ai_vision]\\n  - betPlus__bet-0-30 → bet-0-30 (492,284) ✓ verified [human-verified] [ai_vision]\\n  - betPlus__bet-0-40 → bet-0-40 (631,284) ✓ verified [human-verified] [ai_vision]\\n  - betPlus__bet-0-50 → bet-0-50 (770,284) ✓ verified [human-verified] [ai_vision]\\n  - betPlus__bet-0-60 → bet-0-60 (909,284) ✓ verified [human-verified] [ai_vision]\\n  - betPlus__bet-0-70 → bet-0-70 (1048,284) ✓ verified [human-verified] [ai_vision]\\n  - betPlus__bet-0-80 → bet-0-80 (353,346) ✓ verified [human-verified] [ai_vision]\\n  - betPlus__bet-0-90 → bet-0-90 (492,34: SyntaxError: JSON Parse error: Unterminated string"
-    },
-    "bet-variation-10-00": {
-      "caseId": "bet-variation-10-00",
-      "actions": [
-        {
-          "kind": "click",
-          "uiKey": "betMinus",
-          "reason": "open bet selection panel"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1800
-        },
-        {
-          "kind": "click",
-          "uiKey": "betMinus__bet-10.00",
-          "reason": "select 10.00 bet"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "click",
-          "uiKey": "betMinus__closeButton",
-          "reason": "close bet panel"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1200
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        }
-      ]
-    },
-    "bet-variation-50-00": {
-      "caseId": "bet-variation-50-00",
-      "actions": [
-        {
-          "kind": "click",
-          "uiKey": "betMinus",
-          "reason": "Open bet selection panel"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "click",
-          "uiKey": "betMinus__bet-50.00",
-          "reason": "Select 50.00 bet"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "click",
-          "uiKey": "betMinus__closeButton",
-          "reason": "Close bet panel"
+          "reason": "dismiss bet picker popup"
         },
         {
           "kind": "wait_ms",
@@ -1471,139 +2093,35 @@
           "kind": "wait_ms",
           "ms": 2500
         }
-      ]
+      ],
+      "aiCalled": true
     },
-    "bet-boundary-above-max": {
-      "caseId": "bet-boundary-above-max",
+    "ui-balance-after-multi-spin": {
+      "caseId": "ui-balance-after-multi-spin",
       "actions": [
         {
-          "kind": "click",
-          "uiKey": "betPlus",
-          "reason": "open bet selection panel"
+          "kind": "spin"
         },
         {
           "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "click",
-          "uiKey": "betPlus__bet-100-00",
-          "reason": "select 100.00 max bet"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "click",
-          "uiKey": "betPlus",
-          "times": 5,
-          "reason": "attempt to overshoot ceiling"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "click",
-          "uiKey": "betPlus__closeButton",
-          "reason": "close bet panel"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1000
+          "ms": 2500
         },
         {
           "kind": "spin"
-        }
-      ]
-    },
-    "bet-boundary-below-min": {
-      "caseId": "bet-boundary-below-min",
-      "actions": [
-        {
-          "kind": "click",
-          "uiKey": "betMinus",
-          "times": 1,
-          "reason": "Open bet selection panel"
         },
         {
           "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "click",
-          "uiKey": "betMinus__bet-0.20",
-          "times": 1,
-          "reason": "Select 0.20 bet option"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "click",
-          "uiKey": "betMinus",
-          "times": 1,
-          "reason": "Reopen bet panel for further decrease attempts"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "click",
-          "uiKey": "betMinus__closeButton",
-          "times": 1,
-          "reason": "Close bet panel"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "click",
-          "uiKey": "betMinus",
-          "times": 5,
-          "reason": "Attempt to undershoot below 0.20 floor - UI must clamp"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
+          "ms": 2500
         },
         {
           "kind": "spin"
-        }
-      ]
-    },
-    "autoplay-with-quickspin-toggle": {
-      "caseId": "autoplay-with-quickspin-toggle",
-      "actions": [
-        {
-          "kind": "click",
-          "uiKey": "autoButton",
-          "times": 1,
-          "reason": "open autoplay panel"
         },
         {
           "kind": "wait_ms",
-          "ms": 2000
+          "ms": 2500
         },
         {
-          "kind": "click",
-          "uiKey": "autoButton__quickSpinToggle",
-          "times": 1,
-          "reason": "enable Quick Spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "click",
-          "uiKey": "autoButton__startAutoplayButton",
-          "times": 1,
-          "reason": "start autoplay (10 rounds option uiKey not present, using default selection)"
+          "kind": "spin"
         },
         {
           "kind": "wait_ms",
@@ -1612,50 +2130,8 @@
         {
           "kind": "spin"
         }
-      ]
-    },
-    "skip-screens-toggle": {
-      "caseId": "skip-screens-toggle",
-      "actions": [
-        {
-          "kind": "click",
-          "uiKey": "autoButton",
-          "reason": "open autoplay menu"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "click",
-          "uiKey": "autoButton__skipScreensToggle",
-          "reason": "enable Skip Screens toggle"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1000
-        },
-        {
-          "kind": "click",
-          "uiKey": "autoButton__closeButton",
-          "reason": "close autoplay panel"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "history-panel-rows-match": {
-      "caseId": "history-panel-rows-match",
-      "actions": [
-        {
-          "kind": "spin"
-        }
-      ]
+      ],
+      "aiCalled": false
     },
     "menu-sound-fx-toggle": {
       "caseId": "menu-sound-fx-toggle",
@@ -1663,7 +2139,7 @@
         {
           "kind": "click",
           "uiKey": "menuButton",
-          "reason": "open menu"
+          "reason": "open System Settings popup"
         },
         {
           "kind": "wait_ms",
@@ -1672,20 +2148,11 @@
         {
           "kind": "click",
           "uiKey": "menuButton__soundFxToggle",
-          "reason": "toggle sound FX OFF"
+          "reason": "toggle Sound FX OFF"
         },
         {
           "kind": "wait_ms",
-          "ms": 800
-        },
-        {
-          "kind": "click",
-          "uiKey": "menuButton__soundFxToggle",
-          "reason": "toggle sound FX ON"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 800
+          "ms": 500
         },
         {
           "kind": "click",
@@ -1697,9 +2164,12 @@
           "ms": 1500
         },
         {
-          "kind": "spin"
+          "kind": "click",
+          "uiKey": "menuButton",
+          "reason": "reopen menu to verify persistence"
         }
-      ]
+      ],
+      "aiCalled": true
     },
     "menu-ambient-music-toggle": {
       "caseId": "menu-ambient-music-toggle",
@@ -1707,7 +2177,7 @@
         {
           "kind": "click",
           "uiKey": "menuButton",
-          "reason": "open menu"
+          "reason": "open System Settings popup"
         },
         {
           "kind": "wait_ms",
@@ -1716,1177 +2186,36 @@
         {
           "kind": "click",
           "uiKey": "menuButton__ambientMusicToggle",
-          "reason": "toggle ambient music OFF"
+          "reason": "flip ambient music toggle"
         },
         {
           "kind": "wait_ms",
-          "ms": 800
-        },
-        {
-          "kind": "click",
-          "uiKey": "menuButton__ambientMusicToggle",
-          "reason": "toggle ambient music ON"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 800
+          "ms": 500
         },
         {
           "kind": "click",
           "uiKey": "menuButton__closeButton",
-          "reason": "dismiss menu"
+          "reason": "close menu popup"
         },
         {
           "kind": "wait_ms",
           "ms": 1500
-        },
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "rules-consistency-features-match": {
-      "caseId": "rules-consistency-features-match",
-      "actions": [
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "payout-line-win-organic-watch": {
-      "caseId": "payout-line-win-organic-watch",
-      "actions": [
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "tumble-chain-watch": {
-      "caseId": "tumble-chain-watch",
-      "actions": [
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "free-spins-counter-decrements": {
-      "caseId": "free-spins-counter-decrements",
-      "actions": [
-        {
-          "kind": "click",
-          "uiKey": "buyBonusButton",
-          "reason": "open Buy Bonus panel"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2000
-        },
-        {
-          "kind": "click",
-          "uiKey": "buyBonusButton__freeSpinsOption",
-          "reason": "select Free Spins option"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2000
-        },
-        {
-          "kind": "click",
-          "uiKey": "buyBonusButton__freeSpinsOption__yesButton",
-          "reason": "confirm purchase to start free spins"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "round-id-uniqueness": {
-      "caseId": "round-id-uniqueness",
-      "actions": [
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "base-response-shape-field-validation": {
-      "caseId": "base-response-shape-field-validation",
-      "actions": [
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "bet-variation-min-0.20": {
-      "caseId": "bet-variation-min-0.20",
-      "actions": [
-        {
-          "kind": "click",
-          "uiKey": "betMinus",
-          "reason": "open bet ladder panel"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "click",
-          "uiKey": "betMinus__bet-0.20",
-          "reason": "select minimum bet 0.20"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 800
-        },
-        {
-          "kind": "click",
-          "uiKey": "betMinus__closeButton",
-          "reason": "close bet panel"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1000
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        }
-      ]
-    },
-    "bet-variation-low-0.50": {
-      "caseId": "bet-variation-low-0.50",
-      "actions": [
-        {
-          "kind": "click",
-          "uiKey": "betMinus",
-          "reason": "open bet ladder panel"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "click",
-          "uiKey": "betMinus__bet-0.50",
-          "reason": "select 0.50 bet"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "click",
-          "uiKey": "betMinus__closeButton",
-          "reason": "close bet panel via X"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1000
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        }
-      ]
-    },
-    "bet-variation-mid-4.00": {
-      "caseId": "bet-variation-mid-4.00",
-      "actions": [
-        {
-          "kind": "click",
-          "uiKey": "betMinus",
-          "reason": "open bet ladder panel"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "click",
-          "uiKey": "betMinus__bet-4.00",
-          "reason": "select 4.00 in ladder grid"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 800
-        },
-        {
-          "kind": "click",
-          "uiKey": "betMinus__closeButton",
-          "reason": "close bet panel via X"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1000
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "bet-variation-high-20.00": {
-      "caseId": "bet-variation-high-20.00",
-      "actions": [
-        {
-          "kind": "click",
-          "uiKey": "betMinus",
-          "reason": "open bet ladder popup"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "click",
-          "uiKey": "betMinus__bet-20.00",
-          "reason": "select bet 20.00 (row 4 col 1)"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 800
-        },
-        {
-          "kind": "click",
-          "uiKey": "betMinus__closeButton",
-          "reason": "close bet panel via X"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1000
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        }
-      ]
-    },
-    "bet-variation-max-100.00": {
-      "caseId": "bet-variation-max-100.00",
-      "actions": [
-        {
-          "kind": "click",
-          "uiKey": "betMinus",
-          "reason": "open bet ladder popup"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "click",
-          "uiKey": "betMinus__bet-100.00",
-          "reason": "select bet 100.00 cell"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "autoplay-small-batch-10": {
-      "caseId": "autoplay-small-batch-10",
-      "actions": [
-        {
-          "kind": "click",
-          "uiKey": "autoButton",
-          "reason": "open autoplay panel"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "click",
-          "uiKey": "autoButton__autoCountSlide-10",
-          "reason": "select 10 rounds preset"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 500
-        },
-        {
-          "kind": "click",
-          "uiKey": "autoButton__startAutoplayButton",
-          "reason": "start 10-spin autoplay batch"
-        },
-        {
-          "kind": "wait_until_state",
-          "state": "MAIN",
-          "maxMs": 120000,
-          "reason": "wait for 10-spin autoplay batch to complete"
-        }
-      ]
-    },
-    "buy-feature-free-spins-400x": {
-      "caseId": "buy-feature-free-spins-400x",
-      "actions": [
-        {
-          "kind": "click",
-          "uiKey": "betPlus",
-          "reason": "open bet ladder"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "click",
-          "uiKey": "betPlus__betAmount-4.00",
-          "reason": "select bet 4.00"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1000
-        },
-        {
-          "kind": "click",
-          "uiKey": "betPlus__closeButton",
-          "reason": "close bet ladder"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1000
-        },
-        {
-          "kind": "click",
-          "uiKey": "buyBonusButton",
-          "reason": "open buy feature popup"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "click",
-          "uiKey": "buyBonusButton__freeSpinsOption",
-          "reason": "select Free Spins option"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "click",
-          "uiKey": "buyBonusButton__freeSpinsOption__yesButton",
-          "reason": "confirm buy free spins"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 500
-        },
-        {
-          "kind": "dismiss",
-          "reason": "dismiss FS celebration interstitial"
-        },
-        {
-          "kind": "wait_until_state",
-          "state": "MAIN",
-          "maxMs": 120000,
-          "reason": "wait FS chain to complete"
-        }
-      ]
-    },
-    "buy-feature-super-free-spins-1-1000x": {
-      "caseId": "buy-feature-super-free-spins-1-1000x",
-      "actions": [
-        {
-          "kind": "click",
-          "uiKey": "betMinus",
-          "reason": "open bet ladder popup"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "click",
-          "uiKey": "betMinus__bet-4.00",
-          "reason": "select bet 4.00"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1000
-        },
-        {
-          "kind": "click",
-          "uiKey": "betMinus__closeButton",
-          "reason": "close bet ladder via X"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1000
-        },
-        {
-          "kind": "click",
-          "uiKey": "buyBonusButton",
-          "reason": "open buy feature popup"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "click",
-          "uiKey": "buyBonusButton__superFreeSpins1Option",
-          "reason": "select Super Free Spins 1 ($1000)"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "click",
-          "uiKey": "buyBonusButton__superFreeSpins1Option__yesButton",
-          "reason": "confirm purchase"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 500
-        },
-        {
-          "kind": "dismiss",
-          "reason": "clear congratulations interstitial"
-        },
-        {
-          "kind": "wait_until_state",
-          "state": "MAIN",
-          "maxMs": 180000,
-          "reason": "wait super free spins chain to complete"
-        }
-      ]
-    },
-    "buy-feature-super-free-spins-2-4000x": {
-      "caseId": "buy-feature-super-free-spins-2-4000x",
-      "actions": [
-        {
-          "kind": "click",
-          "uiKey": "betMinus",
-          "reason": "open bet ladder"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "click",
-          "uiKey": "betMinus__bet-4.00",
-          "reason": "select bet 4.00"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "click",
-          "uiKey": "buyBonusButton",
-          "reason": "open buy feature popup"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "click",
-          "uiKey": "buyBonusButton__superFreeSpins2Option",
-          "reason": "select Super Free Spins 2 option"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "click",
-          "uiKey": "buyBonusButton__superFreeSpins2Option__yesButton",
-          "reason": "confirm buy super free spins 2"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 500
-        },
-        {
-          "kind": "dismiss",
-          "reason": "clear FS celebration interstitial"
-        },
-        {
-          "kind": "wait_until_state",
-          "state": "MAIN",
-          "maxMs": 120000,
-          "reason": "wait FS chain to complete"
-        }
-      ]
-    },
-    "special-bet-ante-bet-active": {
-      "caseId": "special-bet-ante-bet-active",
-      "actions": [
-        {
-          "kind": "click",
-          "uiKey": "specialBets2Options",
-          "reason": "open special bets panel"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "click",
-          "uiKey": "specialBets2Options__anteBetOption",
-          "reason": "enable Ante Bet"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "click",
-          "uiKey": "specialBets2Options__closeButton",
-          "reason": "close special-bet panel"
-        }
-      ]
-    },
-    "special-bet-super-spins-active": {
-      "caseId": "special-bet-super-spins-active",
-      "actions": [
-        {
-          "kind": "click",
-          "uiKey": "specialBets2Options",
-          "reason": "open special bets panel"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "click",
-          "uiKey": "specialBets2Options__superSpinsOption",
-          "reason": "select Super Spins variant"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "click",
-          "uiKey": "specialBets2Options__closeButton",
-          "reason": "close special bets panel via X"
-        }
-      ]
-    },
-    "turbo-spin-toggle-faster-spin": {
-      "caseId": "turbo-spin-toggle-faster-spin",
-      "actions": [
-        {
-          "kind": "click",
-          "uiKey": "autoButton",
-          "reason": "open autoplay panel"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "click",
-          "uiKey": "autoButton__turboSpinToggle",
-          "reason": "enable turbo spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 800
-        },
-        {
-          "kind": "click",
-          "uiKey": "autoButton__closeButton",
-          "reason": "close panel without starting autoplay"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 1500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "free-spins-organic-trigger-watch": {
-      "caseId": "free-spins-organic-trigger-watch",
-      "actions": [
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "free-spins-result-shape-during-chain": {
-      "caseId": "free-spins-result-shape-during-chain",
-      "actions": [],
-      "skipReason": "no setup + no spin needed (catalog spin_count = 0)"
-    },
-    "history-panel-rows-match-recent-spins": {
-      "caseId": "history-panel-rows-match-recent-spins",
-      "actions": [
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
         },
         {
           "kind": "click",
           "uiKey": "menuButton",
-          "reason": "open menu"
+          "reason": "reopen menu to verify persistence"
+        }
+      ],
+      "aiCalled": true
+    },
+    "paytable-popup-opens": {
+      "caseId": "paytable-popup-opens",
+      "actions": [
+        {
+          "kind": "click",
+          "uiKey": "paytableButton",
+          "reason": "open paytable popup"
         },
         {
           "kind": "wait_ms",
@@ -2894,293 +2223,35 @@
         },
         {
           "kind": "click",
-          "uiKey": "menuButton__gameHistoryButton",
-          "reason": "open game history panel"
+          "uiKey": "paytableButton__nextPageButton",
+          "reason": "navigate to next page"
         },
         {
           "kind": "wait_ms",
           "ms": 1500
+        },
+        {
+          "kind": "click",
+          "uiKey": "paytableButton__closeButton",
+          "reason": "close paytable popup"
         }
-      ]
+      ],
+      "aiCalled": true
     },
-    "max-win-cap-watch": {
-      "caseId": "max-win-cap-watch",
+    "performance-spin-response-time-slo": {
+      "caseId": "performance-spin-response-time-slo",
       "actions": [],
-      "skipReason": "no setup + no spin needed (catalog spin_count = 0)"
+      "skipReason": "no setup + no spin needed (assertion checks collector.spins.length === 0)",
+      "aiCalled": false
     },
-    "rules-consistency-cluster-mechanic": {
-      "caseId": "rules-consistency-cluster-mechanic",
+    "meta-logic-version-captured": {
+      "caseId": "meta-logic-version-captured",
       "actions": [
         {
           "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
         }
-      ]
-    },
-    "payout-correctness-cluster-count-bands": {
-      "caseId": "payout-correctness-cluster-count-bands",
-      "actions": [
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        }
-      ]
-    },
-    "tumble-mechanic-during-free-spins": {
-      "caseId": "tumble-mechanic-during-free-spins",
-      "actions": [],
-      "skipReason": "no setup + no spin needed (catalog spin_count = 0)"
-    },
-    "balance-non-negative-across-session": {
-      "caseId": "balance-non-negative-across-session",
-      "actions": [
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        },
-        {
-          "kind": "wait_ms",
-          "ms": 2500
-        },
-        {
-          "kind": "spin"
-        }
-      ]
+      ],
+      "aiCalled": false
     }
   }
 }

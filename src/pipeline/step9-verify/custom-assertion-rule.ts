@@ -10,6 +10,7 @@
 
 import type { NormalizedSpinResult } from "../step6-build-model/normalized.js";
 import { adaptSpinForAssertions } from "../step6-build-model/spin-adapter.js";
+import { sumWinBreakdown, payoutModelCheck } from "../step8-run-scenarios/assertion-helpers.js";
 import type { Rule, RuleContext, RuleResult } from "./rule.js";
 
 export type CustomAssertion = {
@@ -98,6 +99,8 @@ function safeEval(
       "previousState",
       "collector",
       "getRoundEndSpins",
+      "sumWinBreakdown",
+      "payoutModelCheck",
       `"use strict"; return (${code});`,
     );
     const value = fn(
@@ -109,6 +112,10 @@ function safeEval(
       bindings.ctx.previousState,
       bindings.collector,
       getRoundEndSpins,
+      sumWinBreakdown,
+      // Phase-9 (orchestrator) path has no loaded model → no-op verify (skip),
+      // so a catalog assertion referencing it never throws/false-fails here.
+      (s: Record<string, unknown>) => payoutModelCheck(s, null),
     );
     return { success: true, value };
   } catch (err) {

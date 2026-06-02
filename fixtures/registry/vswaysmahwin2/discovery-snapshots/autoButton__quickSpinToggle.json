@@ -1,0 +1,14 @@
+{
+  "stateId": "autoButton__quickSpinToggle",
+  "capturedAt": "2026-06-02T02:17:59.917Z",
+  "source": "explore-graph",
+  "elementCount": 1,
+  "elements": [
+    {
+      "key": "autoButton__quickSpinToggle__moreScattersToggle",
+      "x": 467,
+      "y": 605,
+      "confidence": 0.85
+    }
+  ]
+}

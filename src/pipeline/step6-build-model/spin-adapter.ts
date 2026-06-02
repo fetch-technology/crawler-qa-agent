@@ -55,6 +55,11 @@ export function adaptSpinForAssertions(spin: NormalizedSpinResult): AdaptedSpin 
     isEndRound: na === "s" || na === undefined,
 
     raw: spin.raw,
+
+    // Payout-integrity inputs (PP wlc_v). winBreakdown is accumulated across
+    // tumble frames by cascade-dedup; serverTotalWin is the round's `tw`.
+    winBreakdown: spin.winBreakdown ?? [],
+    serverTotalWin: spin.serverTotalWin ?? null,
   };
 }
 
@@ -68,4 +73,6 @@ export const KNOWN_FIELD_NAMES: ReadonlySet<string> = new Set([
   // Aliases
   "id", "betAmount", "winAmount", "startingBalance", "endingBalance",
   "matrix", "grid", "status", "isEndRound", "raw",
+  // Payout-integrity
+  "winBreakdown", "serverTotalWin",
 ]);

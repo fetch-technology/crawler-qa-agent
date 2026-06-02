@@ -43,6 +43,40 @@ export function deriveGameMechanics(args: {
   let mechanic: GameMechanics["mechanic"] = "unknown";
   // Tolerance: round multiplier should be close to an integer in real games.
   const closeTo = (n: number, target: number): boolean => Math.abs(n - target) / Math.max(1, target) < 0.02;
+
+  // Ante-during-calibration detection. PP slots commonly support an "Ante Bet"
+  // / "Bonus Bet" toggle that scales total bet by a fixed factor (1.25, 1.5,
+  // 1.9, 2.0, 2.5×) to boost free-spin frequency. If the calibration sample
+  // happened to run with ante ON, `multiplier` captures the inflated cost
+  // (e.g. coin × lines × 1.9). Storing that breaks parser for every normal
+  // (no-ante) spin later. Detect the common ratios and store BASE multiplier
+  // = l instead, noting the ante factor in evidence.
+  const COMMON_ANTE_FACTORS = [1.25, 1.5, 1.75, 1.9, 2.0, 2.5, 3.0];
+  if (l > 0 && !closeTo(multiplier, l) && !closeTo(multiplier, bl)) {
+    const ratio = multiplier / l;
+    for (const ante of COMMON_ANTE_FACTORS) {
+      if (Math.abs(ratio - ante) / ante < 0.02) {
+        console.warn(
+          `[game-mechanics] ante x${ante} detected during calibration `
+          + `(multiplier=${multiplier}, l=${l}, ratio=${ratio.toFixed(3)}). `
+          + `Storing BASE multiplier=${l} so parser handles no-ante spins correctly.`,
+        );
+        return {
+          mechanic: "lines",
+          betMultiplier: l,
+          waysOrLines: l,
+          detectedAt: new Date().toISOString(),
+          detectionMethod: "balance_derived",
+          evidence: {
+            coin: c,
+            deductedFromBalance: deducted,
+            requestSample: args.rawRequest?.slice(0, 200),
+          },
+        };
+      }
+    }
+  }
+
   if (bl > 0 && closeTo(multiplier, bl)) mechanic = "lines"; // bet-level mode
   else if (closeTo(multiplier, l)) mechanic = "lines";       // c × paylines
   else if (l > multiplier * 3) mechanic = "ways";            // l is ways count, M is fixed

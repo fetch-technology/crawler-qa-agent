@@ -1,672 +1,654 @@
 {
-  "spinButton": {
-    "x": 991,
-    "y": 651,
-    "strategy": "manual",
-    "confidence": 1,
-    "status": "verified",
-    "detectedAt": "2026-05-27T04:21:16.138Z",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:21:16.138Z"
-  },
-  "autoButton": {
-    "x": 993,
-    "y": 707,
-    "strategy": "manual",
-    "confidence": 1,
-    "status": "verified",
-    "detectedAt": "2026-05-27T04:06:17.821Z",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:06:17.821Z"
-  },
   "buyBonusButton": {
-    "x": 709,
-    "y": 576,
-    "strategy": "manual",
-    "confidence": 1,
+    "x": 670,
+    "y": 597,
+    "strategy": "ai_vision",
+    "confidence": 0.93,
     "status": "verified",
-    "detectedAt": "2026-05-27T04:20:57.386Z",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:20:57.386Z"
+    "detectedAt": "2026-06-02T01:55:39.219Z",
+    "verifiedBy": "probe",
+    "verifiedAt": "2026-06-02T02:05:56.349Z",
+    "probeSignal": "popup:buy free spins"
   },
   "paytableButton": {
-    "x": 184,
-    "y": 675,
-    "strategy": "manual",
-    "confidence": 1,
+    "x": 193,
+    "y": 668,
+    "strategy": "ai_vision",
+    "confidence": 0.85,
     "status": "verified",
-    "detectedAt": "2026-05-27T04:21:10.379Z",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:21:10.379Z"
+    "detectedAt": "2026-06-02T01:55:39.219Z",
+    "verifiedBy": "probe",
+    "verifiedAt": "2026-06-02T02:08:30.922Z",
+    "probeSignal": "popup:opened-no-other-kind-match (via crop-verify agent fallback)"
   },
   "menuButton": {
-    "x": 141,
-    "y": 657,
-    "strategy": "manual",
-    "confidence": 1,
+    "x": 145,
+    "y": 655,
+    "strategy": "ai_vision",
+    "confidence": 0.85,
     "status": "verified",
-    "detectedAt": "2026-05-27T04:21:02.893Z",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:21:02.893Z"
+    "detectedAt": "2026-06-02T01:55:39.219Z",
+    "verifiedBy": "probe",
+    "verifiedAt": "2026-06-02T02:11:51.441Z",
+    "probeSignal": "popup:music (via crop-verify agent fallback)"
+  },
+  "more_scatters_toggle": {
+    "x": 565,
+    "y": 605,
+    "strategy": "ai_vision",
+    "confidence": 0.88,
+    "status": "verified",
+    "detectedAt": "2026-06-02T01:55:39.220Z",
+    "verifiedBy": "probe",
+    "verifiedAt": "2026-06-02T02:20:27.200Z",
+    "probeSignal": "togglePixelDiff:28.6%"
+  },
+  "spinButton": {
+    "x": 986,
+    "y": 658,
+    "strategy": "ai_vision",
+    "confidence": 0.85,
+    "status": "verified",
+    "detectedAt": "2026-06-02T01:57:51.436Z",
+    "verifiedBy": "probe",
+    "verifiedAt": "2026-06-02T02:12:03.776Z",
+    "probeSignal": "spinResponse"
   },
   "betPlus": {
-    "x": 1088,
-    "y": 652,
-    "strategy": "manual",
-    "confidence": 1,
+    "x": 1090,
+    "y": 660,
+    "strategy": "ai_vision",
+    "confidence": 0.85,
     "status": "verified",
-    "detectedAt": "2026-05-27T04:20:26.527Z",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:20:26.527Z"
+    "detectedAt": "2026-06-02T02:00:32.170Z",
+    "verifiedBy": "probe",
+    "verifiedAt": "2026-06-02T02:12:09.669Z",
+    "probeSignal": "betFullScreenDiff:25.3%"
   },
   "betMinus": {
-    "x": 894,
-    "y": 652,
-    "strategy": "manual",
-    "confidence": 1,
+    "x": 890,
+    "y": 655,
+    "strategy": "ai_vision",
+    "confidence": 0.85,
     "status": "verified",
-    "detectedAt": "2026-05-27T04:19:55.625Z",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:19:55.625Z"
+    "detectedAt": "2026-06-02T02:02:09.282Z",
+    "verifiedBy": "probe",
+    "verifiedAt": "2026-06-02T02:12:16.056Z",
+    "probeSignal": "betFullScreenDiff:26.5%"
   },
-  "autoButton__closeButton": {
-    "x": 842,
-    "y": 144,
-    "strategy": "manual",
-    "confidence": 1,
-    "detectedAt": "2026-05-27T04:19:22.156Z",
+  "autoButton": {
+    "x": 990,
+    "y": 705,
+    "strategy": "ai_vision",
+    "confidence": 0.85,
     "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:19:22.156Z"
+    "detectedAt": "2026-06-02T02:05:25.207Z",
+    "verifiedBy": "probe",
+    "verifiedAt": "2026-06-02T02:12:21.014Z",
+    "probeSignal": "popup:autoplay"
   },
-  "autoButton__turboSpinToggle": {
-    "x": 441,
-    "y": 254,
-    "strategy": "manual",
-    "confidence": 1,
-    "detectedAt": "2026-05-27T04:19:46.188Z",
+  "buyBonusButton__declineBuyButton": {
+    "x": 530,
+    "y": 410,
+    "strategy": "ai_vision",
+    "confidence": 0.97,
+    "detectedAt": "2026-06-02T02:12:29.647Z",
     "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:19:46.188Z"
+    "verifiedBy": "probe",
+    "verifiedAt": "2026-06-02T02:21:22.616Z",
+    "probeSignal": "agentVerified: Click on the red X (decline) at (530,410) closed the Buy Free Spins confirmation popup and returned to the main game vie"
   },
-  "autoButton__quickSpinToggle": {
-    "x": 594,
-    "y": 253,
-    "strategy": "manual",
-    "confidence": 1,
-    "detectedAt": "2026-05-27T04:19:27.269Z",
+  "buyBonusButton__confirmBuyButton": {
+    "x": 760,
+    "y": 410,
+    "strategy": "ai_vision",
+    "confidence": 0.97,
+    "detectedAt": "2026-06-02T02:12:29.647Z",
     "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:19:27.269Z"
+    "verifiedBy": "probe",
+    "verifiedAt": "2026-06-02T02:22:06.285Z",
+    "probeSignal": "agentVerified: Clicking confirm (green check) at (760,410) committed the buy free spins purchase: a POST to /gs2c/v3/gameService fired,"
   },
-  "autoButton__skipScreensToggle": {
-    "x": 752,
-    "y": 254,
-    "strategy": "manual",
-    "confidence": 1,
-    "detectedAt": "2026-05-27T04:19:33.107Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:19:33.107Z"
-  },
-  "autoButton__startAutoplayButton": {
-    "x": 650,
-    "y": 511,
-    "strategy": "manual",
-    "confidence": 1,
-    "detectedAt": "2026-05-27T04:19:40.867Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:19:40.867Z"
-  },
-  "autoButton__autoCountSlide-10": {
-    "x": 447,
-    "y": 386,
-    "strategy": "manual",
-    "confidence": 1,
-    "detectedAt": "2026-05-27T04:17:58.526Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:17:58.526Z"
-  },
-  "autoButton__autoCountSlide-20": {
-    "x": 487,
-    "y": 385,
-    "strategy": "manual",
-    "confidence": 1,
-    "detectedAt": "2026-05-27T04:18:43.249Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:18:43.249Z"
-  },
-  "autoButton__autoCountSlide-30": {
-    "x": 536,
-    "y": 386,
-    "strategy": "manual",
-    "confidence": 1,
-    "detectedAt": "2026-05-27T04:18:49.416Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:18:49.416Z"
-  },
-  "autoButton__autoCountSlide-50": {
-    "x": 576,
-    "y": 386,
-    "strategy": "manual",
-    "confidence": 1,
-    "detectedAt": "2026-05-27T04:18:56.580Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:18:56.580Z"
-  },
-  "autoButton__autoCountSlide-70": {
-    "x": 619,
-    "y": 385,
-    "strategy": "manual",
-    "confidence": 1,
-    "detectedAt": "2026-05-27T04:19:06.012Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:19:06.012Z"
-  },
-  "autoButton__autoCountSlide-100": {
-    "x": 665,
-    "y": 385,
-    "strategy": "manual",
-    "confidence": 1,
-    "detectedAt": "2026-05-27T04:18:24.917Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:18:24.917Z"
-  },
-  "autoButton__autoCountSlide-500": {
-    "x": 712,
-    "y": 383,
-    "strategy": "manual",
-    "confidence": 1,
-    "detectedAt": "2026-05-27T04:19:15.632Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:19:15.632Z"
-  },
-  "autoButton__autoCountSlide-1000": {
-    "x": 752,
-    "y": 387,
-    "strategy": "manual",
-    "confidence": 1,
-    "detectedAt": "2026-05-27T04:18:32.658Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:18:32.658Z"
-  },
-  "betMinus__closeButton": {
-    "x": 1097,
-    "y": 282,
+  "paytableButton__closeButton": {
+    "x": 1125,
+    "y": 50,
     "strategy": "ai_vision",
     "confidence": 0.98,
-    "detectedAt": "2026-05-27T04:21:57.133Z",
+    "detectedAt": "2026-06-02T02:12:46.090Z",
     "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:26:27.401Z"
+    "verifiedBy": "probe",
+    "verifiedAt": "2026-06-02T02:23:26.077Z",
+    "probeSignal": "agentVerified: Paytable popup with GAME RULES closed and the main game (reels with multiplier bar, brand logo, dragon frame) is now rev"
   },
-  "betMinus__betAmount-0.20": {
-    "x": 630,
-    "y": 347,
+  "paytableButton__prevPageButton": {
+    "x": 187,
+    "y": 570,
     "strategy": "ai_vision",
-    "confidence": 0.97,
-    "detectedAt": "2026-05-27T04:21:57.133Z",
+    "confidence": 0.95,
+    "detectedAt": "2026-06-02T02:12:46.090Z",
     "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:26:27.401Z"
+    "verifiedBy": "probe",
+    "verifiedAt": "2026-06-02T02:24:20.910Z",
+    "probeSignal": "agentVerified: Paytable popup remained open and navigated from \"Page 1/7\" (Game Rules) to \"Page 7/7\" (Autoplay) — prev-page wrap-around"
   },
-  "betMinus__betAmount-0.40": {
-    "x": 769,
-    "y": 347,
+  "paytableButton__closePaytableButton": {
+    "x": 245,
+    "y": 570,
     "strategy": "ai_vision",
-    "confidence": 0.97,
-    "detectedAt": "2026-05-27T04:21:57.133Z",
+    "confidence": 0.9,
+    "detectedAt": "2026-06-02T02:12:46.090Z",
     "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:26:27.401Z"
+    "verifiedBy": "probe",
+    "verifiedAt": "2026-06-02T02:26:00.588Z",
+    "probeSignal": "agentVerified: Click at (245, 570) closed the Paytable/Game Rules popup and revealed the main game reels — large visible pixel diff, ba"
   },
-  "betMinus__betAmount-0.50": {
-    "x": 908,
-    "y": 347,
+  "paytableButton__nextPageButton": {
+    "x": 300,
+    "y": 570,
     "strategy": "ai_vision",
-    "confidence": 0.97,
-    "detectedAt": "2026-05-27T04:21:57.133Z",
+    "confidence": 0.95,
+    "detectedAt": "2026-06-02T02:12:46.090Z",
     "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:26:27.401Z"
-  },
-  "betMinus__betAmount-0.70": {
-    "x": 1047,
-    "y": 347,
-    "strategy": "ai_vision",
-    "confidence": 0.97,
-    "detectedAt": "2026-05-27T04:21:57.133Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:26:27.401Z"
-  },
-  "betMinus__betAmount-0.90": {
-    "x": 630,
-    "y": 410,
-    "strategy": "ai_vision",
-    "confidence": 0.97,
-    "detectedAt": "2026-05-27T04:21:57.133Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:26:27.401Z"
-  },
-  "betMinus__betAmount-2.00": {
-    "x": 769,
-    "y": 410,
-    "strategy": "ai_vision",
-    "confidence": 0.97,
-    "detectedAt": "2026-05-27T04:21:57.133Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:26:27.401Z"
-  },
-  "betMinus__betAmount-3.00": {
-    "x": 908,
-    "y": 410,
-    "strategy": "ai_vision",
-    "confidence": 0.97,
-    "detectedAt": "2026-05-27T04:21:57.133Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:26:27.401Z"
-  },
-  "betMinus__betAmount-5.00": {
-    "x": 1047,
-    "y": 410,
-    "strategy": "ai_vision",
-    "confidence": 0.97,
-    "detectedAt": "2026-05-27T04:21:57.133Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:26:27.401Z"
-  },
-  "betMinus__betAmount-7.00": {
-    "x": 630,
-    "y": 472,
-    "strategy": "ai_vision",
-    "confidence": 0.97,
-    "detectedAt": "2026-05-27T04:21:57.133Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:26:27.401Z"
-  },
-  "betMinus__betAmount-9.00": {
-    "x": 769,
-    "y": 472,
-    "strategy": "ai_vision",
-    "confidence": 0.97,
-    "detectedAt": "2026-05-27T04:21:57.133Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:26:27.401Z"
-  },
-  "betMinus__betAmount-10.00": {
-    "x": 908,
-    "y": 472,
-    "strategy": "ai_vision",
-    "confidence": 0.97,
-    "detectedAt": "2026-05-27T04:21:57.133Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:26:27.401Z"
-  },
-  "betMinus__betAmount-30.00": {
-    "x": 1047,
-    "y": 472,
-    "strategy": "ai_vision",
-    "confidence": 0.97,
-    "detectedAt": "2026-05-27T04:21:57.133Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:26:27.401Z"
-  },
-  "betMinus__betAmount-50.00": {
-    "x": 630,
-    "y": 534,
-    "strategy": "ai_vision",
-    "confidence": 0.97,
-    "detectedAt": "2026-05-27T04:21:57.133Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:26:27.401Z"
-  },
-  "betMinus__betAmount-70.00": {
-    "x": 769,
-    "y": 534,
-    "strategy": "ai_vision",
-    "confidence": 0.97,
-    "detectedAt": "2026-05-27T04:21:57.133Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:26:27.401Z"
-  },
-  "betMinus__betAmount-80.00": {
-    "x": 908,
-    "y": 534,
-    "strategy": "ai_vision",
-    "confidence": 0.97,
-    "detectedAt": "2026-05-27T04:21:57.133Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:26:27.401Z"
-  },
-  "betMinus__betAmount-100.00": {
-    "x": 1047,
-    "y": 534,
-    "strategy": "ai_vision",
-    "confidence": 0.97,
-    "detectedAt": "2026-05-27T04:21:57.133Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:26:27.401Z"
-  },
-  "betPlus__closeButton": {
-    "x": 1097,
-    "y": 283,
-    "strategy": "ai_vision",
-    "confidence": 0.98,
-    "detectedAt": "2026-05-27T04:26:48.088Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:26:57.394Z"
-  },
-  "betPlus__betAmount-0.20": {
-    "x": 631,
-    "y": 347,
-    "strategy": "ai_vision",
-    "confidence": 0.97,
-    "detectedAt": "2026-05-27T04:26:48.088Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:26:57.394Z"
-  },
-  "betPlus__betAmount-0.40": {
-    "x": 770,
-    "y": 347,
-    "strategy": "ai_vision",
-    "confidence": 0.97,
-    "detectedAt": "2026-05-27T04:26:48.088Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:26:57.394Z"
-  },
-  "betPlus__betAmount-0.50": {
-    "x": 909,
-    "y": 347,
-    "strategy": "ai_vision",
-    "confidence": 0.97,
-    "detectedAt": "2026-05-27T04:26:48.088Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:26:57.394Z"
-  },
-  "betPlus__betAmount-0.70": {
-    "x": 1048,
-    "y": 347,
-    "strategy": "ai_vision",
-    "confidence": 0.98,
-    "detectedAt": "2026-05-27T04:26:48.088Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:26:57.394Z"
-  },
-  "betPlus__betAmount-0.90": {
-    "x": 631,
-    "y": 410,
-    "strategy": "ai_vision",
-    "confidence": 0.97,
-    "detectedAt": "2026-05-27T04:26:48.088Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:26:57.394Z"
-  },
-  "betPlus__betAmount-2.00": {
-    "x": 770,
-    "y": 410,
-    "strategy": "ai_vision",
-    "confidence": 0.97,
-    "detectedAt": "2026-05-27T04:26:48.088Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:26:57.394Z"
-  },
-  "betPlus__betAmount-3.00": {
-    "x": 909,
-    "y": 410,
-    "strategy": "ai_vision",
-    "confidence": 0.97,
-    "detectedAt": "2026-05-27T04:26:48.088Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:26:57.394Z"
-  },
-  "betPlus__betAmount-5.00": {
-    "x": 1048,
-    "y": 410,
-    "strategy": "ai_vision",
-    "confidence": 0.97,
-    "detectedAt": "2026-05-27T04:26:48.088Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:26:57.394Z"
-  },
-  "betPlus__betAmount-7.00": {
-    "x": 631,
-    "y": 472,
-    "strategy": "ai_vision",
-    "confidence": 0.97,
-    "detectedAt": "2026-05-27T04:26:48.088Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:26:57.394Z"
-  },
-  "betPlus__betAmount-9.00": {
-    "x": 770,
-    "y": 472,
-    "strategy": "ai_vision",
-    "confidence": 0.97,
-    "detectedAt": "2026-05-27T04:26:48.088Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:26:57.394Z"
-  },
-  "betPlus__betAmount-10.00": {
-    "x": 909,
-    "y": 472,
-    "strategy": "ai_vision",
-    "confidence": 0.97,
-    "detectedAt": "2026-05-27T04:26:48.088Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:26:57.394Z"
-  },
-  "betPlus__betAmount-30.00": {
-    "x": 1048,
-    "y": 472,
-    "strategy": "ai_vision",
-    "confidence": 0.97,
-    "detectedAt": "2026-05-27T04:26:48.088Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:26:57.394Z"
-  },
-  "betPlus__betAmount-50.00": {
-    "x": 631,
-    "y": 535,
-    "strategy": "ai_vision",
-    "confidence": 0.97,
-    "detectedAt": "2026-05-27T04:26:48.088Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:26:57.394Z"
-  },
-  "betPlus__betAmount-70.00": {
-    "x": 770,
-    "y": 535,
-    "strategy": "ai_vision",
-    "confidence": 0.97,
-    "detectedAt": "2026-05-27T04:26:48.088Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:26:57.394Z"
-  },
-  "betPlus__betAmount-80.00": {
-    "x": 909,
-    "y": 535,
-    "strategy": "ai_vision",
-    "confidence": 0.97,
-    "detectedAt": "2026-05-27T04:26:48.088Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:26:57.394Z"
-  },
-  "betPlus__betAmount-100.00": {
-    "x": 1048,
-    "y": 535,
-    "strategy": "ai_vision",
-    "confidence": 0.97,
-    "detectedAt": "2026-05-27T04:26:48.088Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:26:57.394Z"
-  },
-  "buyBonusButton__cancelButton": {
-    "x": 555,
-    "y": 391,
-    "strategy": "ai_vision",
-    "confidence": 0.98,
-    "detectedAt": "2026-05-27T04:27:12.197Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:27:15.726Z"
-  },
-  "buyBonusButton__confirmButton": {
-    "x": 725,
-    "y": 391,
-    "strategy": "ai_vision",
-    "confidence": 0.98,
-    "detectedAt": "2026-05-27T04:27:12.197Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:27:15.726Z"
+    "verifiedBy": "probe",
+    "verifiedAt": "2026-06-02T02:26:46.227Z",
+    "probeSignal": "agentVerified: Popup advanced from Page 1/7 (Game Rules symbol paytable) to Page 2/7 (Tumble Feature/Gold Symbols/Free Spins Rules) wit"
   },
   "menuButton__closeButton": {
     "x": 1038,
     "y": 107,
     "strategy": "ai_vision",
     "confidence": 0.98,
-    "detectedAt": "2026-05-27T04:27:30.526Z",
+    "detectedAt": "2026-06-02T02:13:03.788Z",
     "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:27:32.413Z"
+    "verifiedBy": "probe",
+    "verifiedAt": "2026-06-02T02:28:53.490Z",
+    "probeSignal": "agentVerified: Click closed the System Settings popup and revealed the main game reels/Mahjong Wins 2 branding. Balance unchanged ($99,"
   },
-  "menuButton__historyButton": {
-    "x": 593,
-    "y": 290,
+  "menuButton__gameHistoryButton": {
+    "x": 463,
+    "y": 289,
     "strategy": "ai_vision",
     "confidence": 0.95,
-    "detectedAt": "2026-05-27T04:27:30.526Z",
+    "detectedAt": "2026-06-02T02:13:03.788Z",
     "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:27:32.413Z"
+    "verifiedBy": "probe",
+    "verifiedAt": "2026-06-02T02:30:04.373Z",
+    "probeSignal": "agentVerified: Click at (463, 289) opened a new tab with the game history page (https://pp.dev.revenge-games.com/history/?symbol=vsways"
   },
-  "menuButton__decreaseBetButton": {
-    "x": 347,
+  "menuButton__betMinusButton": {
+    "x": 348,
     "y": 403,
     "strategy": "ai_vision",
     "confidence": 0.95,
-    "detectedAt": "2026-05-27T04:27:30.526Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:27:32.413Z"
+    "detectedAt": "2026-06-02T02:13:03.788Z",
+    "status": "pending"
   },
-  "menuButton__increaseBetButton": {
+  "menuButton__betPlusButton": {
     "x": 575,
     "y": 403,
     "strategy": "ai_vision",
     "confidence": 0.95,
-    "detectedAt": "2026-05-27T04:27:30.526Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:27:32.413Z"
+    "detectedAt": "2026-06-02T02:13:03.788Z",
+    "status": "pending"
   },
   "menuButton__batterySaverToggle": {
     "x": 923,
     "y": 270,
     "strategy": "ai_vision",
-    "confidence": 0.95,
-    "detectedAt": "2026-05-27T04:27:30.526Z",
+    "confidence": 0.96,
+    "detectedAt": "2026-06-02T02:13:03.788Z",
     "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:27:32.413Z"
+    "verifiedBy": "probe",
+    "verifiedAt": "2026-06-02T02:34:01.123Z",
+    "probeSignal": "agentVerified: Battery Saver toggle flipped from gray (OFF) to green (ON) at the click location. The System Settings popup remained ope"
   },
   "menuButton__ambientMusicToggle": {
     "x": 923,
     "y": 346,
     "strategy": "ai_vision",
-    "confidence": 0.95,
-    "detectedAt": "2026-05-27T04:27:30.526Z",
+    "confidence": 0.96,
+    "detectedAt": "2026-06-02T02:13:03.788Z",
     "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:27:32.413Z"
+    "verifiedBy": "probe",
+    "verifiedAt": "2026-06-02T02:35:21.616Z",
+    "probeSignal": "agentVerified: Ambient Music toggle flipped from OFF (white) to ON (green) at (923, 346). Popup remained open, no spin, and a saveSetti"
   },
   "menuButton__soundFxToggle": {
     "x": 923,
-    "y": 422,
+    "y": 421,
     "strategy": "ai_vision",
-    "confidence": 0.95,
-    "detectedAt": "2026-05-27T04:27:30.526Z",
+    "confidence": 0.96,
+    "detectedAt": "2026-06-02T02:13:03.788Z",
     "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:27:32.413Z"
+    "verifiedBy": "probe",
+    "verifiedAt": "2026-06-02T02:36:49.707Z",
+    "probeSignal": "agentVerified: SOUND FX toggle flipped from green/ON to white/OFF after the click. Popup remained open, no spin occurred, and saveSetti"
   },
-  "paytableButton__closeButton": {
-    "x": 1124,
-    "y": 51,
+  "betPlus__closeButton": {
+    "x": 1097,
+    "y": 282,
     "strategy": "ai_vision",
     "confidence": 0.98,
-    "detectedAt": "2026-05-27T04:27:45.714Z",
+    "detectedAt": "2026-06-02T02:13:40.950Z",
     "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:28:10.354Z"
+    "verifiedBy": "alias-mirror",
+    "verifiedAt": "2026-06-02T03:25:25.068Z",
+    "probeSignal": "mirrored from betMinus__closeButton (mirror partner; same popup coords)"
   },
-  "paytableButton__prevPageButton": {
-    "x": 188,
-    "y": 570,
+  "betPlus__bet-0.25": {
+    "x": 630,
+    "y": 347,
+    "strategy": "ai_vision",
+    "confidence": 0.97,
+    "detectedAt": "2026-06-02T02:13:40.950Z",
+    "status": "verified",
+    "verifiedBy": "alias-mirror",
+    "verifiedAt": "2026-06-02T03:25:25.068Z",
+    "probeSignal": "mirrored from betMinus__bet-0.25 (mirror partner; same popup coords)"
+  },
+  "betPlus__bet-0.50": {
+    "x": 769,
+    "y": 347,
+    "strategy": "ai_vision",
+    "confidence": 0.97,
+    "detectedAt": "2026-06-02T02:13:40.950Z",
+    "status": "pending"
+  },
+  "betPlus__bet-0.63": {
+    "x": 908,
+    "y": 347,
+    "strategy": "ai_vision",
+    "confidence": 0.97,
+    "detectedAt": "2026-06-02T02:13:40.950Z",
+    "status": "verified",
+    "verifiedBy": "alias-mirror",
+    "verifiedAt": "2026-06-02T03:25:25.068Z",
+    "probeSignal": "mirrored from betMinus__bet-0.63 (mirror partner; same popup coords)"
+  },
+  "betPlus__bet-0.88": {
+    "x": 1047,
+    "y": 347,
+    "strategy": "ai_vision",
+    "confidence": 0.97,
+    "detectedAt": "2026-06-02T02:13:40.950Z",
+    "status": "verified",
+    "verifiedBy": "alias-mirror",
+    "verifiedAt": "2026-06-02T03:25:25.068Z",
+    "probeSignal": "mirrored from betMinus__bet-0.88 (mirror partner; same popup coords)"
+  },
+  "betPlus__bet-1.13": {
+    "x": 630,
+    "y": 409,
+    "strategy": "ai_vision",
+    "confidence": 0.97,
+    "detectedAt": "2026-06-02T02:13:40.950Z",
+    "status": "verified",
+    "verifiedBy": "alias-mirror",
+    "verifiedAt": "2026-06-02T03:25:25.068Z",
+    "probeSignal": "mirrored from betMinus__bet-1.13 (mirror partner; same popup coords)"
+  },
+  "betPlus__bet-2.50": {
+    "x": 769,
+    "y": 409,
+    "strategy": "ai_vision",
+    "confidence": 0.97,
+    "detectedAt": "2026-06-02T02:13:40.950Z",
+    "status": "verified",
+    "verifiedBy": "alias-mirror",
+    "verifiedAt": "2026-06-02T03:25:25.068Z",
+    "probeSignal": "mirrored from betMinus__bet-2.50 (mirror partner; same popup coords)"
+  },
+  "betPlus__bet-3.75": {
+    "x": 908,
+    "y": 409,
+    "strategy": "ai_vision",
+    "confidence": 0.97,
+    "detectedAt": "2026-06-02T02:13:40.950Z",
+    "status": "verified",
+    "verifiedBy": "alias-mirror",
+    "verifiedAt": "2026-06-02T03:25:25.068Z",
+    "probeSignal": "mirrored from betMinus__bet-3.75 (mirror partner; same popup coords)"
+  },
+  "betPlus__bet-6.25": {
+    "x": 1047,
+    "y": 409,
+    "strategy": "ai_vision",
+    "confidence": 0.97,
+    "detectedAt": "2026-06-02T02:13:40.950Z",
+    "status": "verified",
+    "verifiedBy": "alias-mirror",
+    "verifiedAt": "2026-06-02T03:25:25.068Z",
+    "probeSignal": "mirrored from betMinus__bet-6.25 (mirror partner; same popup coords)"
+  },
+  "betPlus__bet-8.75": {
+    "x": 630,
+    "y": 471,
+    "strategy": "ai_vision",
+    "confidence": 0.97,
+    "detectedAt": "2026-06-02T02:13:40.950Z",
+    "status": "verified",
+    "verifiedBy": "alias-mirror",
+    "verifiedAt": "2026-06-02T03:25:25.068Z",
+    "probeSignal": "mirrored from betMinus__bet-8.75 (mirror partner; same popup coords)"
+  },
+  "betPlus__bet-11.25": {
+    "x": 769,
+    "y": 471,
+    "strategy": "ai_vision",
+    "confidence": 0.97,
+    "detectedAt": "2026-06-02T02:13:40.950Z",
+    "status": "verified",
+    "verifiedBy": "alias-mirror",
+    "verifiedAt": "2026-06-02T03:25:25.068Z",
+    "probeSignal": "mirrored from betMinus__bet-11.25 (mirror partner; same popup coords)"
+  },
+  "betPlus__bet-12.50": {
+    "x": 908,
+    "y": 471,
+    "strategy": "ai_vision",
+    "confidence": 0.97,
+    "detectedAt": "2026-06-02T02:13:40.950Z",
+    "status": "verified",
+    "verifiedBy": "alias-mirror",
+    "verifiedAt": "2026-06-02T03:25:25.068Z",
+    "probeSignal": "mirrored from betMinus__bet-12.50 (mirror partner; same popup coords)"
+  },
+  "betPlus__bet-37.50": {
+    "x": 1047,
+    "y": 471,
+    "strategy": "ai_vision",
+    "confidence": 0.97,
+    "detectedAt": "2026-06-02T02:13:40.950Z",
+    "status": "verified",
+    "verifiedBy": "alias-mirror",
+    "verifiedAt": "2026-06-02T03:25:25.068Z",
+    "probeSignal": "mirrored from betMinus__bet-37.50 (mirror partner; same popup coords)"
+  },
+  "betPlus__bet-62.50": {
+    "x": 630,
+    "y": 533,
+    "strategy": "ai_vision",
+    "confidence": 0.97,
+    "detectedAt": "2026-06-02T02:13:40.950Z",
+    "status": "verified",
+    "verifiedBy": "alias-mirror",
+    "verifiedAt": "2026-06-02T03:25:25.068Z",
+    "probeSignal": "mirrored from betMinus__bet-62.50 (mirror partner; same popup coords)"
+  },
+  "betPlus__bet-87.50": {
+    "x": 769,
+    "y": 533,
+    "strategy": "ai_vision",
+    "confidence": 0.97,
+    "detectedAt": "2026-06-02T02:13:40.950Z",
+    "status": "verified",
+    "verifiedBy": "alias-mirror",
+    "verifiedAt": "2026-06-02T03:25:25.068Z",
+    "probeSignal": "mirrored from betMinus__bet-87.50 (mirror partner; same popup coords)"
+  },
+  "betPlus__bet-100.00": {
+    "x": 908,
+    "y": 533,
+    "strategy": "ai_vision",
+    "confidence": 0.98,
+    "detectedAt": "2026-06-02T02:13:40.950Z",
+    "status": "pending"
+  },
+  "betPlus__bet-125.00": {
+    "x": 1047,
+    "y": 533,
+    "strategy": "ai_vision",
+    "confidence": 0.97,
+    "detectedAt": "2026-06-02T02:13:40.950Z",
+    "status": "pending"
+  },
+  "betMinus__closeButton": {
+    "x": 1097,
+    "y": 282,
+    "strategy": "ai_vision",
+    "confidence": 0.98,
+    "detectedAt": "2026-06-02T02:13:40.950Z",
+    "status": "verified",
+    "verifiedBy": "probe",
+    "verifiedAt": "2026-06-02T02:54:59.442Z",
+    "probeSignal": "agentVerified: Click at (1097, 282) closed the Bet Multiplier popup and revealed the main game reels (large >30% pixel diff). Credit ($"
+  },
+  "betMinus__bet-0.25": {
+    "x": 630,
+    "y": 347,
+    "strategy": "ai_vision",
+    "confidence": 0.97,
+    "detectedAt": "2026-06-02T02:13:40.950Z",
+    "status": "verified",
+    "verifiedBy": "probe",
+    "verifiedAt": "2026-06-02T02:55:47.389Z",
+    "probeSignal": "agentVerified: Click selected the $0.20 bet level: button gained a green highlight border, main BET readout updated from $70.00 to $0.2"
+  },
+  "betMinus__bet-0.50": {
+    "x": 769,
+    "y": 347,
+    "strategy": "ai_vision",
+    "confidence": 0.97,
+    "detectedAt": "2026-06-02T02:13:40.950Z",
+    "status": "pending"
+  },
+  "betMinus__bet-0.63": {
+    "x": 908,
+    "y": 347,
+    "strategy": "ai_vision",
+    "confidence": 0.97,
+    "detectedAt": "2026-06-02T02:13:40.950Z",
+    "status": "verified",
+    "verifiedBy": "probe",
+    "verifiedAt": "2026-06-02T02:57:40.297Z",
+    "probeSignal": "agentVerified: Click at (908,347) hit a bet level cell ($0.50) in the bet selector popup. The tapped cell highlights with a green borde"
+  },
+  "betMinus__bet-0.88": {
+    "x": 1047,
+    "y": 347,
+    "strategy": "ai_vision",
+    "confidence": 0.97,
+    "detectedAt": "2026-06-02T02:13:40.950Z",
+    "status": "verified",
+    "verifiedBy": "probe",
+    "verifiedAt": "2026-06-02T02:58:36.296Z",
+    "probeSignal": "agentVerified: Click on (1047,347) selected a bet level: the $0.70 cell gained a green selection border (previously $0.40 was selected)"
+  },
+  "betMinus__bet-1.13": {
+    "x": 630,
+    "y": 409,
+    "strategy": "ai_vision",
+    "confidence": 0.97,
+    "detectedAt": "2026-06-02T02:13:40.950Z",
+    "status": "verified",
+    "verifiedBy": "probe",
+    "verifiedAt": "2026-06-02T02:59:36.529Z",
+    "probeSignal": "agentVerified: $0.90 bet level became highlighted with a green border (previously $0.50 was selected) and the BET readout at the bottom"
+  },
+  "betMinus__bet-2.50": {
+    "x": 769,
+    "y": 409,
+    "strategy": "ai_vision",
+    "confidence": 0.97,
+    "detectedAt": "2026-06-02T02:13:40.950Z",
+    "status": "verified",
+    "verifiedBy": "probe",
+    "verifiedAt": "2026-06-02T03:00:47.027Z",
+    "probeSignal": "agentVerified: Click at (769,409) selected a bet level in the bet-selector popup: the $2.00 cell now shows a green highlight border, an"
+  },
+  "betMinus__bet-3.75": {
+    "x": 908,
+    "y": 409,
+    "strategy": "ai_vision",
+    "confidence": 0.97,
+    "detectedAt": "2026-06-02T02:13:40.950Z",
+    "status": "verified",
+    "verifiedBy": "probe",
+    "verifiedAt": "2026-06-02T03:01:49.294Z",
+    "probeSignal": "agentVerified: Click at (908, 409) selected the $3.00 bet level: green highlight moved from $0.90 to $3.00, and the main BET readout up"
+  },
+  "betMinus__bet-6.25": {
+    "x": 1047,
+    "y": 409,
+    "strategy": "ai_vision",
+    "confidence": 0.97,
+    "detectedAt": "2026-06-02T02:13:40.950Z",
+    "status": "verified",
+    "verifiedBy": "probe",
+    "verifiedAt": "2026-06-02T03:02:39.216Z",
+    "probeSignal": "agentVerified: Click selected the $5.00 bet cell in the bet multiplier popup: the cell now shows a green highlight border (previously o"
+  },
+  "betMinus__bet-8.75": {
+    "x": 630,
+    "y": 471,
+    "strategy": "ai_vision",
+    "confidence": 0.97,
+    "detectedAt": "2026-06-02T02:13:40.950Z",
+    "status": "verified",
+    "verifiedBy": "probe",
+    "verifiedAt": "2026-06-02T03:03:39.101Z",
+    "probeSignal": "agentVerified: Click at (630,471) selected the bet cell (now green-bordered) and the main BET readout updated from $3.00 to $7.00. No s"
+  },
+  "betMinus__bet-11.25": {
+    "x": 769,
+    "y": 471,
+    "strategy": "ai_vision",
+    "confidence": 0.97,
+    "detectedAt": "2026-06-02T02:13:40.950Z",
+    "status": "verified",
+    "verifiedBy": "probe",
+    "verifiedAt": "2026-06-02T03:05:05.035Z",
+    "probeSignal": "agentVerified: Click at (769,471) selected a bet level in the bet selector popup: the $9.00 tile is now highlighted (was $5.00) and the"
+  },
+  "betMinus__bet-12.50": {
+    "x": 908,
+    "y": 471,
+    "strategy": "ai_vision",
+    "confidence": 0.97,
+    "detectedAt": "2026-06-02T02:13:40.950Z",
+    "status": "verified",
+    "verifiedBy": "probe",
+    "verifiedAt": "2026-06-02T03:05:57.966Z",
+    "probeSignal": "agentVerified: Click at (908,471) selected the $10.00 bet cell: green highlight moved from $7.00 to $10.00 and the main BET readout upd"
+  },
+  "betMinus__bet-37.50": {
+    "x": 1047,
+    "y": 471,
+    "strategy": "ai_vision",
+    "confidence": 0.97,
+    "detectedAt": "2026-06-02T02:13:40.950Z",
+    "status": "verified",
+    "verifiedBy": "probe",
+    "verifiedAt": "2026-06-02T03:07:20.013Z",
+    "probeSignal": "agentVerified: Click at (1047, 471) hit the $30.00 bet level cell. Post-click: the cell is highlighted with a green border (previously "
+  },
+  "betMinus__bet-62.50": {
+    "x": 630,
+    "y": 533,
+    "strategy": "ai_vision",
+    "confidence": 0.97,
+    "detectedAt": "2026-06-02T02:13:40.950Z",
+    "status": "verified",
+    "verifiedBy": "probe",
+    "verifiedAt": "2026-06-02T03:08:31.705Z",
+    "probeSignal": "agentVerified: Click selected a bet level in the bet-multiplier popup: the tapped button ($50.00 at the click coord) is now highlighted"
+  },
+  "betMinus__bet-87.50": {
+    "x": 769,
+    "y": 533,
+    "strategy": "ai_vision",
+    "confidence": 0.97,
+    "detectedAt": "2026-06-02T02:13:40.950Z",
+    "status": "verified",
+    "verifiedBy": "probe",
+    "verifiedAt": "2026-06-02T03:09:36.105Z",
+    "probeSignal": "agentVerified: Click at (769,533) landed on the $70.00 bet level button in the open bet selector popup. The button gained a green highl"
+  },
+  "betMinus__bet-100.00": {
+    "x": 908,
+    "y": 533,
+    "strategy": "ai_vision",
+    "confidence": 0.98,
+    "detectedAt": "2026-06-02T02:13:40.950Z",
+    "status": "pending"
+  },
+  "betMinus__bet-125.00": {
+    "x": 1047,
+    "y": 533,
+    "strategy": "ai_vision",
+    "confidence": 0.97,
+    "detectedAt": "2026-06-02T02:13:40.950Z",
+    "status": "pending"
+  },
+  "autoButton__closeButton": {
+    "x": 848,
+    "y": 144,
+    "strategy": "ai_vision",
+    "confidence": 0.98,
+    "detectedAt": "2026-06-02T02:14:13.579Z",
+    "status": "verified",
+    "verifiedBy": "probe",
+    "verifiedAt": "2026-06-02T03:12:58.207Z",
+    "probeSignal": "agentVerified: Autoplay settings popup closed and main game reels became fully visible. Credit ($99,991,166.74) and bet ($100.00) uncha"
+  },
+  "autoButton__turboSpinToggle": {
+    "x": 463,
+    "y": 252,
     "strategy": "ai_vision",
     "confidence": 0.95,
-    "detectedAt": "2026-05-27T04:27:45.714Z",
+    "detectedAt": "2026-06-02T02:14:13.579Z",
     "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:28:10.354Z"
+    "verifiedBy": "probe",
+    "verifiedAt": "2026-06-02T03:13:39.735Z",
+    "probeSignal": "agentVerified: Turbo Spin toggled from unchecked to checked (green checkmark appeared next to TURBO SPIN label); popup remained open, n"
   },
-  "paytableButton__exitPagesButton": {
-    "x": 243,
-    "y": 570,
+  "autoButton__quickSpinToggle": {
+    "x": 597,
+    "y": 252,
+    "strategy": "ai_vision",
+    "confidence": 0.95,
+    "detectedAt": "2026-06-02T02:14:13.579Z",
+    "status": "verified",
+    "verifiedBy": "probe",
+    "verifiedAt": "2026-06-02T03:16:28.216Z",
+    "probeSignal": "agentVerified: Quick Spin checkbox toggled from unchecked to checked (green) — and the mutually-exclusive Turbo Spin auto-unchecked. Th"
+  },
+  "autoButton__skipScreensToggle": {
+    "x": 743,
+    "y": 252,
+    "strategy": "ai_vision",
+    "confidence": 0.95,
+    "detectedAt": "2026-06-02T02:14:13.579Z",
+    "status": "verified",
+    "verifiedBy": "probe",
+    "verifiedAt": "2026-06-02T03:18:32.821Z",
+    "probeSignal": "agentVerified: Skip Screens checkbox toggled from checked (green) to unchecked (empty box) after click. Popup remained open, no spin tr"
+  },
+  "autoButton__autospinsSlider": {
+    "x": 663,
+    "y": 384,
     "strategy": "ai_vision",
     "confidence": 0.9,
-    "detectedAt": "2026-05-27T04:27:45.714Z",
-    "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:28:10.354Z"
+    "detectedAt": "2026-06-02T02:14:13.579Z",
+    "status": "pending"
   },
-  "paytableButton__nextPageButton": {
-    "x": 298,
-    "y": 570,
+  "autoButton__startAutoplayButton": {
+    "x": 663,
+    "y": 510,
     "strategy": "ai_vision",
-    "confidence": 0.95,
-    "detectedAt": "2026-05-27T04:27:45.714Z",
+    "confidence": 0.98,
+    "detectedAt": "2026-06-02T02:14:13.579Z",
     "status": "verified",
-    "verifiedBy": "QA",
-    "verifiedAt": "2026-05-27T04:28:10.354Z"
+    "verifiedBy": "probe",
+    "verifiedAt": "2026-06-02T03:23:47.433Z",
+    "probeSignal": "agentVerified: Autoplay started successfully: popup closed, screen shows \"AUTO SPINS LEFT 96\" (4 spins fired from 100), credit dropped "
+  },
+  "autoButton__quickSpinToggle__moreScattersToggle": {
+    "x": 467,
+    "y": 605,
+    "strategy": "ai_vision",
+    "confidence": 0.85,
+    "detectedAt": "2026-06-02T02:17:59.803Z",
+    "status": "pending"
   }
 }

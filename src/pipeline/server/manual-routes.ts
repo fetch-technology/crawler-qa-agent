@@ -2,7 +2,26 @@
 // src/server/index.ts. Routes prefixed with /api/qa/manual.
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { manualSession, listRegisteredGames, updateGameUrl, deleteGame } from "./manual-session.js";
+import { listRegisteredGames, updateGameUrl, deleteGame, ManualSessionManager } from "./manual-session.js";
+import { getOrCreate, set as setSession, getDefaultOrThrow, listSessions } from "./session-pool.js";
+
+/** Resolve which ManualSessionManager the request targets.
+ *  Priority: explicit `gameSlug` (body / x-game-slug header / ?gameSlug=…)
+ *  → fall back to LRU default (one-session pool) → fail when ambiguous. */
+function resolveSession(req: IncomingMessage, body: Record<string, any> | null, urlStr: string): ManualSessionManager {
+  let slug: string | null = null;
+  if (body && typeof body.gameSlug === "string" && body.gameSlug) slug = body.gameSlug;
+  if (!slug && typeof req.headers["x-game-slug"] === "string") slug = req.headers["x-game-slug"] as string;
+  if (!slug) {
+    try {
+      const u = new URL(urlStr, "http://localhost");
+      const q = u.searchParams.get("gameSlug");
+      if (q) slug = q;
+    } catch { /* ignore */ }
+  }
+  if (slug) return getOrCreate(slug);
+  return getDefaultOrThrow();
+}
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body);
@@ -74,7 +93,8 @@ export async function handleManualRoute(
       const body = await asJsonBody<{ gameSlug?: string }>(req);
       if (!body.gameSlug) return sendJson(res, 400, { error: "gameSlug required" }), true;
       try {
-        const status = await manualSession.resume(body.gameSlug);
+        const sess = getOrCreate(body.gameSlug);
+        const status = await sess.resume(body.gameSlug);
         return sendJson(res, 200, status), true;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -83,12 +103,20 @@ export async function handleManualRoute(
       }
     }
 
-    // POST /api/qa/manual/start { url, autoDiscover? }
+    // POST /api/qa/manual/start { url, autoDiscover? } — slug is derived
+    // from the crawled URL during start(); a fresh transient manager runs
+    // start, then registers itself in the pool under the resolved slug so
+    // subsequent un-slugged routes can find it via LRU.
     if (url === "/api/qa/manual/start" && method === "POST") {
-      const body = await asJsonBody<{ url?: string; autoDiscover?: boolean }>(req);
+      const body = await asJsonBody<{ url?: string; autoDiscover?: boolean; gameSlug?: string }>(req);
       if (!body.url) return sendJson(res, 400, { error: "url required" }), true;
       try {
-        const status = await manualSession.start(body.url, { autoDiscover: body.autoDiscover ?? true });
+        // If client supplied gameSlug, reuse the existing manager so we
+        // don't spin up a second browser for the same game; otherwise
+        // build a transient and register after start() resolves the slug.
+        const sess = body.gameSlug ? getOrCreate(body.gameSlug) : new ManualSessionManager();
+        const status = await sess.start(body.url, { autoDiscover: body.autoDiscover ?? true });
+        if (status.gameSlug) setSession(status.gameSlug, sess);
         return sendJson(res, 200, status), true;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -97,20 +125,26 @@ export async function handleManualRoute(
       }
     }
 
-    // GET /api/qa/manual/status
-    if (url === "/api/qa/manual/status" && method === "GET") {
-      return sendJson(res, 200, manualSession.status()), true;
+    // GET /api/qa/manual/sessions — list all active per-game sessions in the
+    // pool. Used by the dashboard to render a multi-game tab strip.
+    if (url === "/api/qa/manual/sessions" && method === "GET") {
+      return sendJson(res, 200, { sessions: listSessions() }), true;
+    }
+
+    // GET /api/qa/manual/status[?gameSlug=…]
+    if ((url === "/api/qa/manual/status" || url.startsWith("/api/qa/manual/status?")) && method === "GET") {
+      return sendJson(res, 200, resolveSession(req, null, url).status()), true;
     }
 
     // POST /api/qa/manual/click { uiKey } | { x, y }
     if (url === "/api/qa/manual/click" && method === "POST") {
       const body = await asJsonBody<{ uiKey?: string; x?: number; y?: number }>(req);
       if (body.uiKey) {
-        const r = await manualSession.clickElement(body.uiKey);
+        const r = await resolveSession(req, body as any, url).clickElement(body.uiKey);
         return sendJson(res, r.ok ? 200 : 400, r), true;
       }
       if (typeof body.x === "number" && typeof body.y === "number") {
-        const r = await manualSession.clickAt(body.x, body.y);
+        const r = await resolveSession(req, body as any, url).clickAt(body.x, body.y);
         return sendJson(res, r.ok ? 200 : 400, r), true;
       }
       return sendJson(res, 400, { error: "either uiKey or (x, y) required" }), true;
@@ -122,8 +156,8 @@ export async function handleManualRoute(
       if (!body.uiKey) {
         return sendJson(res, 400, { error: "uiKey required" }), true;
       }
-      await manualSession.confirm(body.uiKey);
-      return sendJson(res, 200, manualSession.status()), true;
+      await resolveSession(req, body as any, url).confirm(body.uiKey);
+      return sendJson(res, 200, resolveSession(req, body as any, url).status()), true;
     }
 
     // POST /api/qa/manual/confirm-children { parentKey } — bulk verify ALL
@@ -133,8 +167,8 @@ export async function handleManualRoute(
       if (!body.parentKey) {
         return sendJson(res, 400, { error: "parentKey required" }), true;
       }
-      const r = await manualSession.confirmChildren(body.parentKey);
-      return sendJson(res, r.ok ? 200 : 400, { ...r, status: manualSession.status() }), true;
+      const r = await resolveSession(req, body as any, url).confirmChildren(body.parentKey);
+      return sendJson(res, r.ok ? 200 : 400, { ...r, status: resolveSession(req, body as any, url).status() }), true;
     }
 
     // POST /api/qa/manual/update { uiKey, x, y }
@@ -143,8 +177,8 @@ export async function handleManualRoute(
       if (!body.uiKey || typeof body.x !== "number" || typeof body.y !== "number") {
         return sendJson(res, 400, { error: "uiKey, x, y required" }), true;
       }
-      await manualSession.updateCoord(body.uiKey, body.x, body.y);
-      return sendJson(res, 200, manualSession.status()), true;
+      await resolveSession(req, body as any, url).updateCoord(body.uiKey, body.x, body.y);
+      return sendJson(res, 200, resolveSession(req, body as any, url).status()), true;
     }
 
     // POST /api/qa/manual/add { uiKey, x, y }
@@ -153,15 +187,15 @@ export async function handleManualRoute(
       if (!body.uiKey || typeof body.x !== "number" || typeof body.y !== "number") {
         return sendJson(res, 400, { error: "uiKey, x, y required" }), true;
       }
-      await manualSession.addElement(body.uiKey, body.x, body.y);
-      return sendJson(res, 200, manualSession.status()), true;
+      await resolveSession(req, body as any, url).addElement(body.uiKey, body.x, body.y);
+      return sendJson(res, 200, resolveSession(req, body as any, url).status()), true;
     }
 
     // DELETE /api/qa/manual/element/:uiKey
     if (url.startsWith("/api/qa/manual/element/") && method === "DELETE") {
       const uiKey = decodeURIComponent(url.slice("/api/qa/manual/element/".length));
-      await manualSession.removeElement(uiKey);
-      return sendJson(res, 200, manualSession.status()), true;
+      await resolveSession(req, null, url).removeElement(uiKey);
+      return sendJson(res, 200, resolveSession(req, null, url).status()), true;
     }
 
     // POST /api/qa/manual/discover-via { triggerKey, stateLabel }
@@ -172,8 +206,8 @@ export async function handleManualRoute(
       if (!body.triggerKey || !body.stateLabel) {
         return sendJson(res, 400, { error: "triggerKey and stateLabel required" }), true;
       }
-      const r = await manualSession.discoverVia(body.triggerKey, body.stateLabel);
-      return sendJson(res, r.ok ? 200 : 400, { ...r, status: manualSession.status() }), true;
+      const r = await resolveSession(req, body as any, url).discoverVia(body.triggerKey, body.stateLabel);
+      return sendJson(res, r.ok ? 200 : 400, { ...r, status: resolveSession(req, body as any, url).status() }), true;
     }
 
     // POST /api/qa/manual/discover-state { stateLabel }
@@ -182,16 +216,16 @@ export async function handleManualRoute(
     if (url === "/api/qa/manual/discover-state" && method === "POST") {
       const body = await asJsonBody<{ stateLabel?: string }>(req);
       if (!body.stateLabel) return sendJson(res, 400, { error: "stateLabel required" }), true;
-      const r = await manualSession.discoverSubState(body.stateLabel);
-      return sendJson(res, r.ok ? 200 : 400, { ...r, status: manualSession.status() }), true;
+      const r = await resolveSession(req, body as any, url).discoverSubState(body.stateLabel);
+      return sendJson(res, r.ok ? 200 : 400, { ...r, status: resolveSession(req, body as any, url).status() }), true;
     }
 
     // POST /api/qa/manual/ai-recover { uiKey }
     if (url === "/api/qa/manual/ai-recover" && method === "POST") {
       const body = await asJsonBody<{ uiKey?: string }>(req);
       if (!body.uiKey) return sendJson(res, 400, { error: "uiKey required" }), true;
-      const r = await manualSession.aiRecover(body.uiKey);
-      return sendJson(res, r.ok ? 200 : 400, { ...r, status: manualSession.status() }), true;
+      const r = await resolveSession(req, body as any, url).aiRecover(body.uiKey);
+      return sendJson(res, r.ok ? 200 : 400, { ...r, status: resolveSession(req, body as any, url).status() }), true;
     }
 
     // GET /api/qa/manual/cases?game=<slug> — list test cases + translated actions from disk
@@ -199,14 +233,14 @@ export async function handleManualRoute(
     if (url.startsWith("/api/qa/manual/cases") && method === "GET") {
       const slugMatch = url.match(/[?&]game=([^&]+)/);
       const slug = slugMatch ? decodeURIComponent(slugMatch[1]!) : undefined;
-      const r = await manualSession.listCases(slug);
+      const r = await resolveSession(req, null, url).listCases(slug);
       return sendJson(res, r.ok ? 200 : 400, r), true;
     }
 
     // POST /api/qa/manual/retranslate-all { gameSlug?, mode?: "skipped" | "all" }
     if (url === "/api/qa/manual/retranslate-all" && method === "POST") {
       const body = await asJsonBody<{ gameSlug?: string; mode?: "skipped" | "all" }>(req);
-      const r = await manualSession.retranslateAllSkipped({
+      const r = await resolveSession(req, body as any, url).retranslateAllSkipped({
         slugOverride: body.gameSlug,
         mode: body.mode,
       });
@@ -217,7 +251,7 @@ export async function handleManualRoute(
     if (url === "/api/qa/manual/retranslate-case" && method === "POST") {
       const body = await asJsonBody<{ caseId?: string; gameSlug?: string }>(req);
       if (!body.caseId) return sendJson(res, 400, { error: "caseId required" }), true;
-      const r = await manualSession.retranslateCase(body.caseId, body.gameSlug);
+      const r = await resolveSession(req, body as any, url).retranslateCase(body.caseId, body.gameSlug);
       return sendJson(res, r.ok ? 200 : 400, r), true;
     }
 
@@ -228,7 +262,7 @@ export async function handleManualRoute(
       const caseId = u.searchParams.get("caseId");
       const game = u.searchParams.get("game") ?? undefined;
       if (!caseId) return sendJson(res, 400, { error: "caseId required" }), true;
-      const r = await manualSession.getCaseActions(caseId, game);
+      const r = await resolveSession(req, null, url).getCaseActions(caseId, game);
       return sendJson(res, r.ok ? 200 : 400, r), true;
     }
 
@@ -239,7 +273,7 @@ export async function handleManualRoute(
       const body = await asJsonBody<{ caseId?: string; actions?: unknown[]; gameSlug?: string }>(req);
       if (!body.caseId) return sendJson(res, 400, { error: "caseId required" }), true;
       if (!Array.isArray(body.actions)) return sendJson(res, 400, { error: "actions array required" }), true;
-      const r = await manualSession.saveCaseActions(
+      const r = await resolveSession(req, body as any, url).saveCaseActions(
         body.caseId,
         body.actions as import("../step7-testcase-gen/case-action-translator.js").CaseAction[],
         body.gameSlug,
@@ -250,7 +284,7 @@ export async function handleManualRoute(
     // POST /api/qa/manual/wait-for-stable — wait until game UI settles between cases
     if (url === "/api/qa/manual/wait-for-stable" && method === "POST") {
       const body = await asJsonBody<{ uiKey?: string; minDelayMs?: number; maxMs?: number }>(req);
-      const r = await manualSession.waitForStable(body);
+      const r = await resolveSession(req, body as any, url).waitForStable(body);
       return sendJson(res, r.ok ? 200 : 400, r), true;
     }
 
@@ -259,7 +293,7 @@ export async function handleManualRoute(
     // detection (B), plus optional spinButton behavioral probe (C).
     if (url === "/api/qa/manual/ensure-main" && method === "POST") {
       const body = await asJsonBody<{ probe?: boolean; autoRecover?: boolean; maxRecoverAttempts?: number }>(req);
-      const r = await manualSession.ensureMainScreen(body);
+      const r = await resolveSession(req, body as any, url).ensureMainScreen(body);
       return sendJson(res, 200, r), true;
     }
 
@@ -269,7 +303,7 @@ export async function handleManualRoute(
     // gives up. Replaces fixed-duration "60s gap between cases".
     if (url === "/api/qa/manual/wait-for-main" && method === "POST") {
       const body = await asJsonBody<{ maxWaitMs?: number; pollMs?: number }>(req);
-      const r = await manualSession.waitForMainScreen(body);
+      const r = await resolveSession(req, body as any, url).waitForMainScreen(body);
       return sendJson(res, 200, r), true;
     }
 
@@ -414,9 +448,92 @@ export async function handleManualRoute(
       // ensureMain defaults true (pre-flight return-to-main). Dashboard run-all
       // passes false because it already ran its own ensure-main pre-flight.
       const r = body.autoMode === true
-        ? await manualSession.previewCaseAuto(body.caseId, { ensureMain: body.ensureMain })
-        : await manualSession.previewCase(body.caseId, { ensureMain: body.ensureMain });
+        ? await resolveSession(req, body as any, url).previewCaseAuto(body.caseId, { ensureMain: body.ensureMain })
+        : await resolveSession(req, body as any, url).previewCase(body.caseId, { ensureMain: body.ensureMain });
       return sendJson(res, r.ok ? 200 : 400, r), true;
+    }
+
+    // POST /api/qa/manual/calibrate-payout { spinsPerLevel? }
+    // Spins live at >=2 bet levels, derives + self-validates the per-game payout
+    // model (Layer 2 of payout verification), stores payout-model.json.
+    if (url === "/api/qa/manual/calibrate-payout" && method === "POST") {
+      const body = await asJsonBody<{ spinsPerLevel?: number }>(req);
+      const r = await resolveSession(req, body as any, url).calibratePayoutModel({ spinsPerLevel: body.spinsPerLevel });
+      return sendJson(res, r.ok ? 200 : 400, r), true;
+    }
+
+    // POST /api/qa/manual/probe-pending { onlyKeys?: string[] }
+    // Runtime self-validation gate for AI-discovered UI elements (P1 of AI
+    // auto-discover). Clicks each pending element + observes a signal; on pass
+    // flips to verified + verifiedBy="probe". Replaces most QA Pick work.
+    if (url === "/api/qa/manual/probe-pending" && method === "POST") {
+      const body = await asJsonBody<{ onlyKeys?: string[] }>(req);
+      const r = await resolveSession(req, body as any, url).probePendingElements({ onlyKeys: body.onlyKeys });
+      return sendJson(res, r.ok ? 200 : 400, r), true;
+    }
+
+    // POST /api/qa/manual/deep-discover { maxDepth?, maxAiCalls?, maxStates? }
+    // P2 of AI auto-discover — recursive DFS from main screen via exploreUiGraph
+    // (safe-click whitelist, state-hash dedup, navigate-back). After explore,
+    // auto-probes newly added probeable elements.
+    if (url === "/api/qa/manual/deep-discover" && method === "POST") {
+      const body = await asJsonBody<{ maxDepth?: number; maxAiCalls?: number; maxStates?: number }>(req);
+      const r = await resolveSession(req, body as any, url).deepDiscover(body);
+      return sendJson(res, r.ok ? 200 : 400, r), true;
+    }
+
+    // POST /api/qa/manual/auto-onboard { deepDiscover?, calibrationSpinsPerLevel? }
+    // P3 — one-click chain: deep-discover (P2) + payout-model calibrate. Returns
+    // combined summary so dashboard can show a single "game ready" verdict.
+    if (url === "/api/qa/manual/auto-onboard" && method === "POST") {
+      const body = await asJsonBody<{ deepDiscover?: { maxDepth?: number; maxAiCalls?: number; maxStates?: number }; calibrationSpinsPerLevel?: number }>(req);
+      const r = await resolveSession(req, body as any, url).autoOnboard(body);
+      return sendJson(res, r.ok ? 200 : 400, r), true;
+    }
+
+    // POST /api/qa/manual/verify-registry — manually trigger the registry
+    // verify pass (prune legacy namespaces, re-discover missing children,
+    // mirror partner-pair entries). Standalone hook so QA can re-run verify
+    // without a full auto-onboard, e.g. after adjusting expected-children
+    // rules per game.
+    if (url === "/api/qa/manual/verify-registry" && method === "POST") {
+      const r = await resolveSession(req, null, url).verifyRegistry();
+      return sendJson(res, r.ok ? 200 : 400, r), true;
+    }
+
+    // POST /api/qa/manual/run-all-testcases { continueOnFail? }
+    // Iterate every case in the AI catalog via previewCase. Catalog must
+    // exist (cold-started game). Returns per-case status + aggregate counts.
+    if (url === "/api/qa/manual/run-all-testcases" && method === "POST") {
+      const body = await asJsonBody<{ continueOnFail?: boolean }>(req);
+      const r = await resolveSession(req, body as any, url).runAllTestcases(body);
+      return sendJson(res, r.ok ? 200 : 400, r), true;
+    }
+
+    // GET /api/qa/manual/discovery-snapshots?gameSlug=<slug>
+    // List manifests for every AI-discovered state, newest first. Used by the
+    // dashboard's visual-review panel.
+    if (url.startsWith("/api/qa/manual/discovery-snapshots") && method === "GET") {
+      const u = new URL(url, "http://localhost");
+      const slug = u.searchParams.get("gameSlug");
+      if (!slug) return sendJson(res, 400, { error: "gameSlug required" }), true;
+      const { listDiscoverySnapshots } = await import("../registry/discovery-snapshots.js");
+      const manifests = await listDiscoverySnapshots(slug);
+      return sendJson(res, 200, { ok: true, snapshots: manifests }), true;
+    }
+
+    // GET /api/qa/manual/discovery-snapshot-image?gameSlug=<slug>&stateId=<id>
+    // Serves the raw PNG for a single state snapshot. Browser draws SVG
+    // overlays on top using coords from the manifest.
+    if (url.startsWith("/api/qa/manual/discovery-snapshot-image") && method === "GET") {
+      const u = new URL(url, "http://localhost");
+      const slug = u.searchParams.get("gameSlug");
+      const stateId = u.searchParams.get("stateId");
+      if (!slug || !stateId) return sendJson(res, 400, { error: "gameSlug and stateId required" }), true;
+      const { loadDiscoverySnapshotImage } = await import("../registry/discovery-snapshots.js");
+      const buf = await loadDiscoverySnapshotImage(slug, stateId);
+      if (!buf) return sendJson(res, 404, { error: `no snapshot for ${stateId}` }), true;
+      return sendPng(res, buf), true;
     }
 
     // POST /api/qa/manual/review-failure { caseId, gameSlug?, dryRun? }
@@ -425,7 +542,7 @@ export async function handleManualRoute(
     if (url === "/api/qa/manual/review-failure" && method === "POST") {
       const body = await asJsonBody<{ caseId?: string; gameSlug?: string; dryRun?: boolean; result?: unknown }>(req);
       if (!body.caseId) return sendJson(res, 400, { error: "caseId required" }), true;
-      const r = await manualSession.reviewFailure(
+      const r = await resolveSession(req, body as any, url).reviewFailure(
         body.caseId,
         body.gameSlug,
         body.dryRun === true,
@@ -441,7 +558,7 @@ export async function handleManualRoute(
       if (!body.caseId || !body.patch || !body.review) {
         return sendJson(res, 400, { error: "caseId, patch, review required" }), true;
       }
-      const r = await manualSession.applyReviewPatch(body.caseId, body.gameSlug, body.patch as never, body.review as never);
+      const r = await resolveSession(req, body as any, url).applyReviewPatch(body.caseId, body.gameSlug, body.patch as never, body.review as never);
       return sendJson(res, r.ok ? 200 : 400, r), true;
     }
 
@@ -452,7 +569,7 @@ export async function handleManualRoute(
       const slug = u.searchParams.get("game");
       const caseId = u.searchParams.get("caseId");
       if (!caseId) return sendJson(res, 400, { error: "caseId required" }), true;
-      const r = await manualSession.caseStats(caseId, slug ?? undefined);
+      const r = await resolveSession(req, null, url).caseStats(caseId, slug ?? undefined);
       return sendJson(res, r.ok ? 200 : 400, r), true;
     }
 
@@ -464,7 +581,7 @@ export async function handleManualRoute(
       if (!body.caseId || !body.patch || !body.review) {
         return sendJson(res, 400, { error: "caseId, patch, review required" }), true;
       }
-      const r = await manualSession.autoRerunWithPatches(body.caseId, body.gameSlug, body.patch as never, body.review as never);
+      const r = await resolveSession(req, body as any, url).autoRerunWithPatches(body.caseId, body.gameSlug, body.patch as never, body.review as never);
       return sendJson(res, 200, r), true;
     }
 
@@ -474,11 +591,11 @@ export async function handleManualRoute(
     if (url === "/api/qa/manual/capture-click" && method === "POST") {
       const body = await asJsonBody<{ uiKey?: string; timeoutMs?: number; failIfExists?: boolean }>(req);
       if (!body.uiKey) return sendJson(res, 400, { error: "uiKey required" }), true;
-      const r = await manualSession.captureNextClick(body.uiKey, {
+      const r = await resolveSession(req, body as any, url).captureNextClick(body.uiKey, {
         timeoutMs: body.timeoutMs ?? 30000,
         failIfExists: body.failIfExists === true,
       });
-      return sendJson(res, r.ok ? 200 : 400, { ...r, status: manualSession.status() }), true;
+      return sendJson(res, r.ok ? 200 : 400, { ...r, status: resolveSession(req, body as any, url).status() }), true;
     }
 
     // GET /api/qa/manual/screenshot (with optional ?t=cachebust query string)
@@ -486,7 +603,7 @@ export async function handleManualRoute(
       try {
         const pathname = new URL(url, "http://localhost").pathname;
         if (pathname === "/api/qa/manual/screenshot") {
-          const buf = await manualSession.screenshot();
+          const buf = await resolveSession(req, null, url).screenshot();
           if (!buf) return sendJson(res, 400, { error: "no active session" }), true;
           return sendPng(res, buf), true;
         }
@@ -495,7 +612,17 @@ export async function handleManualRoute(
 
     // GET /api/qa/manual/ocr-regions — load current ocr-regions.json
     if (url === "/api/qa/manual/ocr-regions" && method === "GET") {
-      const r = await manualSession.loadOcrRegions();
+      const r = await resolveSession(req, null, url).loadOcrRegions();
+      return sendJson(res, r.ok ? 200 : 400, r), true;
+    }
+
+    // POST /api/qa/manual/ocr-regions/auto-detect { regions?, minConfidence? }
+    // AI vision picks bboxes for Balance / Bet / Win / FS-counter widgets.
+    // High-confidence picks are saved straight to ocr-regions.json; low-confidence
+    // picks come back as `proposed` for QA to review before committing.
+    if (url === "/api/qa/manual/ocr-regions/auto-detect" && method === "POST") {
+      const body = await asJsonBody<{ regions?: Array<"balanceArea" | "betArea" | "winArea" | "freeSpinCounter">; minConfidence?: number }>(req);
+      const r = await resolveSession(req, body as any, url).autoDetectOcrRegions(body);
       return sendJson(res, r.ok ? 200 : 400, r), true;
     }
 
@@ -509,7 +636,7 @@ export async function handleManualRoute(
       if (typeof body.x !== "number" || typeof body.y !== "number" || typeof body.width !== "number" || typeof body.height !== "number") {
         return sendJson(res, 400, { error: "x/y/width/height (number) required" }), true;
       }
-      const r = await manualSession.saveOcrRegion(
+      const r = await resolveSession(req, body as any, url).saveOcrRegion(
         body.key as typeof allowedKeys[number],
         { x: body.x, y: body.y, width: body.width, height: body.height },
       );
@@ -524,7 +651,7 @@ export async function handleManualRoute(
       if (!key || !(allowedKeys as readonly string[]).includes(key)) {
         return sendJson(res, 400, { error: `key must be one of ${allowedKeys.join("|")}` }), true;
       }
-      const r = await manualSession.removeOcrRegion(key as typeof allowedKeys[number]);
+      const r = await resolveSession(req, null, url).removeOcrRegion(key as typeof allowedKeys[number]);
       return sendJson(res, r.ok ? 200 : 400, r), true;
     }
 
@@ -534,13 +661,13 @@ export async function handleManualRoute(
       if (typeof body.x !== "number" || typeof body.y !== "number" || typeof body.width !== "number" || typeof body.height !== "number") {
         return sendJson(res, 400, { error: "x/y/width/height (number) required" }), true;
       }
-      const r = await manualSession.testOcrRegion({ x: body.x, y: body.y, width: body.width, height: body.height });
+      const r = await resolveSession(req, body as any, url).testOcrRegion({ x: body.x, y: body.y, width: body.width, height: body.height });
       return sendJson(res, r.ok ? 200 : 400, r), true;
     }
 
     // POST /api/qa/manual/stop
     if (url === "/api/qa/manual/stop" && method === "POST") {
-      await manualSession.stop();
+      await resolveSession(req, null, url).stop();
       return sendJson(res, 200, { ok: true }), true;
     }
 

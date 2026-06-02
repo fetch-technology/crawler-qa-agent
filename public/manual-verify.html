@@ -64,8 +64,40 @@
   </style>
 </head>
 <body>
-  <h1>QA · Manual Verify</h1>
+  <!-- Full-page loading overlay shown during long-running session operations
+       (Start, Resume, Stop). Without this users see a frozen page for 5-20s
+       after clicking and assume the dashboard is broken. -->
+  <div id="loadingOverlay" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(8,10,14,0.78);backdrop-filter:blur(3px);align-items:center;justify-content:center;flex-direction:column;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+    <div style="width:54px;height:54px;border:4px solid rgba(99,102,241,0.18);border-top-color:#6366f1;border-radius:50%;animation:la-spin 0.9s linear infinite;"></div>
+    <div id="loadingOverlayLabel" style="margin-top:18px;font-size:14px;color:#e5e7eb;font-weight:600;letter-spacing:0.02em;text-align:center;max-width:520px;line-height:1.45;">Working…</div>
+    <div id="loadingOverlaySub" style="margin-top:6px;font-size:12px;color:#9ca3af;font-family:ui-monospace,SFMono-Regular,monospace;text-align:center;"></div>
+  </div>
+  <style>@keyframes la-spin { to { transform: rotate(360deg); } }</style>
+
+  <div style="display: flex; align-items: center; gap: 14px; margin-bottom: 6px;">
+    <a id="backToOverview" href="/" style="display: none; font-size: 13px; color: #93c5fd; text-decoration: none; padding: 6px 12px; background: #1f2937; border-radius: 4px;">← All Games</a>
+    <h1 style="margin: 0;">QA · Manual Verify <span id="scopedSlugBadge" style="display: none; margin-left: 10px; font-size: 14px; font-family: ui-monospace, monospace; padding: 3px 10px; background: #1e3a8a; color: #dbeafe; border-radius: 12px; font-weight: 500;"></span></h1>
+  </div>
   <p class="sub">Phase 6.1 — Human-in-the-loop UI element verification. AI proposes, QA confirms.</p>
+  <script>
+    // Surface the scoped slug from the URL so QA knows which game's session
+    // they're driving. The full multi-game overview lives at /.
+    (function () {
+      try {
+        const u = new URL(location.href);
+        const fromQuery = u.searchParams.get("gameSlug");
+        const fromPath = (u.pathname.match(/^\/game\/([^\/?#]+)/) || [])[1];
+        const slug = fromQuery || (fromPath ? decodeURIComponent(fromPath) : null);
+        if (slug) {
+          document.getElementById("backToOverview").style.display = "inline-block";
+          const b = document.getElementById("scopedSlugBadge");
+          b.style.display = "inline-block";
+          b.textContent = slug;
+          document.title = `QA · ${slug}`;
+        }
+      } catch {}
+    })();
+  </script>
 
   <!-- Pipeline task banner (visible across page) -->
   <div id="taskBanner" style="display: none; background: linear-gradient(90deg, #2563eb, #1d4ed8); color: #fff; padding: 10px 14px; border-radius: 6px; margin-bottom: 12px; font-size: 13px; box-shadow: 0 2px 8px rgba(37,99,235,0.4);">
@@ -74,8 +106,11 @@
     <span id="taskBannerElapsed" style="float: right; font-variant-numeric: tabular-nums;"></span>
   </div>
 
-  <!-- Registered games (resume previous work) -->
-  <div class="panel">
+  <!-- Registered games (resume previous work). When this page is scoped to
+       a single game (?gameSlug=…), only that game's row is rendered — the
+       cross-game overview lives at /. Buttons (Start, Generate Cases, Run
+       Stats, …) stay in-row so they remain clickable for the active game. -->
+  <div class="panel" id="gamesPanel">
     <h2>Registered Games · Resume Previous Work</h2>
     <div id="gamesList"><p class="empty">Loading…</p></div>
   </div>
@@ -86,8 +121,8 @@
     <div class="row">
       <label style="flex: 0 0 auto;">URL:</label>
       <input id="url" type="text" placeholder="https://pp.dev.revenge-games.com/vs20rnriches/?t=..." style="flex: 1;" />
-      <label style="flex: 0 0 auto;"><input id="autoDiscover" type="checkbox" checked> Auto-discover AI</label>
-      <button id="btnStart">Start Session</button>
+      <label style="flex: 0 0 auto;" title="If unchecked (default), Start only launches Chrome + loads the URL. Use Deep Discover (AI) or Auto-Onboard to run AI vision."><input id="autoDiscover" type="checkbox"> Auto-discover AI at Start</label>
+      <button id="btnStart" title="Launch Playwright Chrome + load the game URL. Discovery is a separate explicit step.">Start Session</button>
       <button id="btnRefresh" class="gray" disabled>Refresh State</button>
     </div>
     <div id="sessionInfo" style="margin-top: 8px; font-size: 12px; color: #8b939c;">Not started.</div>
@@ -98,12 +133,12 @@
     <h2>Registry · Verify Elements & Discover</h2>
     <p style="color: #8b939c; font-size: 12px; margin: 0 0 8px;">
       Per-row <code>[Discover]</code> button: backend clicks that element → waits popup → AI captures sub-state children → adds nested under parent.
-      For ad-hoc state (popup already open from another path): type label + click "Discover Current Screen" below.
+      For full-tree exploration use <strong>Deep Discover (AI)</strong> or <strong>Auto-Onboard</strong>.
     </p>
     <div class="row" style="margin-bottom: 10px;">
-      <span style="color: #8b939c; font-size: 12px;">Ad-hoc state label:</span>
-      <input id="newStateLabel" type="text" placeholder="custom_popup" style="width: 200px; font-size: 11px;" />
-      <button id="btnDiscoverState" disabled class="gray" style="font-size: 11px;">Discover Current Screen</button>
+      <button id="btnDeepDiscover" disabled style="background: #6366f1; font-size: 11px;" title="Recursive AI exploration: open every safe button, hash each new state, discover its elements, auto-probe. Bounded by depth/AI-calls/states.">Deep Discover (AI)</button>
+      <button id="btnProbePending" disabled style="background: #7c5cff; font-size: 11px;" title="Auto-verify pending elements by clicking each + observing the expected signal (network/popup). Replaces most QA Pick work.">Probe Pending</button>
+      <button id="btnAutoOnboard" disabled style="background: #16a34a; font-size: 11px;" title="One-click: deep-discover the UI graph + auto-probe + calibrate the payout model. ~5–10 minutes per game.">Auto-Onboard</button>
     </div>
     <div id="elementsContainer">
       <p class="empty">No active session.</p>
@@ -117,7 +152,7 @@
     <div class="row">
       <label>uiKey:</label>
       <input id="newKey" type="text" placeholder="e.g. autoplay_popup__autospins-10" style="width: 280px;" />
-      <button id="btnPickNew" style="background: #d97706;" disabled title="Type a uiKey then click here, then click the actual button in Playwright Chrome window">Pick in Game</button>
+      <button id="btnPickNew" style="background: #6366f1;" disabled title="Type a uiKey then click here — a fresh screenshot opens; click the element's center on it.">Pick on Screenshot</button>
       <span style="color: #5e6772; font-size: 11px;">or fill manually:</span>
       <label>x:</label> <input id="newX" type="number" style="width: 80px;" />
       <label>y:</label> <input id="newY" type="number" style="width: 80px;" />
@@ -143,6 +178,7 @@
     <div id="ocrDrawBanner" style="display:none;background:linear-gradient(90deg,#d97706,#b45309);color:#fff;padding:10px 14px;border-radius:6px;margin-bottom:8px;font-size:13px;font-weight:600;box-shadow:0 2px 8px rgba(217,119,6,0.4);"></div>
     <div class="row" style="margin-bottom: 8px;">
       <button id="btnOcrRefreshShot" class="gray" disabled>🔄 Refresh screenshot</button>
+      <button id="btnOcrAutoDetect" style="background:#7c5cff;color:#fff;font-weight:600;" disabled title="AI vision picks Balance / Bet / Win / Free-Spin bboxes from the current screenshot. High-confidence picks save automatically; low-confidence picks need QA review.">🤖 AI Auto-Detect</button>
       <button id="btnOcrCancelDraw" style="display:none;background:#5e6772;font-size:11px;padding:4px 10px;">✕ Cancel drawing</button>
       <span id="ocrDrawHint" style="color: #8b939c; font-size: 12px;">(no session)</span>
     </div>
@@ -152,6 +188,21 @@
       <canvas id="ocrShotOverlay" style="display:none;position:absolute;left:0;top:0;pointer-events:none;"></canvas>
     </div>
     <div id="ocrTestResult" style="display:none;margin-top:8px;padding:8px 12px;background:#161a22;border-radius:4px;font-size:12px;font-family:ui-monospace,monospace;"></div>
+  </div>
+
+  <!-- Discovery Snapshots panel — visual review of what AI detected per state -->
+  <div class="panel">
+    <h2>
+      Discovery Snapshots
+      <span style="font-weight:normal;color:#8b939c;font-size:12px;">— what AI saw at each level</span>
+      <button id="btnRefreshSnapshots" class="gray" style="float:right;font-size:11px;padding:4px 8px;">Refresh</button>
+    </h2>
+    <p style="color:#8b939c;font-size:12px;margin:0 0 8px;">
+      Saved automatically when you run per-row Discover / Deep Discover / Auto-Onboard. Markers are color-coded by current registry status (green = verified, yellow = pending, red = rejected). 🤖 = probe-verified, 👤 = QA-verified. Click a row to view.
+    </p>
+    <div id="discoverResult" style="display:none;margin-bottom:10px;padding:10px 12px;background:#0b0e13;border:1px solid #232a35;border-radius:4px;font-size:12px;"></div>
+    <div id="snapshotsList"><p class="empty" style="margin:0;">No active session.</p></div>
+    <div id="snapshotViewer" style="display:none;margin-top:12px;padding:12px;background:#0b0e13;border:1px solid #232a35;border-radius:4px;"></div>
   </div>
 
   <!-- Test Cases panel -->
@@ -164,11 +215,13 @@
       <button id="btnLoadCases" class="gray" style="float: right; font-size: 11px; padding: 4px 8px; margin-left: 6px;">Load Cases</button>
       <button id="btnRunUnrun" style="background: #1f9d57; float: right; font-size: 11px; padding: 4px 8px; margin-left: 6px;" title="Run only cases with NO pass/fail verdict yet (unrun or skipped) — uses the active session">Run Unrun</button>
       <button id="btnRunAllCases" style="background: #29b673; float: right; font-size: 11px; padding: 4px 8px;" title="Run ALL runnable cases one by one — uses the active session">Run All cases</button>
+      <button id="btnCalibratePayout" style="background: #7c5cff; float: right; font-size: 11px; padding: 4px 8px; margin-left: 6px;" title="Spin at >=2 bet levels to derive + self-validate the payout model (used by the payout-integrity case). One-time per game.">Calibrate Payout</button>
     </h2>
     <p style="color: #8b939c; font-size: 12px; margin: 0 0 8px;">
       Test cases are generated by <code>qa:cold</code> (AI catalog). Each case has translated actions (click sequence) referencing verified registry coords.
       <strong>Preview</strong> executes one case's actions on the live Playwright browser so QA can visually verify each step.
     </p>
+    <div id="payoutModelStatus" style="display: none; background: #1f1a33; border: 1px solid #3a2f63; padding: 8px 12px; border-radius: 4px; margin-bottom: 10px; font-size: 12px;"></div>
     <div id="runAllBanner" style="display: none; background: #2a3852; padding: 8px 12px; border-radius: 4px; margin-bottom: 10px; font-size: 12px;"></div>
     <div id="runProgressTable" style="display: none; margin-bottom: 10px; max-height: 340px; overflow: auto; border: 1px solid #232a35; border-radius: 4px;"></div>
     <div class="row" style="background: #161a22; padding: 8px 12px; border-radius: 4px; margin-bottom: 8px; font-size: 12px; gap: 12px;">
@@ -209,15 +262,35 @@
       setTimeout(() => t.classList.remove("show"), 3500);
     }
 
+    // Detail-page game scope. URL forms accepted:
+    //   /game/:slug                ← preferred (server rewrites to manual-verify.html?gameSlug=…)
+    //   /manual-verify.html?gameSlug=…
+    // Falls back to null → behaves as legacy single-game dashboard (LRU on
+    // server side). Used by api() to auto-inject the x-game-slug header so
+    // every per-game route resolves to the right ManualSessionManager.
+    const SCOPED_GAME_SLUG = (() => {
+      try {
+        const u = new URL(location.href);
+        const fromQuery = u.searchParams.get("gameSlug");
+        if (fromQuery) return fromQuery;
+        // /game/:slug path form
+        const m = u.pathname.match(/^\/game\/([^\/?#]+)/);
+        if (m) return decodeURIComponent(m[1]);
+      } catch {}
+      return null;
+    })();
+
     async function api(path, opts = {}) {
       const method = opts.method || "GET";
       const tag = `[api] ${method} ${path}`;
       console.log(tag, opts.body || "");
       appendLog(`${tag} ${opts.body ? JSON.stringify(opts.body).slice(0, 200) : ""}`);
       try {
+        const headers = opts.body ? { "content-type": "application/json" } : {};
+        if (SCOPED_GAME_SLUG) headers["x-game-slug"] = SCOPED_GAME_SLUG;
         const r = await fetch(path, {
           method,
-          headers: opts.body ? { "content-type": "application/json" } : undefined,
+          headers: Object.keys(headers).length ? headers : undefined,
           body: opts.body ? JSON.stringify(opts.body) : undefined,
         });
         const body = await r.json().catch(() => ({}));
@@ -240,15 +313,39 @@
       if (el.textContent.length > 10000) el.textContent = el.textContent.slice(0, 10000);
     }
 
+    let onboardPollTimer = null;
+    function startOnboardPolling() {
+      if (onboardPollTimer) return;
+      onboardPollTimer = setInterval(() => { refresh().catch(() => {}); }, 10000);
+    }
+    function stopOnboardPolling() {
+      if (!onboardPollTimer) return;
+      clearInterval(onboardPollTimer);
+      onboardPollTimer = null;
+    }
+
     function renderStatus(status) {
+      const prevOnboarding = !!currentStatus?.autoOnboardInProgress;
       currentStatus = status;
       const active = status.active;
       $("#btnRefresh").disabled = !active;
       $("#btnAdd").disabled = !active;
       $("#btnPickNew").disabled = !active;
+      $("#btnProbePending").disabled = !active;
+      $("#btnDeepDiscover").disabled = !active;
+      const onboarding = !!status.autoOnboardInProgress;
+      const btnAuto = $("#btnAutoOnboard");
+      btnAuto.disabled = !active || onboarding;
+      btnAuto.textContent = onboarding ? "Onboarding…" : "Auto-Onboard";
+      if (onboarding) {
+        startOnboardPolling();
+      } else {
+        stopOnboardPolling();
+        if (prevOnboarding) toast("Auto-Onboard finished");
+      }
       $("#btnStart").disabled = active;
-      $("#btnDiscoverState").disabled = !active;
       $("#btnOcrRefreshShot").disabled = !active;
+      $("#btnOcrAutoDetect").disabled = !active;
 
       if (!active) {
         sessionInfo.textContent = "Not started.";
@@ -283,19 +380,34 @@
         };
 
         // Build parent → children map. Root nodes have parent "".
+        // Track "orphan parents": namespace prefixes that aren't a registered
+        // key AND aren't in the trigger map (typical for new states discovered
+        // by Deep Discover with AI-assigned labels like "menu_popup", "buy_modal").
+        // Without hoisting these to roots, their children would never render.
         const childrenMap = new Map();
+        const orphanParents = new Set();
         for (const k of keys) {
           const i = k.lastIndexOf("__");
           let parent = i === -1 ? "" : k.slice(0, i);
-          // If parent path doesn't exist in registry, try reverse-mapping the
-          // top-level namespace to a trigger key.
           if (parent && !status.registry[parent]) {
             const topNamespace = parent.split("__")[0];
             const trigger = NAMESPACE_TO_TRIGGER[topNamespace];
-            if (trigger && status.registry[trigger]) parent = trigger;
+            if (trigger && status.registry[trigger]) {
+              parent = trigger;
+            } else {
+              // Orphan — render as a synthetic header at the root level.
+              orphanParents.add(parent);
+            }
           }
           if (!childrenMap.has(parent)) childrenMap.set(parent, []);
           childrenMap.get(parent).push(k);
+        }
+        // Hoist each orphan parent to the roots list. renderTreeNode tolerates
+        // a missing registry entry (shows '—' for coord/strategy) and treats it
+        // as a folder of its children.
+        if (orphanParents.size > 0) {
+          if (!childrenMap.has("")) childrenMap.set("", []);
+          for (const p of orphanParents) childrenMap.get("").push(p);
         }
 
         // Render root + recursive children. expandedSet persists across renders.
@@ -323,15 +435,25 @@
       const autoAdded = Array.isArray(status.discoveryAutoAdded) ? status.discoveryAutoAdded : [];
 
       let html = "";
-      if (missing.length > 0) {
+      const registryEmpty = Object.keys(registry).length === 0;
+      if (registryEmpty && expected.length > 0) {
+        // Registry has no entries at all — Start session was run without
+        // auto-discover. This is NOT a "missing elements" failure, just a
+        // "discovery hasn't run yet" state. Steer the QA toward the right
+        // button instead of flashing a red alarm.
+        html += `<div style="margin-top:12px;padding:8px 12px;background:#13202c;border:1px solid #1f3a55;border-radius:6px;color:#9bc6e0;font-size:12px;">
+          <div style="font-weight:600;margin-bottom:4px;">No UI discovery run yet</div>
+          <div style="color:#8b939c;font-size:11px;">Registry is empty. Click <strong>Auto-Onboard</strong> (recommended — runs deep discover + payout calibrate) or <strong>Deep Discover (AI)</strong> to populate. Expected canonical elements (${expected.length}): ${expected.map((k) => `<code>${escapeHtml(k)}</code>`).join(", ")}.</div>
+        </div>`;
+      } else if (missing.length > 0) {
         const rows = missing.map((k) => `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid #1a1f2a;">
           <code style="flex:1;color:#f0a39e;">${escapeHtml(k)}</code>
           <button class="purple" style="font-size:11px;padding:3px 8px;" onclick="doAiRecover('${k}')" title="AI vision searches the current screen for this element">AI Recover</button>
-          <button style="background:#d97706;font-size:11px;padding:3px 8px;" onclick="doCaptureClick('${k}')" title="Click the actual button in the Playwright window to capture its coord">Pick in Game</button>
+          <button style="background:#6366f1;font-size:11px;padding:3px 8px;" onclick="doPickScreenshot('${k}')" title="Pick coord by clicking on a fresh screenshot in this dashboard">Pick</button>
         </div>`).join("");
         html += `<div style="margin-top:12px;padding:8px 12px;background:#241318;border:1px solid #3a1f26;border-radius:6px;">
           <div style="color:#f0a39e;font-weight:600;font-size:12px;margin-bottom:4px;">⚠ Missing expected elements (${missing.length}/${expected.length})</div>
-          <div style="color:#8b939c;font-size:11px;margin-bottom:6px;">These elements were expected but not detected. Recover via AI or pick manually.</div>
+          <div style="color:#8b939c;font-size:11px;margin-bottom:6px;">Discovery ran but didn't find these. Recover via AI or pick manually.</div>
           ${rows}
         </div>`;
       } else if (expected.length > 0) {
@@ -345,7 +467,7 @@
             <span style="color:#5e6772;font-size:10px;">(${s.x},${s.y}) · conf ${(s.confidence ?? 0).toFixed(2)}</span>
             ${s.note ? `<div style="color:#8b939c;font-size:10px;">${escapeHtml(s.note)}</div>` : ""}
           </div>
-          <button style="background:#d97706;font-size:11px;padding:3px 8px;" onclick="doCaptureClick('${escapeHtml(s.key)}')" title="Re-pick this button in the Playwright window if the auto-detected coord is wrong">Re-pick</button>
+          <button style="background:#6366f1;font-size:11px;padding:3px 8px;" onclick="doPickScreenshot('${escapeHtml(s.key)}')" title="Re-pick on a fresh dashboard screenshot">Re-pick</button>
         </div>`).join("");
         html += `<div style="margin-top:10px;padding:8px 12px;background:#13202b;border:1px solid #1f3245;border-radius:6px;">
           <div style="color:#7da3d8;font-weight:600;font-size:12px;margin-bottom:4px;">🤖 AI auto-added extras (${autoAdded.length})</div>
@@ -368,6 +490,13 @@
       const hasChildren = children.length > 0;
       const isExpanded = expandedSet.has(key);
       const vs = el?.status || "pending";
+      const verifiedBy = el?.verifiedBy;
+      const probeSignal = el?.probeSignal;
+      const verifierTag = verifiedBy === "probe"
+        ? `<span title="Auto-verified by runtime probe — signal: ${probeSignal || 'observed'}" style="font-size: 10px; color: #b39cff; margin-left: 4px;">🤖 probe</span>`
+        : verifiedBy === "QA"
+        ? `<span title="Verified by QA" style="font-size: 10px; color: #29b673; margin-left: 4px;">👤 QA</span>`
+        : "";
       const toggleBtn = hasChildren
         ? `<button class="tree-toggle" onclick="toggleNode('${key}')">${isExpanded ? '▼' : '▶'}</button>`
         : `<button class="tree-toggle invisible">·</button>`;
@@ -383,12 +512,12 @@
         <span class="num">${el?.y ?? '—'}</span>
         <span style="font-size: 11px; color: #8b939c;">${el?.strategy || ''}</span>
         <span class="num">${(el?.confidence ?? 0).toFixed(2)}</span>
-        <span><span class="pill ${vs}">${vs}</span></span>
+        <span><span class="pill ${vs}">${vs}</span>${verifierTag}</span>
         <span class="tree-actions">
           <button onclick="doClick('${key}')">Test</button>
           <button class="green" onclick="doConfirm('${key}')">✓ Verify</button>
           ${hasChildren ? `<button class="green" title="Verify ALL ${children.length} child element(s) under ${key}" onclick="doConfirmChildren('${key}')">✓ All (${children.length})</button>` : ""}
-          <button style="background: #d97706;" onclick="doCaptureClick('${key}')">Pick</button>
+          <button style="background: #6366f1;" onclick="doPickScreenshot('${key}')" title="Pick by clicking on a fresh screenshot in this dashboard">Pick</button>
           <button class="purple" onclick="doDiscoverFromButton('${key}')">Discover</button>
           <button class="green" title="Add child element under this key (prefills '${key}__' in form)" onclick="doAddChild('${key}')">+</button>
           <button class="gray" title="Copy key to Add Element form (edit & repick)" onclick="doCopyKey('${key}')">⧉</button>
@@ -415,7 +544,109 @@
       await refreshGames();
       // Auto-load cases for the active game (page reload while session live).
       if (status) await autoLoadCasesForActive(status);
+      await refreshDiscoverySnapshots();
     }
+
+    async function refreshDiscoverySnapshots() {
+      const slug = currentStatus?.gameSlug;
+      const list = $("#snapshotsList");
+      if (!slug) { list.innerHTML = '<p class="empty" style="margin:0;">No active session.</p>'; return; }
+      let r;
+      try {
+        r = await fetch(`/api/qa/manual/discovery-snapshots?gameSlug=${encodeURIComponent(slug)}`).then((x) => x.json());
+      } catch { list.innerHTML = '<p class="empty" style="margin:0;">Failed to load snapshots.</p>'; return; }
+      if (!r?.ok || !Array.isArray(r.snapshots) || r.snapshots.length === 0) {
+        list.innerHTML = '<p class="empty" style="margin:0;">No snapshots yet. Run Discover / Deep Discover / Auto-Onboard.</p>';
+        return;
+      }
+      const reg = currentStatus?.registry || {};
+      const rows = r.snapshots.map((s) => {
+        let v = 0, p = 0, miss = 0;
+        for (const e of s.elements) {
+          const cur = reg[e.key];
+          if (!cur) { miss++; continue; }
+          if (cur.status === "verified") v++;
+          else p++;
+        }
+        const time = new Date(s.capturedAt).toLocaleString();
+        return `<div class="snapshot-row" style="display:grid;grid-template-columns:1fr 1.2fr 1.5fr auto;gap:8px;align-items:center;padding:6px 8px;border-top:1px solid #1f2530;font-size:12px;">
+          <span><code>${s.stateId}</code></span>
+          <span style="color:#8b939c;">${s.source} · ${s.elementCount} (${v}✓ ${p}… ${miss > 0 ? `${miss} missing` : ''})</span>
+          <span style="color:#8b939c;font-family:ui-monospace,monospace;">${time}</span>
+          <button onclick="viewDiscoverySnapshot('${s.stateId.replace(/'/g, "\\'")}')">View</button>
+        </div>`;
+      }).join("");
+      list.innerHTML = rows;
+    }
+
+    function statusColorFor(elInReg) {
+      const s = elInReg?.status;
+      if (s === "verified") return "#29b673";
+      if (s === "rejected") return "#d9534f";
+      return "#d9a441"; // pending / missing
+    }
+
+    window.viewDiscoverySnapshot = async function(stateId) {
+      const slug = currentStatus?.gameSlug;
+      if (!slug) return toast("No active session", true);
+      let listResp;
+      try {
+        listResp = await fetch(`/api/qa/manual/discovery-snapshots?gameSlug=${encodeURIComponent(slug)}`).then((r) => r.json());
+      } catch { return toast("Failed to load snapshot list", true); }
+      const manifest = (listResp.snapshots || []).find((s) => s.stateId === stateId);
+      if (!manifest) return toast("Snapshot not found", true);
+      const imgUrl = `/api/qa/manual/discovery-snapshot-image?gameSlug=${encodeURIComponent(slug)}&stateId=${encodeURIComponent(stateId)}`;
+      const viewer = $("#snapshotViewer");
+      viewer.style.display = "block";
+      viewer.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:12px;">
+          <strong>State: <code>${stateId}</code></strong>
+          <span style="font-size:11px;color:#8b939c;">${manifest.elementCount} elements · ${manifest.source} · ${new Date(manifest.capturedAt).toLocaleString()}</span>
+          <button class="gray" id="btnCloseSnapshot" style="font-size:11px;">Close</button>
+        </div>
+        <div id="snapHolder" style="position:relative;display:inline-block;max-width:100%;overflow:auto;border:1px solid #232a35;border-radius:4px;">
+          <img id="snapImg" src="${imgUrl}" style="display:block;max-width:100%;" />
+          <svg id="snapSvg" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;" preserveAspectRatio="xMidYMid meet"></svg>
+        </div>
+        <div style="margin-top:6px;font-size:11px;color:#8b939c;">Markers — green=verified · yellow=pending/missing · red=rejected · 🤖 probe · 👤 QA. Hover marker for details.</div>
+      `;
+      $("#btnCloseSnapshot").onclick = () => { viewer.style.display = "none"; };
+      const img = $("#snapImg");
+      img.onload = () => {
+        const svg = $("#snapSvg");
+        svg.setAttribute("viewBox", `0 0 ${img.naturalWidth} ${img.naturalHeight}`);
+        const reg = currentStatus?.registry || {};
+        // Prefer REGISTRY coord (source of truth — may have been corrected by
+        // QA Pick) over manifest coord (initial AI proposal). Falls back to
+        // manifest when element not in registry.
+        svg.innerHTML = manifest.elements.map((e) => {
+          const cur = reg[e.key];
+          const cx = (cur && Number.isFinite(cur.x)) ? cur.x : e.x;
+          const cy = (cur && Number.isFinite(cur.y)) ? cur.y : e.y;
+          const moved = cur && (Math.round(cur.x) !== Math.round(e.x) || Math.round(cur.y) !== Math.round(e.y));
+          const color = statusColorFor(cur);
+          const verifiedBy = cur?.verifiedBy;
+          const tag = verifiedBy === "probe" ? "🤖" : verifiedBy === "QA" ? "👤" : "";
+          const short = e.key.split("__").pop();
+          const box = 44, half = box / 2;
+          const tooltip = `${e.key} (${cx},${cy})${moved ? ` [moved from AI (${e.x},${e.y})]` : ""}\nstatus=${cur?.status || 'missing'}${verifiedBy ? ' by ' + verifiedBy : ''}${cur?.probeSignal ? '\nsignal=' + cur.probeSignal : ''}\nClick marker → re-pick from screenshot.`;
+          return `<g pointer-events="visible" style="cursor:pointer;" onclick="doPickScreenshot('${e.key.replace(/'/g, "\\'")}')">
+            <title>${tooltip.replace(/</g, '&lt;')}</title>
+            <rect x="${cx - half}" y="${cy - half}" width="${box}" height="${box}" fill="none" stroke="${color}" stroke-width="3" rx="6" />
+            <circle cx="${cx}" cy="${cy}" r="4" fill="${color}" />
+            <text x="${cx + half + 6}" y="${cy - half + 4}" font-size="16" fill="${color}" stroke="black" stroke-width="0.7" paint-order="stroke" font-weight="600">${tag}${short}</text>
+            ${moved ? `<line x1="${e.x}" y1="${e.y}" x2="${cx}" y2="${cy}" stroke="${color}" stroke-width="1" stroke-dasharray="3,3" opacity="0.6" />` : ""}
+          </g>`;
+        }).join("");
+        // Re-enable pointer-events on the SVG (parent had pointer-events:none).
+        svg.style.pointerEvents = "auto";
+      };
+    };
+
+    document.addEventListener("DOMContentLoaded", () => {
+      const btn = document.getElementById("btnRefreshSnapshots");
+      if (btn) btn.onclick = refreshDiscoverySnapshots;
+    });
 
     async function refreshGames() {
       try {
@@ -428,6 +659,12 @@
 
     function renderGames(games) {
       const list = $("#gamesList");
+      // When this detail page is scoped to a single game (?gameSlug=…), only
+      // render that game's row. The full cross-game overview lives at /
+      // (public/index.html); duplicating it here just adds noise.
+      if (SCOPED_GAME_SLUG) {
+        games = (games || []).filter((g) => g.gameSlug === SCOPED_GAME_SLUG);
+      }
       if (!games || games.length === 0) {
         list.innerHTML = `<p class="empty">No registered games yet — start a new session below.</p>`;
         return;
@@ -453,7 +690,7 @@
           // Open (when idle) OR Stop & Save (when this row's session is active).
           const openOrStop = isActive
             ? `<button class="red" onclick="doStopSession()" title="Stop & save the active session for this game">Stop &amp; Save</button>`
-            : `<button onclick="doResume('${g.gameSlug}')">Open</button>`;
+            : `<button onclick="doResume('${g.gameSlug}')">Start session</button>`;
           return `<tr ${rowStyle}>
           <td>${nameCell}</td>
           <td>
@@ -1172,6 +1409,44 @@
       const slug = currentStatus?.gameSlug ?? window.__lastCasesSlug;
       if (!slug) return toast("Open a game session first (Open on a game row)", true);
       doRunCases(slug, "unrun");
+    };
+
+    function renderPayoutModelStatus(r) {
+      const el = $("#payoutModelStatus");
+      if (!el) return;
+      if (!r || r.ok === false) {
+        el.style.display = "block";
+        el.innerHTML = `<strong>Payout model:</strong> calibration failed — ${r?.reason || "unknown"}`;
+        return;
+      }
+      const badge = r.trusted
+        ? `<span style="color:#29b673;font-weight:600;">TRUSTED</span>`
+        : `<span style="color:#d9a441;font-weight:600;">NOT trusted (Layer-2 verify stays off)</span>`;
+      el.style.display = "block";
+      el.innerHTML = `<strong>Payout model:</strong> ${badge} · `
+        + `reproduced ${r.combosMatched}/${r.combosTotal} combos · `
+        + `coin levels: [${(r.coinLevels || []).join(", ")}] · `
+        + `paytable agreement: ${r.paytableAgreement ? "yes" : "no"} · `
+        + `symbols modeled: ${r.symbolsModeled}`
+        + ((r.notes && r.notes.length) ? `<br><span style="color:#8b939c;">${r.notes.join(" · ")}</span>` : "");
+    }
+
+    $("#btnCalibratePayout").onclick = async () => {
+      const slug = currentStatus?.gameSlug;
+      if (!slug) return toast("Open a game session first (Open on a game row)", true);
+      if (!confirm("Calibrate payout model? This spins ~50 times at 2 bet levels (a couple of minutes).")) return;
+      const btn = $("#btnCalibratePayout");
+      const prev = btn.textContent;
+      btn.disabled = true; btn.textContent = "Calibrating…";
+      try {
+        const r = await api("/api/qa/manual/calibrate-payout", { method: "POST", body: {} });
+        renderPayoutModelStatus(r);
+        toast(r.ok ? (r.trusted ? "Payout model calibrated (trusted)" : "Calibrated, but not trusted — see status") : ("Calibration failed: " + (r.reason || "")), !r.ok || !r.trusted);
+      } catch (e) {
+        toast("Calibration error: " + e, true);
+      } finally {
+        btn.disabled = false; btn.textContent = prev;
+      }
     };
 
     window.doLoadCases = (gameSlug) => loadCasesForSlug(gameSlug);
@@ -2236,7 +2511,23 @@
       } catch (err) { toast(err.message, true); }
     };
 
+    // Show/hide full-page loading overlay. Use during operations that
+    // block the dashboard for >2s (Start, Resume, Stop, Deep Discover) so
+    // user knows the system is working, not frozen.
+    function showLoading(label, sub) {
+      const ov = document.getElementById("loadingOverlay");
+      if (!ov) return;
+      document.getElementById("loadingOverlayLabel").textContent = label || "Working…";
+      document.getElementById("loadingOverlaySub").textContent = sub || "";
+      ov.style.display = "flex";
+    }
+    function hideLoading() {
+      const ov = document.getElementById("loadingOverlay");
+      if (ov) ov.style.display = "none";
+    }
+
     window.doResume = async (gameSlug) => {
+      showLoading(`Resuming ${gameSlug}…`, "Launching Playwright Chrome and attaching to the saved registry. This usually takes 5–15s.");
       try {
         const s = await api("/api/qa/manual/resume", { method: "POST", body: { gameSlug } });
         renderStatus(s);
@@ -2244,6 +2535,7 @@
         await autoLoadCasesForActive(s);
         toast(`Resumed ${gameSlug}`);
       } catch (err) { toast(err.message, true); }
+      finally { hideLoading(); }
     };
 
     // Delete a game + ALL related fixtures. Destructive → confirm dialog.
@@ -2280,6 +2572,7 @@
       if (!url) return toast("URL required", true);
       $("#btnStart").disabled = true;
       sessionInfo.textContent = "Starting (Playwright launching + AI discovery)…";
+      showLoading("Starting session…", "Launching Playwright Chrome, loading the game URL, dismissing pre-game popups. May take 10–30s.");
       try {
         const s = await api("/api/qa/manual/start", {
           method: "POST",
@@ -2292,54 +2585,128 @@
       } catch (err) {
         toast(err.message, true);
         $("#btnStart").disabled = false;
-      }
+      } finally { hideLoading(); }
     };
 
     window.doStopSession = async () => {
+      showLoading("Stopping session…", "Closing Playwright browser and persisting the registry.");
       try {
         await api("/api/qa/manual/stop", { method: "POST" });
         toast("Session stopped");
         await refresh();
       } catch (err) { toast(err.message, true); }
+      finally { hideLoading(); }
     };
 
     $("#btnRefresh").onclick = refresh;
 
-    $("#btnDiscoverState").onclick = async () => {
-      const stateLabel = $("#newStateLabel").value.trim();
-      if (!stateLabel) return toast("State label required (e.g. buy_feature_popup)", true);
-      toast(`AI discovering "${stateLabel}"…`);
+    $("#btnProbePending").onclick = async () => {
+      const btn = $("#btnProbePending");
+      const prev = btn.textContent;
+      btn.disabled = true; btn.textContent = "Probing…";
+      toast("Probing pending elements (clicks each, observes signal)…");
       try {
-        const r = await api("/api/qa/manual/discover-state", {
-          method: "POST", body: { stateLabel },
-        });
+        const r = await api("/api/qa/manual/probe-pending", { method: "POST", body: {} });
         if (r.ok) {
-          renderStatus(r.status);
-          toast(`Added ${r.addedKeys.length} elements under "${stateLabel}"`);
-          $("#newStateLabel").value = "";
+          await refresh();
+          toast(`Probe: ${r.verified} verified · ${r.failed} failed · ${r.skipped} skipped (of ${r.probed} attempted)`, r.verified === 0 && r.failed > 0);
         } else {
-          toast(`Discover failed: ${r.reason}`, true);
+          toast(`Probe failed: ${r.reason}`, true);
         }
       } catch (err) { toast(err.message, true); }
+      finally { btn.disabled = false; btn.textContent = prev; }
+    };
+
+    function renderDiscoverResult(label, r) {
+      const el = $("#discoverResult");
+      if (!el) return;
+      el.style.display = "block";
+      if (!r) { el.innerHTML = `<strong>${label}:</strong> no response`; return; }
+      const okBadge = r.ok
+        ? `<span style="color:#29b673;font-weight:600;">OK</span>`
+        : `<span style="color:#d9534f;font-weight:600;">FAILED</span>`;
+      const lines = [`<strong>${label}:</strong> ${okBadge}${r.reason ? ` — <em style="color:#d9a441;">${r.reason}</em>` : ""}`];
+      if (typeof r.statesDiscovered === "number") {
+        lines.push(`states discovered: <strong>${r.statesDiscovered}</strong> · transitions: ${r.transitionsRecorded ?? 0} · AI calls: ${r.aiCallsUsed ?? 0} · elapsed: ${Math.round((r.elapsedMs || 0) / 1000)}s`);
+      }
+      if (Array.isArray(r.addedKeys)) {
+        lines.push(`new elements added: <strong>${r.addedKeys.length}</strong>` + (r.addedKeys.length > 0 ? ` — ${r.addedKeys.slice(0, 10).map((k) => `<code>${k}</code>`).join(", ")}${r.addedKeys.length > 10 ? "…" : ""}` : ""));
+      }
+      if (Array.isArray(r.cropVerify) && r.cropVerify.length > 0) {
+        const cv = r.cropVerify;
+        const converged = cv.filter((c) => c.ok).length;
+        const summary = cv.map((c) => {
+          const tag = c.ok ? "✓" : c.x != null ? "~" : "✗";
+          return `<code>${c.key}</code>${tag}<span style="color:#8b939c;font-size:10px;">(${c.attempts}×, conf ${c.confidence.toFixed(2)})</span>`;
+        }).join(" · ");
+        lines.push(`<strong>crop-verify seed:</strong> ${converged}/${cv.length} converged — ${summary}`);
+      }
+      if (r.probe) {
+        lines.push(`probe: ${r.probe.verified} verified · ${r.probe.failed} failed · ${r.probe.skipped} skipped (of ${r.probe.probed} attempted)`);
+      }
+      if (r.safetyReport) {
+        const sr = r.safetyReport;
+        const skippedSummary = sr.skipped.slice(0, 8).map((s) => `<code>${s.key}</code> (${s.reason})`).join(", ") + (sr.skipped.length > 8 ? ` …+${sr.skipped.length - 8}` : "");
+        lines.push(`safe-to-click: <strong>${sr.clickable.length}</strong> (${sr.clickable.map((k) => `<code>${k}</code>`).join(", ") || "<em>none</em>"})`);
+        if (sr.skipped.length > 0) lines.push(`<span style="color:#8b939c;">skipped: ${skippedSummary}</span>`);
+      }
+      if (r.warnings && r.warnings.length) {
+        lines.push(`<span style="color:#d9a441;">warnings (${r.warnings.length}):</span><br>${r.warnings.slice(0, 6).map((w) => `&nbsp;&nbsp;• ${w}`).join("<br>")}${r.warnings.length > 6 ? `<br>&nbsp;&nbsp;… +${r.warnings.length - 6} more` : ""}`);
+      }
+      el.innerHTML = lines.join("<br>");
+    }
+
+    $("#btnDeepDiscover").onclick = async () => {
+      if (!confirm("Deep Discover spends AI calls (~25 max) and may take 2–5 min. It clicks SAFE elements only (no spin/buy confirm). Continue?")) return;
+      const btn = $("#btnDeepDiscover");
+      const prev = btn.textContent;
+      btn.disabled = true; btn.textContent = "Exploring…";
+      toast("Recursive AI UI exploration started…");
+      try {
+        const r = await api("/api/qa/manual/deep-discover", { method: "POST", body: {} });
+        renderDiscoverResult("Deep Discover", r);
+        if (r.ok) {
+          await refresh();
+        } else {
+          toast(`Deep Discover failed: ${r.reason}`, true);
+        }
+      } catch (err) { toast(err.message, true); }
+      finally { btn.disabled = false; btn.textContent = prev; }
+    };
+
+    $("#btnAutoOnboard").onclick = async () => {
+      if (!confirm("Auto-Onboard runs: deep-discover (recursive AI exploration) + payout-model calibrate (spins at ≥2 bet levels). ~5–10 minutes per game. Continue?")) return;
+      const btn = $("#btnAutoOnboard");
+      const prev = btn.textContent;
+      btn.disabled = true; btn.textContent = "Onboarding…";
+      toast("Auto-Onboard started: deep-discover → payout calibrate…");
+      try {
+        const r = await api("/api/qa/manual/auto-onboard", { method: "POST", body: {} });
+        // Surface the discover sub-result in the persistent panel — it has the
+        // safetyReport + warnings that explain why zero elements might appear.
+        renderDiscoverResult("Auto-Onboard / discover", r.discover);
+        if (r.ok) {
+          await refresh();
+          const p = r.payout || {};
+          const pNote = p.ok ? `payout: ${p.trusted ? "TRUSTED" : "untrusted"} (${p.combosMatched}/${p.combosTotal} combos, coins=${(p.coinLevels || []).length})` : `payout: ${p.reason || "skipped"}`;
+          toast(`Auto-Onboard done — ${pNote}`);
+        } else {
+          toast(`Auto-Onboard failed: ${r.reason}`, true);
+        }
+      } catch (err) { toast(err.message, true); }
+      finally { btn.disabled = false; btn.textContent = prev; }
     };
 
     $("#btnPickNew").onclick = async () => {
       const uiKey = $("#newKey").value.trim();
       if (!uiKey) return toast("uiKey required", true);
       if (currentStatus?.registry?.[uiKey]) return toast(`'${uiKey}' already exists — use Pick on its row to update, or Remove first`, true);
-      toast(`Now click the ACTUAL button in Playwright Chrome window for "${uiKey}" — 30s timeout`);
-      try {
-        const r = await api("/api/qa/manual/capture-click", {
-          method: "POST", body: { uiKey, timeoutMs: 30000, failIfExists: true },
-        });
-        if (r.ok) {
-          renderStatus(r.status);
-          $("#newKey").value = "";
-          toast(`Captured ${uiKey} @ (${r.coord.x}, ${r.coord.y}) — added & verified`);
-        } else {
-          toast(`Capture failed: ${r.reason}`, true);
-        }
-      } catch (err) { toast(err.message, true); }
+      // Use the screenshot picker (works in headless / remote deploys too).
+      // After QA clicks on the image, doPickScreenshot calls /update which
+      // creates the entry on the fly with strategy=manual + verified.
+      doPickScreenshot(uiKey);
+      // Clear the input AFTER opening the modal so QA sees what they typed.
+      $("#newKey").value = "";
     };
 
     $("#btnAdd").onclick = async () => {
@@ -2417,6 +2784,99 @@
           toast(`Capture failed: ${r.reason}`, true);
         }
       } catch (err) { toast(err.message, true); }
+    };
+
+    // Pick-on-Screenshot: opens a screenshot in a modal so QA picks coords by
+    // clicking on the IMAGE. Image source:
+    //   - Namespaced key (e.g. autoButton__autospinsSlider) → use the PARENT
+    //     state's discovery snapshot (autoButton.png), where the popup was
+    //     captured during discovery. Falls back to live if not available.
+    //   - Canonical key (e.g. spinButton) → use a fresh live screenshot.
+    window.doPickScreenshot = async (uiKey) => {
+      const existing = document.getElementById("pickScreenshotModal");
+      if (existing) existing.remove();
+      // Pick image source based on parent namespace.
+      const slug = currentStatus?.gameSlug;
+      const lastDelim = uiKey.lastIndexOf("__");
+      const parentKey = lastDelim === -1 ? null : uiKey.slice(0, lastDelim);
+      const parentSnapUrl = (parentKey && slug)
+        ? `/api/qa/manual/discovery-snapshot-image?gameSlug=${encodeURIComponent(slug)}&stateId=${encodeURIComponent(parentKey)}&t=${Date.now()}`
+        : null;
+      const liveUrl = `/api/qa/manual/screenshot?t=${Date.now()}`;
+      const initialUrl = parentSnapUrl || liveUrl;
+      const sourceLabel = parentSnapUrl
+        ? `parent snapshot: <code>${parentKey}</code> (the view captured when this popup was discovered)`
+        : `live game screenshot`;
+      const modal = document.createElement("div");
+      modal.id = "pickScreenshotModal";
+      modal.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:16px;";
+      modal.innerHTML = `
+        <div style="background:#161a22;border:1px solid #2a3140;padding:12px;border-radius:6px;max-width:96vw;max-height:96vh;display:flex;flex-direction:column;gap:8px;align-items:stretch;box-sizing:border-box;">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:16px;color:#cdd5dd;font-size:13px;flex:0 0 auto;">
+            <strong>Pick coord for <code style="color:#9bc6e0;">${uiKey}</code></strong>
+            <span style="color:#8b939c;font-size:11px;">Source: ${sourceLabel}</span>
+            ${parentSnapUrl ? `<button id="pickUseLiveBtn" class="gray" style="font-size:11px;" title="Switch to a fresh live game screenshot instead">Use Live</button>` : ""}
+            <button id="pickCancelBtn" class="gray" style="font-size:11px;">Cancel</button>
+          </div>
+          <div id="pickImgHolder" style="flex:1 1 auto;min-height:0;display:flex;align-items:center;justify-content:center;border:1px solid #232a35;border-radius:4px;background:#0b0e13;overflow:hidden;">
+            <img id="pickImg" src="${initialUrl}" style="display:block;max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;cursor:crosshair;" />
+          </div>
+          <div style="color:#8b939c;font-size:11px;flex:0 0 auto;">Click the element's CENTER on the screenshot. ESC to cancel. Coord saved as <code>strategy=manual, status=verified, verifiedBy=QA</code>.</div>
+        </div>`;
+      document.body.appendChild(modal);
+      const close = () => {
+        modal.remove();
+        document.removeEventListener("keydown", escHandler);
+      };
+      const escHandler = (e) => { if (e.key === "Escape") close(); };
+      document.addEventListener("keydown", escHandler);
+      modal.querySelector("#pickCancelBtn").onclick = close;
+      modal.addEventListener("click", (e) => { if (e.target === modal) close(); });
+
+      const img = modal.querySelector("#pickImg");
+      // If parent snapshot didn't load (e.g. discovered before this fix, file
+      // missing), silently fall back to live screenshot so QA isn't stuck.
+      if (parentSnapUrl) {
+        img.onerror = () => {
+          console.warn(`[pick] parent snapshot ${parentKey} unavailable — falling back to live screenshot`);
+          img.onerror = null;
+          img.src = liveUrl;
+          const note = modal.querySelector("[style*='font-size:11px']");
+          if (note) {
+            // Update the source label so QA knows what they're seeing now.
+            const span = modal.querySelector("span[style*='8b939c']");
+            if (span) span.innerHTML = `Source: <strong>live</strong> (parent snapshot <code>${parentKey}</code> not saved yet — re-run Deep Discover to capture it)`;
+          }
+        };
+      }
+      // "Use Live" — explicit switch to fresh live screenshot.
+      const useLiveBtn = modal.querySelector("#pickUseLiveBtn");
+      if (useLiveBtn) {
+        useLiveBtn.onclick = () => {
+          img.onerror = null;
+          img.src = `/api/qa/manual/screenshot?t=${Date.now()}`;
+          useLiveBtn.disabled = true;
+          useLiveBtn.textContent = "Live";
+        };
+      }
+      img.onclick = async (e) => {
+        // Translate click position (in DISPLAYED pixels) → natural pixel coord
+        // the registry should store. Image may be scaled to fit viewport.
+        const rect = img.getBoundingClientRect();
+        const dispX = e.clientX - rect.left;
+        const dispY = e.clientY - rect.top;
+        if (!img.naturalWidth || !img.naturalHeight) return;
+        const scaleX = img.naturalWidth / img.clientWidth;
+        const scaleY = img.naturalHeight / img.clientHeight;
+        const x = Math.round(dispX * scaleX);
+        const y = Math.round(dispY * scaleY);
+        try {
+          const r = await api("/api/qa/manual/update", { method: "POST", body: { uiKey, x, y } });
+          close();
+          await refresh(); // updates registry tree + discovery-snapshots overlays
+          toast(`Picked ${uiKey} at (${x},${y}) — saved as verified`);
+        } catch (err) { toast(`Pick failed: ${err.message}`, true); }
+      };
     };
 
     // P5 — AI Recover a missing/expected element. Backend AI-vision searches the
@@ -2702,6 +3162,70 @@
 
     $("#btnOcrRefreshShot").onclick = loadOcrScreenshot;
     $("#btnOcrCancelDraw").onclick = cancelDrawing;
+
+    // AI Auto-Detect: vision picks the Balance / Bet / Win / FS bboxes.
+    // Confirms before running because the call costs an Anthropic prompt.
+    $("#btnOcrAutoDetect").onclick = async () => {
+      if (!currentStatus?.active) return toast("No active session", true);
+      const btn = $("#btnOcrAutoDetect");
+      const prev = btn.textContent;
+      btn.disabled = true; btn.textContent = "🤖 Detecting…";
+      try {
+        const r = await api("/api/qa/manual/ocr-regions/auto-detect", { method: "POST", body: {} });
+        const savedSummary = r.saved.length > 0
+          ? `Saved: ${r.saved.map((s) => `${s.key}→${s.aiValueRead ?? s.ocrParsed ?? s.ocrText ?? "?"}`).join(" · ")}`
+          : "Saved: none";
+        const proposedSummary = r.proposed.length > 0
+          ? ` · Needs review: ${r.proposed.map((p) => p.key).join(", ")}`
+          : "";
+        const skippedSummary = r.skipped.length > 0
+          ? ` · Skipped: ${r.skipped.map((s) => s.key).join(",")}`
+          : "";
+        toast(`${savedSummary}${proposedSummary}${skippedSummary}`);
+        await renderOcrRegions();
+        // Proposals that failed self-verify (OCR couldn't read a number from
+        // the AI-picked bbox) come back here for QA to inspect before saving.
+        if (r.proposed.length > 0) {
+          const rows = r.proposed.map((p) => `<tr>
+            <td style="padding:4px 8px;"><strong>${escapeHtml(p.key)}</strong></td>
+            <td style="padding:4px 8px;font-family:ui-monospace,monospace;">${p.region.x},${p.region.y} ${p.region.width}×${p.region.height}</td>
+            <td style="padding:4px 8px;font-family:ui-monospace,monospace;color:${p.aiValueRead ? '#a78bfa' : '#94a3b8'};">${escapeHtml(p.aiValueRead ?? "—")}</td>
+            <td style="padding:4px 8px;font-family:ui-monospace,monospace;color:${p.ocrText ? '#f59e0b' : '#94a3b8'};">${escapeHtml(p.ocrText ?? "—")}</td>
+            <td style="padding:4px 8px;color:#ef4444;">${escapeHtml(p.rejectReason ?? "")}</td>
+            <td style="padding:4px 8px;">
+              <button class="gray" style="font-size:11px;padding:3px 8px;" onclick='__acceptProposed(${JSON.stringify(p).replace(/'/g, "&#39;")})'>Accept anyway</button>
+            </td>
+          </tr>`).join("");
+          $("#ocrTestResult").style.display = "block";
+          $("#ocrTestResult").innerHTML = `<strong>AI verify-crop failed — review before saving:</strong>
+            <table style="margin-top:6px;font-size:12px;border-collapse:collapse;">
+              <thead><tr style="background:#161a22;"><th style="text-align:left;padding:4px 8px;">Region</th><th style="text-align:left;padding:4px 8px;">Bbox</th><th style="text-align:left;padding:4px 8px;">AI read</th><th style="text-align:left;padding:4px 8px;">OCR read</th><th style="text-align:left;padding:4px 8px;">Why rejected</th><th></th></tr></thead>
+              <tbody>${rows}</tbody>
+            </table>`;
+        }
+      } catch (err) {
+        toast(`Auto-detect failed: ${err.message}`, true);
+      } finally {
+        btn.disabled = !currentStatus?.active;
+        btn.textContent = prev;
+      }
+    };
+
+    // Accept a low-confidence AI proposal — saves the bbox to ocr-regions.json.
+    window.__acceptProposed = async (p) => {
+      try {
+        await api("/api/qa/manual/ocr-regions", {
+          method: "POST",
+          body: { key: p.key, x: p.region.x, y: p.region.y, width: p.region.width, height: p.region.height },
+        });
+        toast(`Accepted ${p.key}`);
+        $("#ocrTestResult").style.display = "none";
+        await renderOcrRegions();
+      } catch (err) {
+        toast(`Save failed: ${err.message}`, true);
+      }
+    };
+
     // Allow Escape key to cancel drawing
     document.addEventListener("keydown", (ev) => {
       if (ev.key === "Escape" && ocrDrawMode.key) cancelDrawing();

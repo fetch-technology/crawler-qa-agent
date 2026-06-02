@@ -1,7 +1,7 @@
 {
   "game": "vs20rnriches",
   "provider": "Pragmatic Play",
-  "capturedAt": "2026-05-25T19:06:26.368Z",
+  "capturedAt": "2026-06-02T01:55:12.307Z",
   "optionsCount": 12,
   "synthesized": true,
   "source": "step4-extract-rules",
@@ -10,13 +10,13 @@
       "name": "Bet Size",
       "category": "control",
       "type": "button",
-      "current_value": "4.00",
+      "current_value": "$7.00",
       "possible_values": null,
       "description": null,
       "location_hint": "bet control on play screen"
     },
     {
-      "name": "Buy Feature — BUY FEATURE - 3 OPTIONS",
+      "name": "Buy Feature — 3 OPTIONS",
       "category": "game",
       "type": "button",
       "current_value": null,
@@ -25,7 +25,7 @@
       "location_hint": "buy feature panel"
     },
     {
-      "name": "Special Bet — SPECIAL BETS - 2 OPTIONS",
+      "name": "Special Bet — 2 OPTIONS",
       "category": "control",
       "type": "toggle",
       "current_value": "off",
@@ -52,7 +52,7 @@
       "location_hint": "below spin button"
     },
     {
-      "name": "Bet Decrease (-)",
+      "name": "Bet Decrease",
       "category": "ui",
       "type": "button",
       "current_value": null,
@@ -61,7 +61,7 @@
       "location_hint": "left of spin button"
     },
     {
-      "name": "Bet Increase (+)",
+      "name": "Bet Increase",
       "category": "ui",
       "type": "button",
       "current_value": null,
@@ -85,7 +85,7 @@
       "current_value": null,
       "possible_values": null,
       "description": null,
-      "location_hint": "bottom-left (below menu)"
+      "location_hint": "bottom-left below menu"
     },
     {
       "name": "Sound",
@@ -94,7 +94,7 @@
       "current_value": null,
       "possible_values": null,
       "description": null,
-      "location_hint": "bottom-left (below info)"
+      "location_hint": "bottom-left"
     },
     {
       "name": "Buy Feature",
@@ -103,7 +103,7 @@
       "current_value": "3 OPTIONS",
       "possible_values": null,
       "description": null,
-      "location_hint": "left side of reels"
+      "location_hint": "left side, top"
     },
     {
       "name": "Special Bets",

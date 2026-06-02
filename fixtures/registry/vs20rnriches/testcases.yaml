@@ -1,5 +1,5 @@
 game: vs20rnriches
-generatedAt: 2026-05-25T19:06:51.425Z
+generatedAt: 2026-06-02T01:56:04.102Z
 testcases:
   - id: core.smoke-load
     title: Game loads successfully
@@ -15,7 +15,7 @@ testcases:
     priority: high
     steps:
       - Capture before-balance
-      - Click (996,650)
+      - Click (1000,650)
       - "Wait response https://pp.dev.revenge-games.com/gs2c/v3/gameService"
       - Capture after-balance
     expected: after === before - bet + win
@@ -24,7 +24,7 @@ testcases:
     category: auto-spin
     priority: low
     steps:
-      - Click (997,705)
+      - Click (990,710)
       - Pick count
       - Click stop mid-way
     expected: auto stops cleanly, no extra spins fired

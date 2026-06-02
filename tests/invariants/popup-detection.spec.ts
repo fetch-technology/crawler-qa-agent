@@ -209,3 +209,23 @@ test("no FS keyword → not active chain", () => {
 test("case-insensitive FS keyword match", () => {
   expect(isFreeSpinChainActive(["FREE SPIN"])).toBe(true);
 });
+
+// REGRESSION 2026-05-31: paytable popup that opens to a "FREE SPINS rules"
+// page produces matchedKeywords=["free spins","rules"]. Old logic returned
+// true (no dismiss affordance + FS keyword) → ensure-main skipped recover and
+// blocked every subsequent probe. Substate-popup keywords now veto.
+test("FS keyword + substate popup keyword (rules) → popup, NOT active chain", () => {
+  expect(isFreeSpinChainActive(["free spins", "rules"])).toBe(false);
+});
+
+test("FS keyword + paytable keyword → popup, NOT active chain", () => {
+  expect(isFreeSpinChainActive(["free spins", "paytable"])).toBe(false);
+});
+
+test("FS keyword + buy bonus keyword → popup, NOT active chain", () => {
+  expect(isFreeSpinChainActive(["free spins", "buy bonus"])).toBe(false);
+});
+
+test("FS keyword + autoplay keyword → popup, NOT active chain", () => {
+  expect(isFreeSpinChainActive(["free spins", "autoplay"])).toBe(false);
+});

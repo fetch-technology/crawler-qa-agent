@@ -50,6 +50,20 @@ export async function ocrRegion(
 }
 
 /**
+ * OCR an already-captured PNG buffer (no Playwright page involved). Used
+ * by the OCR-region auto-detector to ground-truth AI's `value_read` claim:
+ * vision models can hallucinate ("I see $99,991,116.99" when the crop is
+ * actually empty), so we re-OCR the EXACT pixels the model approved and
+ * confirm the digits match before saving the bbox.
+ */
+export async function ocrBuffer(buf: Buffer): Promise<{ text: string; durationMs: number }> {
+  const start = Date.now();
+  const w = await getWorker();
+  const result = await w.recognize(buf);
+  return { text: (result.data.text ?? "").trim(), durationMs: Date.now() - start };
+}
+
+/**
  * Parse a numeric value from OCR'd text. Strips currency symbols, commas,
  * spaces. Returns null if no number found.
  *
@@ -163,15 +177,48 @@ export function suppressResultBannerMatches(text: string, matches: string[]): st
 
 /**
  * True when matched popup keywords indicate an ACTIVE free-spin chain (FS
- * counter / spins in progress) rather than a dismissable popup — i.e. a
- * "free spin" keyword matched but NO "press anywhere" / "continue" dismiss
- * affordance. An active chain CANNOT be dismissed (ESC/click won't stop it) —
- * it must be waited out. Pure; exercised by invariant tests.
+ * counter / spins in progress) rather than a dismissable popup. An active
+ * chain CANNOT be dismissed (ESC/click won't stop it) — it must be waited out.
+ * Pure; exercised by invariant tests.
+ *
+ * Disambiguation: "free spins" alone is ambiguous — it appears in (a) the
+ * real in-progress chain, (b) FS-trigger banner ("press anywhere"), (c) the
+ * paytable's "FREE SPINS rules" page, and (d) the buy-bonus popup. A real
+ * chain has FS text + NO dismiss affordance + NO substate-popup keywords. If
+ * we also see paytable/buy/settings/etc. content, this is a POPUP about free
+ * spins, not a chain in progress — recovery should dismiss it normally.
+ * (Bug observed 2026-05-30: paytableButton opened a "FREE SPINS rules" popup
+ * → matchedKeywords=["free spins","rules"] → wrongly classified as chain →
+ * ensure-main skipped recover and blocked all subsequent probes.)
  */
+const POPUP_CONTENT_DISCRIMINATORS = [
+  "paytable",
+  "pay table",
+  "rules",
+  "buy feature",
+  "buy bonus",
+  "buy free spins",
+  "purchase",
+  "history",
+  "settings",
+  "autoplay",
+  "auto play",
+  "number of spins",
+  "loss limit",
+  "single win limit",
+  "game info",
+  "how to play",
+];
+
 export function isFreeSpinChainActive(matchedKeywords: ReadonlyArray<string>): boolean {
-  const hasFs = matchedKeywords.some((k) => k.toLowerCase().includes("free spin"));
-  const hasDismiss = matchedKeywords.some((k) => /press anywhere|continue/i.test(k));
-  return hasFs && !hasDismiss;
+  const lower = matchedKeywords.map((k) => k.toLowerCase());
+  const hasFs = lower.some((k) => k.includes("free spin"));
+  if (!hasFs) return false;
+  const hasDismiss = lower.some((k) => /press anywhere|continue/i.test(k));
+  if (hasDismiss) return false;
+  const hasPopupContent = lower.some((k) => POPUP_CONTENT_DISCRIMINATORS.some((p) => k.includes(p)));
+  if (hasPopupContent) return false; // popup about FS, not chain in progress
+  return true;
 }
 
 export const SUBSTATE_POPUP_KEYWORDS = [
@@ -346,9 +393,6 @@ export async function dismissPopupsLoop(
   const maxAttempts = opts.maxAttempts ?? 5;
   const interClickMs = opts.interClickMs ?? 800;
   const trace: DetectResult[] = [];
-  const vp = page.viewportSize() ?? { width: 1280, height: 720 };
-  const cx = Math.round(vp.width / 2);
-  const cy = Math.round(vp.height / 2);
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const det = await detectPopup(page);
@@ -357,11 +401,23 @@ export async function dismissPopupsLoop(
     if (!det.hasPopup) {
       return { ok: true, attempts: attempt, finalDetect: det, trace };
     }
-    // Dismiss: click center twice with gap
+    // Dismiss strategy: ESC press + safe-corner click at (5, 5).
+    // NEVER click viewport center (2026-06-01 incident on vs20rnriches):
+    // many PP slot games interpret a canvas tap as "spin command", so a
+    // center-click during dismiss can land on the reel grid → trigger a
+    // real spin → scatter combo → free-spin chain → every subsequent probe
+    // blocked for ~10 minutes while the chain plays out (and a real bet is
+    // spent each time, which is the actual cost). ESC works on most modal
+    // popups; if it doesn't, (5, 5) is empty chrome / lobby margin on
+    // nearly every game UI — even if it lands on something, it's never
+    // spin. When popups need an explicit X-close in a non-corner position
+    // and respond to neither ESC nor corner-click, this loop bails after
+    // maxAttempts; caller (recoverToMain / probePendingElements) then
+    // decides whether to retry or report stuck.
     try {
-      await page.mouse.click(cx, cy);
-      await page.waitForTimeout(interClickMs);
-      await page.mouse.click(cx, cy);
+      await page.keyboard.press("Escape").catch(() => undefined);
+      await page.waitForTimeout(Math.max(150, Math.floor(interClickMs / 2)));
+      await page.mouse.click(5, 5);
       await page.waitForTimeout(interClickMs);
     } catch {
       break;

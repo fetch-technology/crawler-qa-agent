@@ -54,12 +54,21 @@ export type CaseActionsCache = {
 const CACHE_FILE = "test-cases.actions.json";
 
 export async function loadCache(slug: string): Promise<CaseActionsCache | null> {
+  const { appendBuiltinActions } = await import("./builtin-cases.js");
+  let cache: CaseActionsCache | null = null;
   try {
-    const raw = await readFile(path.join(dirForGame(slug), CACHE_FILE), "utf8");
-    return JSON.parse(raw) as CaseActionsCache;
+    cache = JSON.parse(await readFile(path.join(dirForGame(slug), CACHE_FILE), "utf8")) as CaseActionsCache;
   } catch {
-    return null;
+    cache = null;
   }
+  // Inject deterministic actions for built-in cases (e.g. payout-integrity) so
+  // they're runnable without AI translation and survive regeneration. When no
+  // cache file exists yet, synthesize one ONLY if a built-in actually applies
+  // (PP-gated) — otherwise preserve the prior null (= "not translated yet").
+  const base: CaseActionsCache = cache ?? { schemaVersion: 1, generatedAt: new Date().toISOString(), cases: {} };
+  const withBuiltins = await appendBuiltinActions(base, slug);
+  if (cache === null && Object.keys(withBuiltins.cases).length === 0) return null;
+  return withBuiltins;
 }
 
 export async function saveCache(slug: string, cache: CaseActionsCache): Promise<void> {
@@ -127,6 +136,15 @@ Bet adjustment rules (CRITICAL):
 - NEVER emit clicks like \`betMinus__bet-X.XX\` unless you actually see that EXACT uiKey in the uiMap_hierarchy. If the popup doesn't exist, use \`set_bet_to_value\` instead.
 - If at ladder min already and target = min → no clicks needed. set_bet_to_min is a no-op if already at min.
 
+BET BEFORE FIRST SPIN (CRITICAL — bet leaks across cases):
+- The game session is SHARED across cases, so the previous case's last bet level persists into this case. Before the FIRST {"kind":"spin"} in your action sequence you MUST emit a bet-setting action so the spin runs at a known bet — otherwise balance / win / payout assertions fail intermittently depending on run order.
+- Choose the setter by examining the case's custom_assertions list (provided below) and setup intent:
+  - **Assertion pins a specific betAmount** (e.g. \`spin.betAmount === 7.00\` or \`Math.abs(spin.betAmount - 7.00) <= 0.01\`) → emit \`{"kind":"set_bet_to_value","value":<that number>}\`. ANCHORING TO MIN HERE BREAKS THE ASSERTION. The "default-bet-equals-X" cases are the canonical example — even with empty setup, the bet MUST be set to X first because previous cases may have left bet elsewhere.
+  - Setup targets a specific bet (e.g. "set bet to 2.00 then spin") → use \`set_bet_to_value\` / \`set_bet_to_min\` / \`set_bet_to_max\` as the setup implies.
+  - Bet-agnostic case (RTP, balance conservation, payout integrity, free-spin trigger, autoplay, multi-spin loops, etc.) → emit {"kind":"set_bet_to_min"} as a deterministic anchor (cheapest, no OCR, robust across sessions).
+- Place the setter BEFORE the first spin — typically at the very start of the actions array, after any popup-navigation clicks that the setup needs.
+- Skip ONLY when SPIN POLICY = FORBIDDEN (no spin runs, so no anchor needed).
+
 Buy-feature / free-spin trigger pattern (CRITICAL):
 - After clicking a "yes" / "confirm" button in a buy-feature popup (e.g. \`buyBonusButton__freeSpinsOption__yesButton\`), a CELEBRATION popup appears: "CONGRATULATIONS YOU WON N FREE SPINS — PRESS ANYWHERE TO CONTINUE".
 - This popup BLOCKS the free-spin chain from starting. You MUST emit a {"kind":"dismiss"} action right after the confirm click to wait + click anywhere to clear it.
@@ -149,9 +167,9 @@ PATH 1 — Spin loop (preferred default, for data-only cases):
 PATH 2 — Autoplay UI flow (only when case TESTS autoplay UI):
 - Use ONLY if setup_instructions explicitly mention "autoplay panel", "start button", "autoplay UI", or test specifically targets autoplay UI behavior.
 - Required: uiMap_hierarchy must contain registered preset uiKeys for value selection, e.g.:
-  - \`autoButton__autoplaySlider-10\`, \`autoButton__autoplaySlider-25\`, \`autoButton__autoplaySlider-100\` (click target N)
-  - \`autoButton__startButton\` (start)
-- Pattern: \`[click autoButton] → [wait_ms 1500] → [click autoButton__autoplaySlider-N] → [wait_ms 500] → [click autoButton__startButton] → [wait_until_no_spin_response quietMs=5000 maxMs=180000 reason="wait autoplay batch of N to complete"]\`. The final wait_until_no_spin_response keeps the listener attached until ALL N rounds finish — DO NOT use wait_until_state MAIN here, autoplay flickers MAIN between rounds and the wait returns at spin #1.
+  - \`autoButton__autoCountSlide-10\`, \`autoButton__autoCountSlide-30\`, \`autoButton__autoCountSlide-100\` (click target N — values come from the backend slider-stop synthesis, typically {10,20,30,50,70,100,500,1000})
+  - \`autoButton__startAutoplayButton\` (start)
+- Pattern: \`[click autoButton] → [wait_ms 1500] → [click autoButton__autoCountSlide-N] → [wait_ms 500] → [click autoButton__startAutoplayButton] → [wait_until_no_spin_response quietMs=5000 maxMs=180000 reason="wait autoplay batch of N to complete"]\`. The final wait_until_no_spin_response keeps the listener attached until ALL N rounds finish — DO NOT use wait_until_state MAIN here, autoplay flickers MAIN between rounds and the wait returns at spin #1.
 - If preset uiKey for target N doesn't exist → FALL BACK to PATH 1 (spin loop). DO NOT attempt to drag sliders — there's no drag action available.
 - Slider preset uiKeys must be REGISTERED VIA MANUAL Pick in Game by QA. If missing → spin loop only.
 
@@ -169,6 +187,29 @@ Other rules:
 3. Prefer high-level helpers in this order: set_bet_to_min/max for min/max targets, set_bet_to_value for arbitrary numeric targets, hardcoded click betMinus only for popup-selection UI testing.
 4. Use wait_ms 1500 after each navigation click (popup opening) and wait_ms 2500 after each spin.
 5. Output format: {"actions":[<list>],"reason":"<optional explanation if actions=[]>"}.`;
+
+/** Extract a pinned betAmount target from a case's custom_assertions, if
+ *  any assertion equates spin.betAmount to a specific number. Used by both
+ *  the empty-setup short-circuit and the post-process safety net so the bet
+ *  anchor matches what the assertion expects — anchoring to MIN would FAIL
+ *  any case whose assertion expects a specific bet (e.g. default-bet=7).
+ *  Returns null when no betAmount equality pattern is found. */
+export function extractPinnedBetAmount(
+  customAssertions: Array<{ check_code?: string }> | undefined,
+): number | null {
+  if (!customAssertions) return null;
+  for (const a of customAssertions) {
+    const code = a.check_code;
+    if (!code) continue;
+    // Pattern 1: spin.betAmount === 7.00 / spin.betAmount == 7
+    const eqMatch = code.match(/spin\.betAmount\s*===?\s*(\d+(?:\.\d+)?)/);
+    if (eqMatch) return Number(eqMatch[1]);
+    // Pattern 2: Math.abs(spin.betAmount - 7.00) <= 0.01
+    const absMatch = code.match(/Math\.abs\(\s*spin\.betAmount\s*-\s*(\d+(?:\.\d+)?)/);
+    if (absMatch) return Number(absMatch[1]);
+  }
+  return null;
+}
 
 /** Decide SPIN POLICY for the translator AI based on catalog metadata.
  *  REQUIRED → emit final spin; FORBIDDEN → emit no spin; OPTIONAL → judge.
@@ -228,6 +269,21 @@ function buildPrompt(input: {
     customAssertions: input.customAssertions,
   });
   const spinPolicyLine = `\nSPIN POLICY: ${policy.policy} (reason: ${policy.reason})`;
+  // Surface the assertion check_code values so AI can pick a bet anchor that
+  // matches a pinned betAmount (see "BET BEFORE FIRST SPIN" in SYSTEM_PROMPT).
+  // Truncated per-assertion to keep prompts short; the full code lives in the
+  // catalog and runs at assertion time anyway.
+  const assertionsBlock = (input.customAssertions && input.customAssertions.length > 0)
+    ? "\nCustom assertions (these run AFTER actions; choose actions that make them pass):\n"
+      + input.customAssertions
+        .filter((a) => a.check_code)
+        .map((a) => `- ${a.id ?? "(unnamed)"}: ${a.check_code!.slice(0, 240)}`)
+        .join("\n")
+    : "";
+  const pinnedBet = extractPinnedBetAmount(input.customAssertions);
+  const pinnedBetLine = pinnedBet != null
+    ? `\nPINNED BET TARGET: an assertion expects spin.betAmount=${pinnedBet}. Anchor with set_bet_to_value(${pinnedBet}) before the first spin — do NOT use set_bet_to_min/max here.`
+    : "";
   const spinCountLine = input.spinCount && input.spinCount > 1
     ? `\nSPIN COUNT REQUIREMENT: This case requires ${input.spinCount} spins. Emit ${input.spinCount} repeated {"kind":"spin"} actions (each followed by {"kind":"wait_ms","ms":2500} except the last), OR use autoplay UI to start a batch of ${input.spinCount} spins.`
     : "";
@@ -246,6 +302,8 @@ function buildPrompt(input: {
     specLines.length > 0 ? "\nGame spec (use for ladder math):\n" + specLines.join("\n") : "",
     spinPolicyLine,
     spinCountLine,
+    assertionsBlock,
+    pinnedBetLine,
     "",
     "Output the actions JSON.",
   ].join("\n");
@@ -296,7 +354,20 @@ export async function translateCase(input: {
       };
     }
     const n = Math.max(1, input.spinCount ?? 1);
-    const actions: CaseAction[] = [];
+    // Anchor bet to a known value before the first spin — game session is
+    // shared across cases, so without this the spin inherits the previous
+    // case's bet level. See "BET BEFORE FIRST SPIN" in SYSTEM_PROMPT. If the
+    // case asserts a specific betAmount, anchor to THAT value (set_bet_to_value)
+    // so the assertion holds; otherwise default to set_bet_to_min (cheapest,
+    // no OCR required).
+    const pinnedBet = extractPinnedBetAmount(input.customAssertions);
+    const betAnchor: CaseAction = pinnedBet != null
+      ? { kind: "set_bet_to_value", value: pinnedBet, reason: `assertion pins betAmount=${pinnedBet}` }
+      : { kind: "set_bet_to_min" };
+    const actions: CaseAction[] = [
+      betAnchor,
+      { kind: "wait_ms", ms: 800 },
+    ];
     for (let i = 0; i < n; i++) {
       actions.push({ kind: "spin" });
       // 2500ms is a small buffer between clicks. Engine round-end signal
@@ -377,6 +448,38 @@ export async function translateCase(input: {
       console.warn(`[case-translator/${input.caseId}] SPIN POLICY=FORBIDDEN — stripped ${stripped} contaminating action(s) the AI emitted (${policy.reason})`);
     }
     return { caseId: input.caseId, actions: filtered, aiCalled: true };
+  }
+
+  // POST-PROCESS SAFETY NET: enforce BET BEFORE FIRST SPIN. The game session
+  // is shared across cases, so without an anchor the first spin runs at
+  // whatever bet the previous case left behind → flaky balance/win/payout
+  // assertions. If the AI didn't emit a bet-setter before the first spin,
+  // inject one. Anchor matches assertion intent: set_bet_to_value when an
+  // assertion pins betAmount to a specific number, else set_bet_to_min.
+  const firstSpinIdx = parsed.actions.findIndex((a) => a.kind === "spin");
+  if (firstSpinIdx >= 0) {
+    const prelude = parsed.actions.slice(0, firstSpinIdx);
+    const hasBetSetter = prelude.some(
+      (a) =>
+        a.kind === "set_bet_to_min"
+        || a.kind === "set_bet_to_max"
+        || a.kind === "set_bet_to_value",
+    );
+    if (!hasBetSetter) {
+      const pinnedBet = extractPinnedBetAmount(input.customAssertions);
+      const injected: CaseAction = pinnedBet != null
+        ? { kind: "set_bet_to_value", value: pinnedBet, reason: `assertion pins betAmount=${pinnedBet}` }
+        : { kind: "set_bet_to_min" };
+      console.warn(
+        `[case-translator/${input.caseId}] BET BEFORE SPIN — AI omitted bet anchor; injecting ${injected.kind}${pinnedBet != null ? `(${pinnedBet})` : ""} before first spin`,
+      );
+      parsed.actions.splice(
+        firstSpinIdx,
+        0,
+        injected,
+        { kind: "wait_ms", ms: 800 },
+      );
+    }
   }
 
   return { caseId: input.caseId, actions: parsed.actions, aiCalled: true };

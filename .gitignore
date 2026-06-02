@@ -1,15 +1,77 @@
+# ===== Dependencies & build =====
 node_modules/
 dist/
+*.tsbuildinfo
+coverage/
+
+# ===== Reports & test outputs =====
 reports/
+playwright-report/
+test-results/
+tests/generated/
+
+# ===== Env & secrets =====
+.env
+.env.local
+.env.*.local
+
+# ===== OS / editor =====
+.DS_Store
+**/.DS_Store
+.vscode/
+.idea/
+
+# ===== Logs =====
+*.log
+npm-debug.log*
+yarn-error.log*
+
+# ===== Local tooling =====
+.claude/settings.local.json
+.claude/local/
+
+# ===== Legacy / unused fixture dirs =====
 fixtures/recordings/
 fixtures/rules/
 fixtures/options/
 fixtures/specs/
 fixtures/tasks/
-tests/generated/
-.env
-.env.local
-*.log
-.DS_Store
-playwright-report/
-test-results/
+
+# ===== Runtime / derived fixtures (regeneratable) =====
+# Per-run outputs — HTML/PDF/JSON reports, screenshots
+fixtures/test-runs/
+
+# Statistical run dumps — per-spin request/response
+fixtures/statistical/
+
+# Legacy case-actions & scenarios (being cleaned up)
+fixtures/case-actions/
+fixtures/scenarios/
+
+# AI review outputs (regenerable from runs)
+fixtures/reviews/
+
+# Vision / AI debug dumps
+fixtures/debug/
+
+# ===== Per-game runtime artifacts =====
+# These are produced during runs / discovery — large + regenerable.
+# Source-of-truth files (ui-registry.json, test-cases.json, network.jsonl,
+# pregame/, play-screen.png, auxiliary-sources/, _meta.json) STAY tracked.
+fixtures/registry/*/case-evidence/
+fixtures/registry/*/case-failures/
+fixtures/registry/*/case-history/
+fixtures/registry/*/debug-subdiscover/
+fixtures/registry/*/debug-ai-recover/
+fixtures/registry/*/debug-agent/
+fixtures/registry/*/audit-logs/
+
+# Pregame stats (append-only log, regenerates)
+fixtures/pre-game/_stats.jsonl
+
+# ===== Stray debug PNGs from Playwright MCP =====
+# Older agent runs wrote browser_take_screenshot output to CWD = repo root
+# (file names like `pre-click-betMinus-bet-1.13.png`, `after-autoplay.png`).
+# Code now passes --output-dir → fixtures/registry/<slug>/debug-agent/, but
+# guard the root anyway in case a callsite is missed or run from CWD again.
+/*.png

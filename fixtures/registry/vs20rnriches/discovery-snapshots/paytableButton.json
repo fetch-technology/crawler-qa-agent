@@ -1,0 +1,20 @@
+{
+  "stateId": "paytableButton",
+  "capturedAt": "2026-06-01T04:48:54.274Z",
+  "source": "explore-graph",
+  "elementCount": 2,
+  "elements": [
+    {
+      "key": "paytableButton__closeButton",
+      "x": 1125,
+      "y": 52,
+      "confidence": 0.98
+    },
+    {
+      "key": "paytableButton__nextPageButton",
+      "x": 293,
+      "y": 569,
+      "confidence": 0.95
+    }
+  ]
+}

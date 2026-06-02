@@ -1,6 +1,0 @@
-{"ranAt":"2026-05-27T09:54:37.490Z","outcome":"PASS_LOW","confidence":1,"status":"pass","durationMs":37508,"spinsCount":10}
-{"ranAt":"2026-05-27T14:35:12.377Z","outcome":"FAIL_LOW","confidence":0.75,"status":"fail","durationMs":32512,"spinsCount":10,"reason":"UI-displayed balance matches API-settled balance (OCR cross-check)"}
-{"ranAt":"2026-05-27T15:18:30.043Z","outcome":"PASS_LOW","confidence":1,"status":"pass","durationMs":34151,"spinsCount":10}
-{"ranAt":"2026-05-27T16:25:14.771Z","outcome":"PASS_LOW","confidence":1,"status":"pass","durationMs":34046,"spinsCount":10}
-{"ranAt":"2026-05-27T16:26:44.881Z","outcome":"PASS_LOW","confidence":1,"status":"pass","durationMs":59684,"spinsCount":10}
-{"ranAt":"2026-05-27T16:54:31.632Z","outcome":"PASS_LOW","confidence":1,"status":"pass","durationMs":40708,"spinsCount":10}

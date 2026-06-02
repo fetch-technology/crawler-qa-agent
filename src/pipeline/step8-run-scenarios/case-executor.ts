@@ -19,6 +19,8 @@ import {
   getRoundEndSpins as getRoundEndSpinsImpl,
   getCurrentBalance as getCurrentBalanceImpl,
   detectBuyFeatureDeduction as detectBuyFeatureDeductionImpl,
+  sumWinBreakdown as sumWinBreakdownImpl,
+  payoutModelCheck as payoutModelCheckImpl,
 } from "./assertion-helpers.js";
 import { detectAssertionSignals, signalsFromRefs } from "./assertion-signals.js";
 import { detectUiOnlyCase, isOpenUiKey } from "./ui-case-detect.js";
@@ -217,6 +219,9 @@ export type CaseResult = {
    *  glance when bet=0 comes from a wrong formula vs missing data. */
   parserDiagnostic?: {
     parserKind: string;
+    /** Mechanic from game-mechanics.json — drives which formula the PP parser
+     *  picks ("lines" uses request `l` directly; ways/cluster uses M). */
+    mechanic?: string;
     betMultiplier?: number;
     /** Raw inputs read from request body (c, l, bl, etc.). */
     requestFields?: Record<string, string | number | null>;
@@ -275,6 +280,10 @@ export type CaseExecutorContext = {
    *  fixtures/registry/<slug>/case-failures/<caseId>.png and the path is
    *  returned in CaseResult.screenshotPath. */
   gameSlug?: string;
+  /** Self-calibrated payout model (PP wlc_v games). Bound into the assertion
+   *  sandbox so `payoutModelCheck(spin)` can verify combo wins vs paytable.
+   *  When null/untrusted the check is a no-op (never false-fails). */
+  payoutModel?: import("../registry/types.js").PayoutModel | null;
 };
 
 export type CaseInput = {
@@ -1293,6 +1302,7 @@ export async function executeCase(
     // pre-spin capture, then the (possibly stale) priorBalance snapshot.
     balanceBefore:
       collectedSpins[0]?.balanceBefore ?? balanceBeforeFirstSpin ?? ctx.priorBalance ?? null,
+    payoutModel: ctx.payoutModel,
   });
 
   // Synthetic UI assertions for UI-only cases (Phase 10.1 — heuristic).
@@ -1544,8 +1554,10 @@ export async function executeCase(
   if (spin && firstSpinRequestBody) {
     const parserKind = (ctx.parser as { kind?: string }).kind ?? "?";
     const betMultiplier = (ctx.parser as { betMultiplier?: number }).betMultiplier;
+    const mechanic = (ctx.parser as { mechanic?: string }).mechanic;
     parserDiagnostic = buildParserDiagnostic({
       parserKind,
+      mechanic,
       betMultiplier,
       firstSpinRequestBody,
       parsedBet: spin.bet,
@@ -2292,6 +2304,8 @@ function evaluateAssertions(
     /** Phase 11.2 — wallet balance BEFORE the test's first spin (from priorBalance).
      *  Needed by detectBuyFeatureDeduction. */
     balanceBefore?: number | null;
+    /** Self-calibrated payout model — bound into `payoutModelCheck(spin)`. */
+    payoutModel?: import("../registry/types.js").PayoutModel | null;
   } = {},
 ): AssertionResult[] {
   const results: AssertionResult[] = [];
@@ -2328,7 +2342,7 @@ function evaluateAssertions(
 
   for (const a of assertions) {
     try {
-      // 12-param sandbox covers all promised vars + runtime artifacts.
+      // Sandbox covers all promised vars + runtime artifacts.
       // Order matters — must match the fn(...) call below.
       const fn = new Function(
         "spin",
@@ -2344,6 +2358,8 @@ function evaluateAssertions(
         "balanceBefore",
         "networkBalance",
         "spinIndex",
+        "sumWinBreakdown",
+        "payoutModelCheck",
         `"use strict"; return (${a.check_code});`,
       );
       const value = fn(
@@ -2360,6 +2376,8 @@ function evaluateAssertions(
         balanceBefore,
         networkBalance,
         spinIndex,
+        sumWinBreakdownImpl,
+        (s: Record<string, unknown>) => payoutModelCheckImpl(s, opts.payoutModel),
       );
       const pass = Boolean(value);
 
@@ -2578,11 +2596,12 @@ function describeActionTarget(action: CaseAction): string | undefined {
  * which formula the PragmaticParser-like logic would have used + flags
  * mismatch vs game-mechanics expected bet.
  *
- * Lets QA see "parser used c × bl with bl=0 → bet=0, but game-mechanics has
- * betMultiplier=20 → expected 0.50" without reading parser source.
+ * Lets QA see "parser used c × l × (bl+1) → bet=0.20" without reading parser
+ * source. Mirrors the unified PP formula in pragmatic-parser.ts.
  */
 function buildParserDiagnostic(opts: {
   parserKind: string;
+  mechanic?: string;
   betMultiplier?: number;
   firstSpinRequestBody?: string | null;
   parsedBet: number;
@@ -2602,21 +2621,26 @@ function buildParserDiagnostic(opts: {
   const l = typeof requestFields["l"] === "number" ? (requestFields["l"] as number) : 0;
   // Replicate PP parser decision tree (see pragmatic-parser.ts ppBetFromRequest)
   let formulaUsed = "fallback 0";
-  if (c > 0 && typeof opts.betMultiplier === "number" && opts.betMultiplier > 0) {
-    formulaUsed = `c × M = ${c} × ${opts.betMultiplier}`;
-  } else if (c > 0 && bl > 0) {
-    formulaUsed = `c × bl = ${c} × ${bl}`;
-  } else if (c > 0 && l > 0) {
-    formulaUsed = `c × l = ${c} × ${l}`;
-  } else if (c === 0) {
+  let expectedBet: number | undefined;
+  const mechanic = (opts.mechanic ?? "").toLowerCase();
+  if (c <= 0) {
     formulaUsed = "no `c` in request — parser cannot compute";
+  } else if (mechanic === "lines") {
+    if (bl > 0) { formulaUsed = `c × bl = ${c} × ${bl}  [mechanic=lines, bet-level mode]`; expectedBet = c * bl; }
+    else if (l > 0) { formulaUsed = `c × l = ${c} × ${l}  [mechanic=lines, lines mode]`; expectedBet = c * l; }
+  } else if (typeof opts.betMultiplier === "number" && opts.betMultiplier > 0) {
+    formulaUsed = `c × M = ${c} × ${opts.betMultiplier}  [mechanic=${opts.mechanic ?? "unknown"}, M from game-mechanics]`;
+    expectedBet = c * opts.betMultiplier;
+  } else if (bl > 0) {
+    formulaUsed = `c × bl = ${c} × ${bl}  [fallback, no mechanic/M]`;
+    expectedBet = c * bl;
+  } else if (l > 0) {
+    formulaUsed = `c × l = ${c} × ${l}  [fallback, no mechanic/M]`;
+    expectedBet = c * l;
   }
-  // Expected if the betMultiplier path were active.
-  const expectedBet = c > 0 && typeof opts.betMultiplier === "number" && opts.betMultiplier > 0
-    ? c * opts.betMultiplier
-    : undefined;
   return {
     parserKind: opts.parserKind,
+    mechanic: opts.mechanic,
     betMultiplier: opts.betMultiplier,
     requestFields,
     formulaUsed,

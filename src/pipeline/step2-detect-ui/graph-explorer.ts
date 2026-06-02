@@ -14,6 +14,8 @@ import { askClaude, extractJsonFromText } from "../../ai/claude.js";
 import { snapshot, waitUntilStable } from "../utils/pixel-diff/index.js";
 import type { UiElement, UiRegistry } from "../registry/types.js";
 import { dirForGame } from "../registry/paths.js";
+import { saveDiscoverySnapshot } from "../registry/discovery-snapshots.js";
+import { filterMainOverlap, buildMainElementsHint } from "./popup-filter.js";
 import type { UiGraph, UiGraphState } from "../registry/ui-graph-store.js";
 import { classifyState, nextStateId, STATE_SAME_THRESHOLD } from "./state-hash.js";
 import { isSafeToClickForDiscovery, explainSafety } from "./safe-click.js";
@@ -23,6 +25,12 @@ export type ExplorerOptions = {
   maxDepth?: number;        // default 3
   maxAiCalls?: number;      // default 25
   maxStates?: number;       // default 15
+  /** Per-trigger extra prompt appended to the popup-discovery AI call when
+   *  exploration enters a NEW state via that trigger key. Use to pin labeling
+   *  conventions for known popups whose contents are predictable (e.g. bet
+   *  selector → use exact gameSpec.betLadder values, not AI-guessed labels).
+   *  Keyed by the parent-frame trigger element key (e.g. "betPlus"). */
+  triggerHints?: Record<string, string>;
 };
 
 export type ExploreResult = {
@@ -35,7 +43,79 @@ const DEFAULT_OPTS: Required<ExplorerOptions> = {
   maxDepth: 3,
   maxAiCalls: 25,
   maxStates: 15,
+  triggerHints: {},
 };
+
+type Transition = { from: string; via: string; to: string };
+
+/**
+ * Add aliased copies of every namespaced element under a new trigger's
+ * namespace. Used when a state is reached via multiple triggers (e.g. both
+ * betPlus and betMinus open the same bet-selector popup) — without aliasing,
+ * only the first trigger's namespace gets populated children, and probe +
+ * dashboard see an empty tree under the second trigger. Mutates `elements`
+ * in place; returns the number of aliases added (existing entries with the
+ * target key are skipped, never overwritten).
+ *
+ * The aliasing strips ONE level of namespace prefix from each existing key
+ * and replaces it with `${newTrigger}__`. So "betPlus__bet-0.20" under new
+ * trigger "betMinus" becomes "betMinus__bet-0.20"; "autoButton__lossLimit"
+ * under "soundToggle" becomes "soundToggle__lossLimit". Top-level keys
+ * (no "__" separator) are skipped — they live on main, not under any
+ * popup-trigger namespace.
+ */
+export function aliasElementsForNewTrigger(
+  elements: Map<string, UiElement>,
+  newTrigger: string,
+): number {
+  if (!newTrigger || elements.size === 0) return 0;
+  const newPrefix = `${newTrigger}__`;
+  let aliased = 0;
+  for (const [existingKey, existingEl] of Array.from(elements)) {
+    const parts = existingKey.split("__");
+    if (parts.length < 2) continue; // top-level main key
+    const tail = parts.slice(1).join("__");
+    const aliasedKey = newPrefix + tail;
+    if (elements.has(aliasedKey)) continue;
+    elements.set(aliasedKey, { ...existingEl });
+    aliased++;
+  }
+  return aliased;
+}
+
+/**
+ * BFS in the discovered transition graph: returns the sequence of clicks
+ * (transitions) needed to navigate from "main" to `target`. Returns [] when
+ * target is "main", null when unreachable.
+ *
+ * Replaces the previous "1-level only" navigation (single inbound transition
+ * click) — required to reach states at depth ≥ 2 (e.g. paytable_page1 →
+ * paytable_page2 → paytable_page3). Without this, the explorer could see
+ * level-2/3 elements via the AI vision pass but could never re-enter the
+ * state to iterate them → depth-3 frames silently failed every navigation
+ * and the frontier drained without firing further AI calls.
+ */
+export function findPathFromMain(
+  transitions: ReadonlyArray<Transition>,
+  target: string,
+): Transition[] | null {
+  if (target === "main") return [];
+  type Item = { state: string; path: Transition[] };
+  const queue: Item[] = [{ state: "main", path: [] }];
+  const visited = new Set<string>(["main"]);
+  while (queue.length > 0) {
+    const cur = queue.shift()!;
+    for (const t of transitions) {
+      if (t.from !== cur.state) continue;
+      if (visited.has(t.to)) continue;
+      const newPath = [...cur.path, t];
+      if (t.to === target) return newPath;
+      visited.add(t.to);
+      queue.push({ state: t.to, path: newPath });
+    }
+  }
+  return null;
+}
 
 const SYSTEM_PROMPT =
   "You are a slot-game UI locator. Look at the screenshot and return JSON listing every clickable button/control you can see with pixel coordinates. Return ONLY JSON, no prose.";
@@ -89,6 +169,23 @@ export async function exploreUiGraph(
   knownStates.push({ id: "main", baseline: mainPng, elements: mainElements, close: null });
   stateIds.add("main");
 
+  // Persist a "main" discovery snapshot for the dashboard's visual review
+  // panel. Best-effort — explorer should not bail on snapshot I/O errors.
+  try {
+    await saveDiscoverySnapshot(
+      gameSlug,
+      "main",
+      PNG.sync.write(mainPng),
+      Array.from(mainElements.entries()).map(([key, el]) => ({
+        key, x: el.x, y: el.y, confidence: el.confidence,
+      })),
+      "explore-graph-main",
+      { width: mainPng.width, height: mainPng.height },
+    );
+  } catch (err) {
+    warnings.push(`failed to save main snapshot: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
   // DFS frontier — tuples (parentState, depth)
   type Frame = { stateId: string; depth: number };
   const visited = new Set<string>(); // state IDs we have explored from
@@ -109,26 +206,46 @@ export async function exploreUiGraph(
     const state = knownStates.find((s) => s.id === frame.stateId);
     if (!state) continue;
 
-    // Make sure we're actually in this state.
+    // Make sure we're actually in this state. Multi-level navigation
+    // (2026-06-01): BFS the transition graph from "main" to the target,
+    // then replay each click in sequence. The previous "click the single
+    // inbound transition" path only reached depth 1 — clicking a level-2
+    // popup's trigger key while standing on main would miss the button
+    // entirely (level-2 triggers exist only when the level-1 popup is
+    // open). Now we click level-1 trigger → level-2 trigger → … in order
+    // so frames at any depth resolve correctly.
     if (frame.stateId !== "main") {
       const current = await snapshot(page);
       const cls = classifyState(current, knownStates.map((s) => ({ id: s.id, baseline: s.baseline })));
       if (cls.kind !== "match" || cls.stateId !== frame.stateId) {
-        // We need to navigate to this state first. Find parent transition.
-        const inboundTransition = transitions.find((t) => t.to === frame.stateId);
-        if (!inboundTransition) {
-          warnings.push(`cannot reach ${frame.stateId} — no inbound transition recorded`);
+        const path = findPathFromMain(transitions, frame.stateId);
+        if (!path) {
+          warnings.push(`cannot reach ${frame.stateId} — no path from main in transition graph`);
           continue;
         }
-        const parent = knownStates.find((s) => s.id === inboundTransition.from);
-        if (!parent) continue;
-        // Best effort: navigate back to main, then to parent (only supports 1-level for now)
         await navigateBackTo(page, knownStates[0]!.baseline);
         await page.waitForTimeout(500);
-        const triggerEl = parent.elements.get(inboundTransition.via);
-        if (triggerEl) {
-          await page.mouse.click(triggerEl.x, triggerEl.y);
-          await waitUntilStable(page, { maxIterations: 8, changeThreshold: 0.005, consecutiveStable: 2 });
+        let navFailed = false;
+        for (const step of path) {
+          const stepParent = knownStates.find((s) => s.id === step.from);
+          const triggerEl = stepParent?.elements.get(step.via);
+          if (!triggerEl) {
+            warnings.push(`broken nav: ${step.from}/${step.via} not in parent state's elements`);
+            navFailed = true;
+            break;
+          }
+          try {
+            await page.mouse.click(triggerEl.x, triggerEl.y);
+          } catch (err) {
+            warnings.push(`nav click failed at ${step.from}/${step.via}: ${String(err)}`);
+            navFailed = true;
+            break;
+          }
+          await waitUntilStable(page, { maxIterations: 4, changeThreshold: 0.01, consecutiveStable: 2 });
+        }
+        if (navFailed) continue;
+        if (path.length > 1) {
+          console.log(`[explorer/nav] reached ${frame.stateId} via ${path.length}-step path: ${path.map((p) => `${p.from}→${p.via}→${p.to}`).join(" → ")}`);
         }
       }
     }
@@ -150,20 +267,69 @@ export async function exploreUiGraph(
       // Snapshot before click
       const before = await snapshot(page);
 
-      try {
-        await page.mouse.click(el.x, el.y);
-      } catch (err) {
-        warnings.push(`click ${frame.stateId}/${elKey} threw: ${String(err)}`);
+      // Click with offset retry to absorb the ~5-15px coord drift typical of
+      // AI-vision bboxes on canvas-rendered slots. Probe uses the same
+      // OFFSETS pattern (element-probe.ts); explorer used to single-click,
+      // which meant a coord 8px off the hot zone silently self-looped
+      // (observed 2026-05-31: autoButton at (995,703) — actual hit zone
+      // (995,711) — explorer self-looped on every click, never opened the
+      // autoplay popup, AI was never invoked → exploration stopped at depth 0
+      // even though the rest of the pipeline verified autoButton fine).
+      //
+      // Logic: try center first; if state hash is unchanged (no popup),
+      // try 8px in each cardinal direction. First offset that produces a
+      // state change wins. All-offsets-no-op → genuine self-loop.
+      const clickOffsets: ReadonlyArray<{ dx: number; dy: number }> = [
+        { dx: 0, dy: 0 },
+        { dx: -8, dy: 0 }, { dx: 8, dy: 0 },
+        { dx: 0, dy: -8 }, { dx: 0, dy: 8 },
+      ];
+      let after: PNG | null = null;
+      let cls: ReturnType<typeof classifyState> | null = null;
+      let usedOffset = { dx: 0, dy: 0 };
+      for (const off of clickOffsets) {
+        const cx = Math.round(el.x + off.dx);
+        const cy = Math.round(el.y + off.dy);
+        try {
+          await page.mouse.click(cx, cy);
+        } catch (err) {
+          if (off.dx === 0 && off.dy === 0) {
+            warnings.push(`click ${frame.stateId}/${elKey} threw: ${String(err)}`);
+          }
+          continue;
+        }
+        // Per-click settle — typically 1-3 frames suffice once the popup
+        // animation is complete. Was 10 (heavy flicker in headed mode); cut to
+        // 5 saves ~5 screenshots per safe-click without missing slow popups.
+        await waitUntilStable(page, {
+          maxIterations: 5,
+          changeThreshold: 0.01,
+          consecutiveStable: 2,
+        });
+        const a = await snapshot(page);
+        const c = classifyState(a, knownStates.map((s) => ({ id: s.id, baseline: s.baseline })));
+        if (c.kind === "match" && c.stateId === frame.stateId) {
+          // Still on the same state — this offset missed. Try next.
+          continue;
+        }
+        // State changed (new or matches another known state) — use this click.
+        after = a;
+        cls = c;
+        usedOffset = off;
+        break;
+      }
+
+      if (!after || !cls) {
+        // Every offset produced a self-loop → element genuinely doesn't change
+        // state, OR all offsets missed the hot zone (rare with ±15px coverage).
+        transitions.push({ from: frame.stateId, via: elKey, to: frame.stateId });
         continue;
       }
-      await waitUntilStable(page, {
-        maxIterations: 10,
-        changeThreshold: 0.005,
-        consecutiveStable: 2,
-      });
-
-      const after = await snapshot(page);
-      const cls = classifyState(after, knownStates.map((s) => ({ id: s.id, baseline: s.baseline })));
+      if (usedOffset.dx !== 0 || usedOffset.dy !== 0) {
+        // Record the working offset so QA can see which clicks needed
+        // refinement (and future probe can pre-apply the offset).
+        console.log(`[explorer] ${frame.stateId}/${elKey} opened state via offset (${usedOffset.dx},${usedOffset.dy})`);
+      }
 
       // No-op transition? (still on same state)
       if (cls.kind === "match" && cls.stateId === frame.stateId) {
@@ -175,6 +341,40 @@ export async function exploreUiGraph(
       // Match a known state? Record transition.
       if (cls.kind === "match") {
         transitions.push({ from: frame.stateId, via: elKey, to: cls.stateId });
+        // Trigger alias (2026-06-01): a popup can be reached via multiple
+        // triggers — e.g. betPlus AND betMinus both open the same bet
+        // selector popup in PP slots. The FIRST trigger to discover the
+        // popup gets all its children namespaced under `firstTrigger__*`;
+        // subsequent triggers that match the same state record the
+        // transition but their namespace stays empty → dashboard tree
+        // shows betPlus__bet-0.20 but not betMinus__bet-0.20 even though
+        // both click paths land in identical UI (observed 2026-06-01 on
+        // vswaysmahwin2: betPlus opened bet_multiplier_popup with 17
+        // levels, betMinus matched the same state but `betMinus__*` had
+        // no entries). Alias each child element under the new trigger's
+        // namespace so probe + tree see both triggers as fully populated.
+        // Restrict alias to MAIN-LEVEL triggers only (2026-06-01). Sub-state
+        // clicks (e.g. clicking betPlus__bet-0.20 inside the bet selector
+        // popup) frequently land you back in the SAME popup state with a
+        // selection highlighted — classifyState sees a "match" to the popup
+        // itself, but the click wasn't an alternate trigger to OPEN the
+        // popup; it was an in-popup interaction. Aliasing under each bet
+        // level then creates combinatorial bloat: 16 bet levels × 16 children
+        // = 256 ghost entries, each demanding a sub-state probe at ~$0.50.
+        //
+        // Legitimate alias use case: TWO TOP-LEVEL triggers open the same
+        // popup (betPlus AND betMinus → bet_selection_popup). Both clicks
+        // originate from frame.stateId === "main", so the restriction below
+        // keeps that case working while killing the bet-level explosion.
+        if (frame.stateId === "main" && cls.stateId !== "main" && cls.stateId !== elKey) {
+          const matchedState = knownStates.find((s) => s.id === cls.stateId);
+          if (matchedState) {
+            const aliased = aliasElementsForNewTrigger(matchedState.elements, elKey);
+            if (aliased > 0) {
+              console.log(`[explorer/alias] ${cls.stateId} reached via NEW trigger "${elKey}" — aliased ${aliased} elements under ${elKey}__*`);
+            }
+          }
+        }
         // Navigate back to current state.
         await navigateBackTo(page, state.baseline);
         continue;
@@ -188,14 +388,56 @@ export async function exploreUiGraph(
       }
 
       aiCallsUsed++;
-      const newStateData = await aiDiscoverState(page, debugDir, aiCallsUsed);
-      const newStateId = newStateData.label || nextStateId(stateIds);
+      // Tell AI explicitly which main controls live in the dimmed background
+      // so it doesn't re-detect them as popup content. Falls back to default
+      // prompt when no main entries (shouldn't happen during normal explore,
+      // but defensive).
+      const mainHint = buildMainElementsHint(initialRegistry as Record<string, { x: number; y: number } | undefined>);
+      // Per-trigger extra hint (e.g. bet popup → use the exact bet ladder so
+      // labels match real selectable values, not AI-interpolated guesses).
+      const triggerHint = o.triggerHints[elKey] ?? "";
+      const popupPrompt =
+        (mainHint || triggerHint) ? USER_PROMPT_BASE + mainHint + (triggerHint ? "\n\n" + triggerHint : "") : undefined;
+      const newStateData = await aiDiscoverState(page, debugDir, aiCallsUsed, popupPrompt);
+      // Label sanity: AI sometimes returns the existing state's label (e.g.
+      // "main") for a freshly-discovered popup — observed 2026-05-31 when AI
+      // saw a popup with subtle background and defaulted to "main" + 0
+      // elements. classifyState already confirmed this is NOT the same as
+      // any known state, so trust the hash over the AI's label: collisions
+      // with existing state ids → fall back to an auto-generated id, never
+      // create duplicate state entries that confuse the visited set.
+      const rawLabel = (newStateData.label ?? "").trim().toLowerCase();
+      let newStateId: string;
+      if (rawLabel && !stateIds.has(rawLabel)) {
+        newStateId = rawLabel;
+      } else {
+        const autoId = nextStateId(stateIds);
+        if (rawLabel) {
+          console.warn(`[explorer] AI returned colliding label "${rawLabel}" for ${frame.stateId}/${elKey} — using auto id "${autoId}"`);
+        }
+        newStateId = autoId;
+      }
       stateIds.add(newStateId);
 
+      // Drop main-screen false positives — AI sometimes flags main controls
+      // visible through dimmed popup background. Filter against initialRegistry
+      // (the canonical main keys; sub-state keys not affected).
+      const filteredNew = filterMainOverlap(newStateData.elements, initialRegistry as Record<string, { x: number; y: number } | undefined>);
+      console.log(`[explorer/filter] state ${newStateId} via ${elKey}: AI returned ${newStateData.elements.length}, kept ${filteredNew.kept.length}, dropped ${filteredNew.dropped.length} main-overlap`);
+      if (filteredNew.dropped.length > 0) {
+        const sample = filteredNew.dropped.map((d) => `  ${d.key}@(${d.x},${d.y}) → main "${d.overlapsMainKey}"`).join("\n");
+        console.log(`[explorer/filter] dropped details:\n${sample}`);
+        warnings.push(`state ${newStateId}: dropped ${filteredNew.dropped.length} main-overlap false positives`);
+      }
+
+      // Namespace popup elements by the TRIGGER KEY that opened this state
+      // (matches `discoverSubState`'s convention so the dashboard tree groups
+      // children under their trigger naturally — e.g. autoButton's popup
+      // children are `autoButton__*`, not `autoplay_settings_popup__*`).
+      const elementNamespace = elKey;
       const newElements = new Map<string, UiElement>();
-      for (const e of newStateData.elements) {
-        // Namespace popup elements with their state id.
-        const namespacedKey = `${newStateId}__${e.key}`;
+      for (const e of filteredNew.kept) {
+        const namespacedKey = `${elementNamespace}__${e.key}`;
         newElements.set(namespacedKey, {
           x: e.x,
           y: e.y,
@@ -208,6 +450,26 @@ export async function exploreUiGraph(
       const baselinePath = path.join(debugDir, `${newStateId}.png`);
       await writeFile(baselinePath, PNG.sync.write(after));
 
+      // Persist a discovery snapshot of the new state (PNG the AI saw +
+      // labelled elements, NAMESPACED). Uses the TRIGGER KEY as stateId so it
+      // matches the registry namespace (e.g. `autoButton.png`/`autoButton.json`).
+      // The dashboard's Pick-on-Screenshot then maps a namespaced uiKey like
+      // `autoButton__autospinsSlider` straight to this snapshot — QA picks on
+      // the popup view without needing the live browser in that state.
+      try {
+        await saveDiscoverySnapshot(
+          gameSlug,
+          elementNamespace,
+          newStateData.pngBuf,
+          Array.from(newElements.entries()).map(([key, el]) => ({
+            key, x: el.x, y: el.y, confidence: el.confidence,
+          })),
+          "explore-graph",
+        );
+      } catch (err) {
+        warnings.push(`failed to save snapshot for ${newStateId}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
       knownStates.push({ id: newStateId, baseline: after, elements: newElements, close: null });
       transitions.push({ from: frame.stateId, via: elKey, to: newStateId });
 
@@ -217,7 +479,7 @@ export async function exploreUiGraph(
 
       // Navigate back to parent state before next element.
       await navigateBackTo(page, state.baseline);
-      await waitUntilStable(page, { maxIterations: 6, changeThreshold: 0.005, consecutiveStable: 2 });
+      await waitUntilStable(page, { maxIterations: 3, changeThreshold: 0.01, consecutiveStable: 2 });
     }
   }
 
@@ -267,7 +529,13 @@ export async function aiDiscoverState(
   /** Optional override of the user prompt — used by manual-session to add
    *  popup-focus instructions for sub-state discovery. */
   userPromptOverride?: string,
-): Promise<{ label: string | null; elements: Array<{ key: string; x: number; y: number; confidence?: number; role?: string }> }> {
+): Promise<{
+  label: string | null;
+  elements: Array<{ key: string; x: number; y: number; confidence?: number; role?: string }>;
+  /** Raw PNG buffer the AI saw — caller persists it to the discovery-snapshots
+   *  store paired with the elements so the dashboard can render an overlay. */
+  pngBuf: Buffer;
+}> {
   const buf = await page.screenshot({ type: "png" });
   const debugPath = path.join(debugDir, `state-${callIdx}-${Date.now()}.png`);
   await writeFile(debugPath, buf);
@@ -283,7 +551,7 @@ export async function aiDiscoverState(
       timeoutMs: 60_000,
     });
     const parsed = extractJsonFromText<{ stateLabel?: string; elements?: Array<Record<string, unknown>> }>(text);
-    if (!parsed || !Array.isArray(parsed.elements)) return { label: null, elements: [] };
+    if (!parsed || !Array.isArray(parsed.elements)) return { label: null, elements: [], pngBuf: buf };
     const elements: Array<{ key: string; x: number; y: number; confidence?: number; role?: string }> = [];
     for (const e of parsed.elements) {
       const key = typeof e.key === "string" ? e.key : null;
@@ -299,9 +567,9 @@ export async function aiDiscoverState(
         });
       }
     }
-    return { label: typeof parsed.stateLabel === "string" ? parsed.stateLabel : null, elements };
+    return { label: typeof parsed.stateLabel === "string" ? parsed.stateLabel : null, elements, pngBuf: buf };
   } catch (err) {
-    return { label: null, elements: [] };
+    return { label: null, elements: [], pngBuf: buf };
   }
 }
 

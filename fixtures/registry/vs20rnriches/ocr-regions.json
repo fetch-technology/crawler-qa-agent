@@ -1,26 +1,14 @@
 {
   "balanceArea": {
     "x": 289,
-    "y": 650,
-    "width": 218,
+    "y": 652,
+    "width": 200,
     "height": 25
   },
   "betArea": {
-    "x": 290,
-    "y": 671,
-    "width": 82,
-    "height": 32
-  },
-  "winArea": {
-    "x": 619,
-    "y": 627,
-    "width": 207,
-    "height": 53
-  },
-  "freeSpinCounter": {
-    "x": 704,
-    "y": 682,
-    "width": 38,
-    "height": 25
+    "x": 287,
+    "y": 674,
+    "width": 102,
+    "height": 24
   }
 }

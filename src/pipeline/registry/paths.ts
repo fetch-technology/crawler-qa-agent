@@ -29,6 +29,7 @@ export const REGISTRY_FILES = {
   ocrRegions: "ocr-regions.json",
   stateSignatures: "state-signatures.json",
   paytable: "paytable.json",
+  payoutModel: "payout-model.json",
   popupRegions: "popup-regions.json",
   featureRegistry: "feature-registry.json",
   uiGraph: "ui-graph.json",

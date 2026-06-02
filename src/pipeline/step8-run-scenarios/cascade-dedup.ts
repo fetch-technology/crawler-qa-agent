@@ -81,6 +81,14 @@ export function ingestFrame(
       ...prev,
       balanceAfter: spin.balanceAfter,
       cascadeFrames: spin.cascadeFrames.length > 0 ? spin.cascadeFrames : prev.cascadeFrames,
+      // Accumulate per-combo win breakdown across every tumble frame. Without
+      // this the merge keeps only the FIRST frame's `raw` (and thus only its
+      // wlc_v), so later tumbles' winning combos would be lost — breaking the
+      // payout-integrity check (Sigma combos == total win) on multi-tumble rounds.
+      winBreakdown: [...(prev.winBreakdown ?? []), ...(spin.winBreakdown ?? [])],
+      // `tw` is cumulative per round, so the latest frame carries the round
+      // total. Prefer the newer frame's value when present.
+      serverTotalWin: spin.serverTotalWin ?? prev.serverTotalWin,
     };
     if (
       deriveWin

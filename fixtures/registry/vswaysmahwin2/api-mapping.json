@@ -1,6 +1,0 @@
-{
-  "spinApi": {
-    "url": "https://pp.dev.revenge-games.com/gs2c/v3/gameService",
-    "method": "POST"
-  }
-}

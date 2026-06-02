@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-05-25T19:04:44.908Z",
+  "recordedAt": "2026-06-02T01:53:29.291Z",
   "gameSlug": "vs20rnriches",
   "initialWaitMs": 4000,
   "clicks": [
@@ -8,22 +8,22 @@
       "x": 640,
       "y": 360,
       "label": "center",
-      "delayBeforeMs": 4015,
-      "delayAfterMs": 1212
+      "delayBeforeMs": 5641,
+      "delayAfterMs": 2840
     },
     {
       "x": 192,
       "y": 288,
       "label": "left-mid",
       "delayBeforeMs": 1207,
-      "delayAfterMs": 1209
+      "delayAfterMs": 1212
     },
     {
       "x": 1088,
       "y": 288,
       "label": "right-mid",
-      "delayBeforeMs": 1216,
-      "delayAfterMs": 1214
+      "delayBeforeMs": 1255,
+      "delayAfterMs": 1260
     }
   ],
   "finalSettleMs": 2000,

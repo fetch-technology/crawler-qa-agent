@@ -21,19 +21,39 @@ const MIME: Record<string, string> = {
   ".ico": "image/x-icon",
 };
 
-// URL aliases — legacy `/dashboard` and root now redirect to the pipeline UI.
-// The old TaskQueue/TaskRunner dashboard (index.html / app.js / qa.html /
-// qa.js) was removed; manual-verify.html is the single supported UI.
+// URL aliases — `/` and `/dashboard` go to the multi-game OVERVIEW
+// (public/index.html); legacy aliases preserved. Per-game detail lives at
+// `/game/<slug>` (rewritten to manual-verify.html with `?gameSlug=` so the
+// detail page knows which session to scope its API calls to).
 const URL_ALIASES: Record<string, string> = {
-  "/": "/manual-verify.html",
-  "/dashboard": "/manual-verify.html",
-  "/dashboard/": "/manual-verify.html",
-  "/dashboard_new": "/manual-verify.html",
-  "/dashboard_new/": "/manual-verify.html",
+  "/": "/index.html",
+  "/dashboard": "/index.html",
+  "/dashboard/": "/index.html",
+  "/dashboard_new": "/index.html",
+  "/dashboard_new/": "/index.html",
 };
+
+/** Rewrite `/game/<slug>` → `/manual-verify.html?gameSlug=<slug>` so the
+ *  detail page can read the slug from `location.search` and inject it into
+ *  every API call. Returns the rewritten URL, or null when the input
+ *  doesn't match. */
+function rewriteGameDetail(url: string): string | null {
+  const m = url.match(/^\/game\/([^\/?#]+)\/?(?:\?(.*))?$/);
+  if (!m) return null;
+  const slug = decodeURIComponent(m[1]!);
+  const extra = m[2] ? `&${m[2]}` : "";
+  return `/manual-verify.html?gameSlug=${encodeURIComponent(slug)}${extra}`;
+}
 
 function serveStatic(url: string, res: ServerResponse): boolean {
   const cleanUrl = url.split("?")[0]!;
+  // Per-game detail rewrite: /game/<slug> → manual-verify.html?gameSlug=…
+  const gameRewrite = rewriteGameDetail(url);
+  if (gameRewrite) {
+    res.writeHead(302, { Location: gameRewrite });
+    res.end();
+    return true;
+  }
   const aliased = URL_ALIASES[cleanUrl] ?? cleanUrl;
   const safePath = normalize(aliased).replace(/^\/+/, "");
   if (safePath.includes("..")) {
