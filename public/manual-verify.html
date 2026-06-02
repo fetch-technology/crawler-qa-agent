@@ -845,7 +845,7 @@
           window.__caseResults[c.id] = {
             caseId: c.id, status: "skip", actionsExecuted: 0, actionsTotal: 0,
             assertions: [], skipReason: "ensure-main failed — game not on main screen",
-            durationMs: 0, ranAt: new Date().toLocaleTimeString(),
+            durationMs: 0, ranAt: new Date().toISOString(),
           };
           saveCaseResults(gameSlug, window.__caseResults);
           setRunProgressStatus(c.id, "skip", "not on main");
@@ -1807,6 +1807,20 @@
             </div>
           </div>`
         : "";
+      // Evidence: per-case screen video (when QA_RECORD_VIDEO=1). Lazy-load
+      // <video src> on first toggle so the page doesn't preload every case's
+      // MP4 (each ~1-3MB). The server-side endpoint supports Range so
+      // <video> can seek without downloading the full file.
+      const hasVideo = Boolean(r.videoPath);
+      const videoHtml = hasVideo
+        ? `<div style="margin-top: 8px;">
+            <button onclick="toggleCaseVideo('${c.id}')" id="vidBtn-${c.id}" class="gray" style="font-size: 11px; padding: 4px 8px;">🎥 Case video</button>
+            <div id="vidPane-${c.id}" style="display: none; margin-top: 6px;">
+              <video id="vidEl-${c.id}" controls preload="none" style="max-width: 100%; border: 1px solid #2a3140; border-radius: 4px; background: #000;"></video>
+              <div style="font-size: 10px; color: #5e6772; margin-top: 4px;">Screen recording · path: <code>${escapeHtml(r.videoPath)}</code></div>
+            </div>
+          </div>`
+        : "";
 
       // Evidence: OCR snapshots panel — raw Tesseract text per region.
       // Lets QA verify what OCR actually read (vs what the assertion claimed).
@@ -2058,7 +2072,7 @@
             ${confBarHtml}
           </div>
           <div style="margin-left:auto;color:#8b939c;font-size:11px;">
-            ${r.actionsExecuted}/${c.actionCount} actions · ${(r.durationMs / 1000).toFixed(2)}s · ${new Date(r.ranAt).toLocaleTimeString()}
+            ${r.actionsExecuted}/${c.actionCount} actions · ${(r.durationMs / 1000).toFixed(2)}s · ${(() => { const d = r.ranAt ? new Date(r.ranAt) : null; return d && !isNaN(d.getTime()) ? d.toLocaleTimeString() : "—"; })()}
           </div>
         </div>
         ${timelineHtml}
@@ -2076,6 +2090,7 @@
         </div>
         <div style="margin-top: 8px; color: #8b939c; font-size: 11px; text-transform: uppercase;">Evidence</div>
         ${screenshotHtml}
+        ${videoHtml}
         ${parserDxHtml}
         ${networkHtml}
         ${ocrHtml}
@@ -2255,6 +2270,31 @@
       } else {
         pane.style.display = "none";
         btn.textContent = "📷 Show screenshot";
+      }
+    };
+
+    window.toggleCaseVideo = (caseId) => {
+      const pane = document.getElementById(`vidPane-${caseId}`);
+      const btn = document.getElementById(`vidBtn-${caseId}`);
+      const vid = document.getElementById(`vidEl-${caseId}`);
+      if (!pane || !btn || !vid) return;
+      const isHidden = pane.style.display === "none";
+      if (isHidden) {
+        const slug = window.__lastCasesSlug;
+        if (vid && !vid.src && slug) {
+          vid.src = `/api/qa/manual/case-video?game=${encodeURIComponent(slug)}&caseId=${encodeURIComponent(caseId)}&t=${Date.now()}`;
+          vid.onerror = () => {
+            vid.replaceWith(Object.assign(document.createElement("div"), {
+              textContent: "Video not found on disk (case may have been re-run, or QA_RECORD_VIDEO not set)",
+              style: "color: #d9534f; font-size: 11px; padding: 6px;",
+            }));
+          };
+        }
+        pane.style.display = "block";
+        btn.textContent = "🎥 Hide video";
+      } else {
+        pane.style.display = "none";
+        btn.textContent = "🎥 Case video";
       }
     };
 

@@ -316,7 +316,7 @@ export async function handleManualRoute(
       const slug = u.searchParams.get("game");
       const caseId = u.searchParams.get("caseId");
       if (!slug || !caseId) return sendJson(res, 400, { error: "game and caseId required" }), true;
-      const { readFile } = await import("node:fs/promises");
+      const { readFile, stat } = await import("node:fs/promises");
       const path = await import("node:path");
       const { dirForGame } = await import("../registry/paths.js");
       const safeName = caseId.replace(/[^a-zA-Z0-9_.-]/g, "_");
@@ -324,6 +324,18 @@ export async function handleManualRoute(
       try {
         const txt = await readFile(file, "utf8");
         const json = JSON.parse(txt);
+        // ranAt is a frontend-only field stamped when the user ran the case
+        // in THIS browser. Fresh browsers (different machine, cleared cache)
+        // load the result from disk and have no ranAt → "Invalid Date" in
+        // the dashboard's `new Date(r.ranAt)` render. Inject file mtime as
+        // fallback so the timestamp at least reflects when the case was
+        // last persisted server-side.
+        if (!json.ranAt) {
+          try {
+            const s = await stat(file);
+            json.ranAt = s.mtime.toISOString();
+          } catch { /* mtime read failed — leave ranAt undefined */ }
+        }
         return sendJson(res, 200, { ok: true, result: json }), true;
       } catch {
         return sendJson(res, 404, { error: `no persisted result for ${caseId}` }), true;
@@ -411,6 +423,59 @@ export async function handleManualRoute(
           return sendJson(res, 404, { error: `no screenshot for ${caseId}` }), true;
         }
       }
+    }
+
+    // GET /api/qa/manual/case-video?game=<slug>&caseId=<id>
+    // Streams the per-case MP4 recording saved by case-executor when
+    // QA_RECORD_VIDEO=1. Supports HTTP Range requests so the HTML5 <video>
+    // element can seek without downloading the full file.
+    if (url.startsWith("/api/qa/manual/case-video") && method === "GET") {
+      const u = new URL(url, "http://localhost");
+      const slug = u.searchParams.get("game");
+      const caseId = u.searchParams.get("caseId");
+      if (!slug || !caseId) return sendJson(res, 400, { error: "game and caseId required" }), true;
+      const { createReadStream, statSync } = await import("node:fs");
+      const path = await import("node:path");
+      const { dirForGame } = await import("../registry/paths.js");
+      const safeName = caseId.replace(/[^a-zA-Z0-9_.-]/g, "_");
+      const file = path.join(dirForGame(slug), "case-evidence", `${safeName}.mp4`);
+      let stat;
+      try {
+        stat = statSync(file);
+      } catch {
+        return sendJson(res, 404, { error: `no video for ${caseId}` }), true;
+      }
+      const total = stat.size;
+      const range = req.headers["range"];
+      if (typeof range === "string") {
+        const m = range.match(/bytes=(\d+)-(\d*)/);
+        if (m) {
+          const start = Number(m[1]);
+          const end = m[2] ? Number(m[2]) : total - 1;
+          if (start >= total || end >= total || start > end) {
+            res.writeHead(416, { "content-range": `bytes */${total}` });
+            res.end();
+            return true;
+          }
+          res.writeHead(206, {
+            "content-type": "video/mp4",
+            "content-length": end - start + 1,
+            "content-range": `bytes ${start}-${end}/${total}`,
+            "accept-ranges": "bytes",
+            "cache-control": "no-store",
+          });
+          createReadStream(file, { start, end }).pipe(res);
+          return true;
+        }
+      }
+      res.writeHead(200, {
+        "content-type": "video/mp4",
+        "content-length": total,
+        "accept-ranges": "bytes",
+        "cache-control": "no-store",
+      });
+      createReadStream(file).pipe(res);
+      return true;
     }
 
     // GET /api/qa/manual/case-history-screenshot?game=<slug>&caseId=<id>&page=<n>

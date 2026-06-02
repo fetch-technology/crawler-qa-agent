@@ -26,6 +26,7 @@ import { detectAssertionSignals, signalsFromRefs } from "./assertion-signals.js"
 import { detectUiOnlyCase, isOpenUiKey } from "./ui-case-detect.js";
 import { calcConfidence, buildSignalEvidence } from "./evidence/confidence.js";
 import { adaptSpinForAssertions } from "../step6-build-model/spin-adapter.js";
+import { CaseVideoRecorder } from "./case-video-recorder.js";
 import { resolveTimingConfig } from "../registry/timing-config.js";
 import { resolveBetControls } from "../registry/bet-controls.js";
 import { resolvePopupKeywords } from "../registry/popup-keywords.js";
@@ -191,6 +192,10 @@ export type CaseResult = {
    *  (pass + fail + skip) so QA can verify visual state without re-running.
    *  Relative to repo root. */
   screenshotPath?: string;
+  /** Path to an MP4 screen recording of the case. Present only when
+   *  QA_RECORD_VIDEO=1 AND ffmpeg is in PATH. fps configured via
+   *  QA_RECORD_VIDEO_FPS (default 5). */
+  videoPath?: string;
   /** Per-region OCR snapshots taken at end of case. Always present (even when
    *  empty) so dashboard can render "OCR Evidence" panel consistently. */
   ocrSnapshots?: OcrSnapshot[];
@@ -340,6 +345,38 @@ export async function executeCase(
   if (input.skipReason) {
     return { ...base, skipReason: input.skipReason, durationMs: Date.now() - start };
   }
+
+  // Per-case screen recorder (QA_RECORD_VIDEO=1 + ffmpeg in PATH). Started
+  // here AFTER the skip check so skipped cases produce no .frames artifacts.
+  // Stopped before each return below via stopVideo() — the result includes
+  // the MP4 path so the dashboard can link it. Optional override:
+  // QA_RECORD_VIDEO_FPS (default 5). Higher fps = larger files + slower
+  // ffmpeg compose; 5fps suffices for slot UI debugging.
+  let videoRecorder: CaseVideoRecorder | null = null;
+  let videoPath: string | undefined = undefined;
+  if (process.env.QA_RECORD_VIDEO === "1" && ctx.gameSlug) {
+    if (await CaseVideoRecorder.ffmpegAvailable()) {
+      const evidenceDir = path.join(dirForGame(ctx.gameSlug), "case-evidence");
+      await mkdir(evidenceDir, { recursive: true });
+      videoRecorder = new CaseVideoRecorder({
+        caseEvidenceDir: evidenceDir,
+        caseId: input.id,
+        fps: Number(process.env.QA_RECORD_VIDEO_FPS ?? 5),
+      });
+      await videoRecorder.start(ctx.page);
+    } else {
+      warnings.push("QA_RECORD_VIDEO=1 but ffmpeg not found in PATH — skipping video");
+    }
+  }
+  const stopVideo = async (): Promise<void> => {
+    if (!videoRecorder) return;
+    const out = await videoRecorder.stop();
+    videoRecorder = null;
+    if (out) {
+      videoPath = path.relative(process.cwd(), out);
+      console.log(`[case-video] ${input.id} → ${videoPath}`);
+    }
+  };
 
   // Multi-spin capture: PP autoplay fires N responses sequentially. We collect
   // ALL spin responses (parseable + matching /gameService) during execution
@@ -933,6 +970,7 @@ export async function executeCase(
     ctx.page.off("response", onResponse);
     await processQueue.catch(() => undefined);  // drain any in-flight listeners
     const screenshotPath = await captureCaseScreenshot(ctx.page, ctx.gameSlug, input.id) ?? undefined;
+    await stopVideo();
     return {
       ...base,
       status: "fail",
@@ -940,6 +978,7 @@ export async function executeCase(
       skipReason: `action failed: ${err instanceof Error ? err.message : String(err)}`,
       durationMs: Date.now() - start,
       screenshotPath,
+      videoPath,
       warnings: warnings.length > 0 ? warnings : undefined,
     };
   }
@@ -1152,6 +1191,7 @@ export async function executeCase(
       warnings.push(`network diagnostics: 0 responses seen on page — spin click may not be hitting the right target`);
     }
     const screenshotPath = await captureCaseScreenshot(ctx.page, ctx.gameSlug, input.id) ?? undefined;
+    await stopVideo();
     return {
       ...base,
       status: "fail",
@@ -1159,6 +1199,7 @@ export async function executeCase(
       skipReason: "no spin response captured within timeout",
       durationMs: Date.now() - start,
       screenshotPath,
+      videoPath,
       warnings: warnings.length > 0 ? warnings : undefined,
     };
   }
@@ -1745,6 +1786,10 @@ export async function executeCase(
     }
   }
 
+  // Stop video recording before assembling the final result so `videoPath`
+  // is set when ffmpeg compose succeeded.
+  await stopVideo();
+
   const result: CaseResult = {
     ...base,
     status: allPass ? "pass" : "fail",
@@ -1763,6 +1808,7 @@ export async function executeCase(
     spinsCount: collectedSpins.length,
     durationMs: Date.now() - start,
     screenshotPath,
+    videoPath,
     ocrSnapshots: ocrSnapshots.length > 0 ? ocrSnapshots : undefined,
     actionLog: actionLog.length > 0 ? actionLog : undefined,
     signalRollup,

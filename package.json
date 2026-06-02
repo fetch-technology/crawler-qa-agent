@@ -5,6 +5,7 @@
   "description": "Playwright-based QA automation for Revenge Games canvas games",
   "type": "module",
   "scripts": {
+    "postinstall": "playwright install chromium",
     "qa": "tsx src/pipeline/cli/qa.ts",
     "qa:cold": "tsx src/pipeline/cli/qa-cold.ts",
     "qa:warm": "tsx src/pipeline/cli/qa-warm.ts",
