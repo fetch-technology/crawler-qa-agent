@@ -198,14 +198,23 @@ export function extractPinnedBetAmount(
   customAssertions: Array<{ check_code?: string }> | undefined,
 ): number | null {
   if (!customAssertions) return null;
+  // Match `<identifier>.betAmount` — `<identifier>` is whatever the catalog
+  // AI named the spin variable: `spin` for top-level top, but commonly `s`
+  // / `r` / `c` inside `.every(s => …)` / `.map(s => …)` / `.reduce(...)`
+  // lambdas over collector.spins. Earlier the regex hard-coded `spin.`
+  // which missed every `.every`/.map`/.reduce` assertion → no pinned bet
+  // detected → fallback to set_bet_to_min → assertion failed because the
+  // spin landed at MIN (e.g. 0.20) instead of the asserted target (7.00).
+  // \b boundary on left so we don't pick up unrelated suffixes like
+  // `someotherbetAmount` (unlikely but cheap to guard against).
   for (const a of customAssertions) {
     const code = a.check_code;
     if (!code) continue;
-    // Pattern 1: spin.betAmount === 7.00 / spin.betAmount == 7
-    const eqMatch = code.match(/spin\.betAmount\s*===?\s*(\d+(?:\.\d+)?)/);
+    // Pattern 1: <id>.betAmount === 7.00 / <id>.betAmount == 7
+    const eqMatch = code.match(/\b[A-Za-z_$][\w$]*\.betAmount\s*===?\s*(\d+(?:\.\d+)?)/);
     if (eqMatch) return Number(eqMatch[1]);
-    // Pattern 2: Math.abs(spin.betAmount - 7.00) <= 0.01
-    const absMatch = code.match(/Math\.abs\(\s*spin\.betAmount\s*-\s*(\d+(?:\.\d+)?)/);
+    // Pattern 2: Math.abs(<id>.betAmount - 7.00) <= 0.01
+    const absMatch = code.match(/Math\.abs\(\s*\b[A-Za-z_$][\w$]*\.betAmount\s*-\s*(\d+(?:\.\d+)?)/);
     if (absMatch) return Number(absMatch[1]);
   }
   return null;
