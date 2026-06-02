@@ -25,6 +25,8 @@ tests/generated/
 *.log
 npm-debug.log*
 yarn-error.log*
+# pm2 daemon logs (ecosystem.config.cjs writes qa.out.log / qa.err.log here)
+logs/
 
 # ===== Local tooling =====
 .claude/settings.local.json

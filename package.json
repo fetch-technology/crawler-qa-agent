@@ -6,6 +6,11 @@
   "type": "module",
   "scripts": {
     "postinstall": "playwright install chromium",
+    "serve:daemon": "pm2 start ecosystem.config.cjs",
+    "serve:stop": "pm2 stop qa",
+    "serve:restart": "pm2 restart qa --update-env",
+    "serve:logs": "pm2 logs qa",
+    "serve:status": "pm2 status qa",
     "qa": "tsx src/pipeline/cli/qa.ts",
     "qa:cold": "tsx src/pipeline/cli/qa-cold.ts",
     "qa:warm": "tsx src/pipeline/cli/qa-warm.ts",
