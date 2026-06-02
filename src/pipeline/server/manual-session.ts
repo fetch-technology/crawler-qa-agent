@@ -71,6 +71,19 @@ export type SessionStatus = {
    *  page reload — without it the button re-enables and QA assumes the run
    *  stopped, even though the server-side job is still running. */
   autoOnboardInProgress: boolean;
+  /** Currently-running preview case (set when the previewCase mutex is held).
+   *  Dashboard polls these to bypass long HTTP requests that proxies (frp
+   *  HTTP vhost, nginx) kill at 60-120s. Flow: POST /preview-case kicks off
+   *  the run, client polls /status, when {inProgress=false, lastCaseId=X}
+   *  it fetches /case-result for X. Works regardless of whether the original
+   *  POST returned successfully or was 504'd. */
+  previewCaseInProgress: boolean;
+  previewCaseId: string | null;
+  /** Last case the server actually ran (set when previewCase finishes,
+   *  success or fail). Lets the client tell "case X finished" vs "case X
+   *  never started because mutex was held". */
+  previewCaseLastFinishedId: string | null;
+  previewCaseLastFinishedAt: string | null;
 };
 
 export type SubStateSuggestion = {
@@ -265,6 +278,18 @@ export class ManualSessionManager {
    *  autoOnboard 5 times in a row, last 4 overwriting the first's results.
    *  Set when work begins, cleared in finally. Re-entries return 409. */
   private autoOnboardInProgress = false;
+  /** Mutex for previewCase. Without it, a proxy 504 timeout that's CLIENT-side
+   *  doesn't cancel the server-side promise — case-executor keeps running.
+   *  If the dashboard's Run-All loop catches the 504 as failure and fires the
+   *  NEXT case, two executeCase() invocations attach response listeners to
+   *  the SAME Playwright page simultaneously → spin events leak between cases
+   *  → assertion sees mixed collector data (e.g. autoplay-50 case sees free-
+   *  spin frames from a different case). Concurrent requests 409 fast. */
+  private previewCaseInProgress = false;
+  /** Polling-pattern bookkeeping — see SessionStatus.previewCase* docs. */
+  private previewCaseId: string | null = null;
+  private previewCaseLastFinishedId: string | null = null;
+  private previewCaseLastFinishedAt: string | null = null;
   /** P3 — game-specific buttons the AI noticed beyond the expected list during
    *  the last discovery, AUTO-ADDED to the registry as pending. Tracked so the
    *  dashboard can highlight them for QA to verify / rename / remove. */
@@ -397,6 +422,10 @@ export class ManualSessionManager {
       expectedElements: [...this.expectedElementKeys],
       discoveryAutoAdded: [...this.discoveryAutoAdded],
       autoOnboardInProgress: this.autoOnboardInProgress,
+      previewCaseInProgress: this.previewCaseInProgress,
+      previewCaseId: this.previewCaseId,
+      previewCaseLastFinishedId: this.previewCaseLastFinishedId,
+      previewCaseLastFinishedAt: this.previewCaseLastFinishedAt,
     };
   }
 
@@ -2893,6 +2922,29 @@ export class ManualSessionManager {
     opts: { ensureMain?: boolean } = {},
   ): Promise<{ ok: boolean; result?: CaseResult; reason?: string }> {
     if (!this.session || !this.gameSlug || !this.registry) return { ok: false, reason: "no active session" };
+    // Concurrency guard — see previewCaseInProgress field comment for why
+    // this matters (proxy 504 + dashboard retry / Run-All loop firing next
+    // case while server still on previous one → listener cross-talk).
+    if (this.previewCaseInProgress) {
+      return { ok: false, reason: "another previewCase is already running on this session — please wait for it to complete (HTTP 409)" };
+    }
+    this.previewCaseInProgress = true;
+    this.previewCaseId = caseId;
+    try {
+      return await this.previewCaseInner(caseId, opts);
+    } finally {
+      this.previewCaseInProgress = false;
+      this.previewCaseId = null;
+      this.previewCaseLastFinishedId = caseId;
+      this.previewCaseLastFinishedAt = new Date().toISOString();
+    }
+  }
+
+  private async previewCaseInner(
+    caseId: string,
+    opts: { ensureMain?: boolean } = {},
+  ): Promise<{ ok: boolean; result?: CaseResult; reason?: string }> {
+    if (!this.session || !this.gameSlug || !this.registry) return { ok: false, reason: "no active session" };
     const catalog = await loadAiCatalog(this.gameSlug);
     if (!catalog) return { ok: false, reason: "test-cases.json not found" };
     const tc = catalog.cases.find((c) => c.id === caseId);
@@ -3152,7 +3204,31 @@ export class ManualSessionManager {
     caseId: string,
     opts: { ensureMain?: boolean } = {},
   ): Promise<{ ok: boolean; result?: CaseResult; reason?: string; autoActions?: string[] }> {
-    const initial = await this.previewCase(caseId, opts);
+    // Hold the mutex for the WHOLE auto-flow (initial run + heuristic review +
+    // patch apply + rerun). Inner calls go through previewCaseInner to avoid
+    // recursive lock acquisition. Without this, the rerun at line 3215 could
+    // race with a concurrent /preview-case HTTP request triggered by client
+    // retry after a proxy 504 timeout — see previewCaseInProgress field comment.
+    if (this.previewCaseInProgress) {
+      return { ok: false, reason: "another previewCase is already running on this session — please wait for it to complete (HTTP 409)" };
+    }
+    this.previewCaseInProgress = true;
+    this.previewCaseId = caseId;
+    try {
+      return await this.previewCaseAutoInner(caseId, opts);
+    } finally {
+      this.previewCaseInProgress = false;
+      this.previewCaseId = null;
+      this.previewCaseLastFinishedId = caseId;
+      this.previewCaseLastFinishedAt = new Date().toISOString();
+    }
+  }
+
+  private async previewCaseAutoInner(
+    caseId: string,
+    opts: { ensureMain?: boolean } = {},
+  ): Promise<{ ok: boolean; result?: CaseResult; reason?: string; autoActions?: string[] }> {
+    const initial = await this.previewCaseInner(caseId, opts);
     if (!initial.ok || !initial.result) return initial;
 
     const outcome = initial.result.outcome;
@@ -3184,8 +3260,9 @@ export class ManualSessionManager {
       }
       autoLog.push(`patch applied: ${review.suggestedPatch.file} (audit: ${applied.auditLogPath?.split("/").pop()})`);
 
-      // One rerun (no further loop here — loop variant is autoRerunWithPatches)
-      const rerun = await this.previewCase(caseId);
+      // One rerun (no further loop here — loop variant is autoRerunWithPatches).
+      // previewCaseInner: bypass the outer mutex (we already hold it).
+      const rerun = await this.previewCaseInner(caseId);
       if (!rerun.ok || !rerun.result) {
         autoLog.push(`rerun failed: ${rerun.reason}`);
         return { ...rerun, autoActions: autoLog };

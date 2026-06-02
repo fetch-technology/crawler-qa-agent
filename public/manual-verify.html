@@ -138,7 +138,7 @@
     <div class="row" style="margin-bottom: 10px;">
       <button id="btnDeepDiscover" disabled style="background: #6366f1; font-size: 11px;" title="Recursive AI exploration: open every safe button, hash each new state, discover its elements, auto-probe. Bounded by depth/AI-calls/states.">Deep Discover (AI)</button>
       <button id="btnProbePending" disabled style="background: #7c5cff; font-size: 11px;" title="Auto-verify pending elements by clicking each + observing the expected signal (network/popup). Replaces most QA Pick work.">Probe Pending</button>
-      <button id="btnAutoOnboard" disabled style="background: #16a34a; font-size: 11px;" title="One-click: deep-discover the UI graph + auto-probe + calibrate the payout model. ~5–10 minutes per game.">Auto-Onboard</button>
+      <button id="btnAutoOnboard" disabled style="background: #16a34a; font-size: 11px;" title="One-click: deep-discover the UI graph + auto-probe + calibrate the payout model. Can take 30 minutes to over an hour per game depending on UI complexity + AI latency.">Auto-Onboard</button>
     </div>
     <div id="elementsContainer">
       <p class="empty">No active session.</p>
@@ -2503,18 +2503,103 @@
     // Quiet runner: POST preview-case + store result + log. Does NOT expand /
     // scroll / re-render the case list (so batch runs don't jump the screen).
     // Returns the stored result object (or null on failure).
+    //
+    // Two-phase strategy to survive proxy timeouts (frp HTTP vhost defaults
+    // to 60s, nginx/Cloudflare similar) — case can run 30s to several hours
+    // for deep-discover / autoplay batches:
+    //   1. Direct POST: works for fast cases (<proxy timeout).
+    //   2. If POST throws (504 / network / cancel), fall back to polling
+    //      /status until previewCaseLastFinishedId matches OUR caseId AND
+    //      previewCaseLastFinishedAt > startTime → fetch /case-result from
+    //      disk (server already persisted it).
+    // Server-side mutex (previewCaseInProgress) ensures only one case runs
+    // per session at a time, so polling can identify "our" completion safely.
     async function runCaseBackend(caseId, opts = {}) {
       const autoMode = opts.autoMode ?? (document.getElementById("runAllAutoMode")?.checked === true);
       const ensureMain = opts.ensureMain !== false;
+      const slug = window.__lastCasesSlug;
+      const startIso = new Date().toISOString();
+      const startMs = Date.now();
       appendLog(`[run-case] starting ${caseId}${autoMode ? " (auto-mode)" : ""}`);
-      const r = await api("/api/qa/manual/preview-case", {
-        method: "POST", body: { caseId, autoMode, ensureMain },
-      });
-      if (!r.ok || !r.result) {
-        appendLog(`[run-case] ${caseId} failed: ${r.reason ?? "unknown"}`);
+
+      let result = null;
+      let autoActions = null;
+      try {
+        const r = await api("/api/qa/manual/preview-case", {
+          method: "POST", body: { caseId, autoMode, ensureMain },
+        });
+        if (r.ok && r.result) {
+          result = r.result;
+          autoActions = r.autoActions ?? null;
+        } else if (!r.ok && r.reason) {
+          appendLog(`[run-case] ${caseId} server replied not-ok: ${r.reason}`);
+          // Don't return — fall through to polling. Server may still be running.
+        }
+      } catch (err) {
+        appendLog(`[run-case] HTTP failed (likely proxy timeout): ${err.message}. Polling /status for completion…`);
+      }
+
+      // Polling fallback when direct POST didn't yield a fresh result.
+      if (!result && slug) {
+        const POLL_MS = 3000;
+        const MAX_POLL_MS = 4 * 60 * 60 * 1000; // 4h safety cap
+        const pollDeadline = Date.now() + MAX_POLL_MS;
+        let lastLogMs = 0;
+        while (Date.now() < pollDeadline) {
+          await new Promise((r) => setTimeout(r, POLL_MS));
+          let status = null;
+          try { status = await api("/api/qa/manual/status"); } catch { /* transient */ }
+          if (!status) continue;
+          // Completion: server finished OUR case AFTER we started.
+          const finishedOurs = status.previewCaseLastFinishedId === caseId
+            && status.previewCaseLastFinishedAt
+            && status.previewCaseLastFinishedAt > startIso;
+          if (finishedOurs) {
+            appendLog(`[run-case] ${caseId} finished server-side (polling detected) — fetching result.json`);
+            break;
+          }
+          // Different case running → mutex rejected ours (409). Bail.
+          if (status.previewCaseInProgress && status.previewCaseId && status.previewCaseId !== caseId) {
+            appendLog(`[run-case] ${caseId} not started — another case "${status.previewCaseId}" is running`);
+            return null;
+          }
+          // Progress log every ~30s so user knows polling is alive.
+          if (Date.now() - lastLogMs > 30000) {
+            const elapsedS = ((Date.now() - startMs) / 1000).toFixed(0);
+            const stillRunning = status.previewCaseInProgress && status.previewCaseId === caseId;
+            appendLog(`[run-case] ${caseId} polling… ${elapsedS}s elapsed${stillRunning ? " (server still running)" : ""}`);
+            lastLogMs = Date.now();
+          }
+        }
+        // Fetch persisted result from disk.
+        try {
+          const res = await fetch(`/api/qa/manual/case-result?game=${encodeURIComponent(slug)}&caseId=${encodeURIComponent(caseId)}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data?.result) {
+              // Sanity: the file must be at least as recent as our start.
+              if (data.result.ranAt && data.result.ranAt < startIso) {
+                appendLog(`[run-case] ${caseId} result.json is stale (older than start) — server may have crashed mid-run`);
+                return null;
+              }
+              result = data.result;
+            }
+          }
+        } catch (err) {
+          appendLog(`[run-case] ${caseId} could not fetch case-result: ${err.message}`);
+          return null;
+        }
+        if (!result) {
+          appendLog(`[run-case] ${caseId} polling timed out + no result.json on disk`);
+          return null;
+        }
+      }
+
+      if (!result) {
+        appendLog(`[run-case] ${caseId} failed: no result obtained`);
         return null;
       }
-      const result = r.result;
+      const r = { ok: true, result, autoActions };
       if (Array.isArray(r.autoActions)) for (const step of r.autoActions) appendLog(`[auto-mode] ${step}`);
       appendLog(`[run-case] ${caseId} → ${result.status} (${result.actionsExecuted} actions in ${result.durationMs}ms)`);
       if (result.spin) appendLog(`[run-case] captured spin: bet=${result.spin.bet} win=${result.spin.win} balance=${result.spin.balanceAfter}`);
@@ -2724,7 +2809,7 @@
     };
 
     $("#btnAutoOnboard").onclick = async () => {
-      if (!confirm("Auto-Onboard runs: deep-discover (recursive AI exploration) + payout-model calibrate (spins at ≥2 bet levels). ~5–10 minutes per game. Continue?")) return;
+      if (!confirm("Auto-Onboard runs: deep-discover (recursive AI exploration) + payout-model calibrate (spins at ≥2 bet levels). Takes 30 minutes to over an hour per game depending on UI complexity. Process runs in background — you can leave the tab open and check back later. Continue?")) return;
       const btn = $("#btnAutoOnboard");
       const prev = btn.textContent;
       btn.disabled = true; btn.textContent = "Onboarding…";
