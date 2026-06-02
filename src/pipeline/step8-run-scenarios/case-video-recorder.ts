@@ -45,6 +45,7 @@ export class CaseVideoRecorder {
   async start(page: Page): Promise<void> {
     await mkdir(this.framesDir, { recursive: true });
     const intervalMs = Math.max(50, Math.floor(1000 / this.fps));
+    console.log(`[case-video] start recording → ${this.framesDir} (fps=${this.fps}, interval=${intervalMs}ms)`);
     this.timer = setInterval(() => {
       if (this.stopped || this.inFlight) return;
       this.inFlight = true;
@@ -77,10 +78,12 @@ export class CaseVideoRecorder {
     }
 
     if (this.frameIdx === 0) {
+      console.warn(`[case-video] stop: 0 frames captured (page may have closed early) → skipping compose`);
       await rm(this.framesDir, { recursive: true, force: true }).catch(() => {});
       return null;
     }
 
+    console.log(`[case-video] stop: ${this.frameIdx} frames captured → composing MP4 via ffmpeg…`);
     return new Promise((resolve) => {
       // -pix_fmt yuv420p + even-dimension scale: x264 needs both for broad
       // player compatibility. Browser screenshots are 1280×720 by default
@@ -95,14 +98,31 @@ export class CaseVideoRecorder {
         "-preset", "veryfast",
         this.outputPath,
       ];
-      const p = spawn("ffmpeg", args, { stdio: "ignore" });
-      p.on("error", async () => {
+      // Capture stderr so failure reason surfaces in server logs — ffmpeg
+      // writes diagnostics to stderr (codec missing, file unreadable, etc.).
+      // When ffmpeg isn't on PATH for the Node process (common on launchd-
+      // managed servers where /opt/homebrew/bin isn't injected), spawn emits
+      // ENOENT via the 'error' event.
+      const p = spawn("ffmpeg", args, { stdio: ["ignore", "ignore", "pipe"] });
+      let stderr = "";
+      p.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+      p.on("error", async (err) => {
+        console.error(`[case-video] ffmpeg spawn failed: ${err.message}. Is ffmpeg on the Node process PATH? Try: \`which ffmpeg\` in the same shell that starts the server.`);
         await rm(this.framesDir, { recursive: true, force: true }).catch(() => {});
         resolve(null);
       });
       p.on("close", async (code) => {
         await rm(this.framesDir, { recursive: true, force: true }).catch(() => {});
-        resolve(code === 0 ? this.outputPath : null);
+        if (code === 0) {
+          console.log(`[case-video] composed → ${this.outputPath}`);
+          resolve(this.outputPath);
+        } else {
+          // Surface the last 1000 chars of stderr — full output can be huge
+          // for codec issues but the trailing lines usually carry the cause.
+          const tail = stderr.slice(-1000).trim();
+          console.error(`[case-video] ffmpeg exited with code ${code}. stderr tail:\n${tail}`);
+          resolve(null);
+        }
       });
     });
   }

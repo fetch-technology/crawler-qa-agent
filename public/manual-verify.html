@@ -1489,10 +1489,19 @@
         window.__lastCasesSlug = slug;
         // Restore cached run results from localStorage (fastest, browser-only)
         window.__caseResults = loadCaseResults(slug);
-        // SERVER fallback (2026-05-25): for any case WITHOUT a cached result,
-        // try fetching the persisted JSON from disk. Survives localStorage
-        // clears + works cross-device. Done in parallel; failures silent.
-        const missing = (r.cases || []).filter((c) => !window.__caseResults[c.id]);
+        // SERVER fallback: for any case WITHOUT a cached result, OR with a
+        // cached entry that's missing ranAt (older cache from before the
+        // server-mtime injection), refetch from disk to pick up the server's
+        // mtime-based ranAt. Without the ranAt check, a stale cache entry
+        // sticks forever and the dashboard shows "—" for the timestamp on
+        // every reload.
+        const missing = (r.cases || []).filter((c) => {
+          const cached = window.__caseResults[c.id];
+          if (!cached) return true;
+          if (!cached.ranAt) return true;
+          const t = new Date(cached.ranAt).getTime();
+          return !Number.isFinite(t);
+        });
         if (missing.length > 0) {
           await Promise.all(missing.map(async (c) => {
             try {
