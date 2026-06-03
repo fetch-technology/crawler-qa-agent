@@ -394,14 +394,26 @@
       }).join("");
     }
 
-    // Two timers: server-poll (5s) refreshes /status → updates phase
-    // lifecycle (pending→running→ok/fail). Local-tick (1s) just re-renders
-    // the running phase's elapsed counter so QA sees live "23s..." count
-    // up without spamming the server with 1s polls.
+    // Two timers: server-poll (5s) refreshes ONLY /status (light) → updates
+    // phase lifecycle (pending→running→ok/fail). Local-tick (1s) just
+    // re-renders the running phase's elapsed counter so QA sees live "23s..."
+    // count up without spamming the server with 1s polls.
+    //
+    // Light polling — only /status, not full refresh(). The heavy companion
+    // APIs (/games, /cases, /discovery-snapshots, /ocr-regions) don't change
+    // during Auto-Onboard phases, so polling them is pure waste (~10-20min
+    // run × every 5s × 4 extra calls = 480-960 wasted HTTP). The final
+    // renderStatus() at run completion (via the prevOnboarding→false
+    // transition) picks up registry growth from discovery anyway.
     let onboardLocalTickTimer = null;
     function startOnboardPolling() {
       if (onboardPollTimer) return;
-      onboardPollTimer = setInterval(() => { refresh().catch(() => {}); }, 5000);
+      onboardPollTimer = setInterval(async () => {
+        try {
+          const status = await api("/api/qa/manual/status");
+          renderStatus(status);
+        } catch { /* transient */ }
+      }, 5000);
       onboardLocalTickTimer = setInterval(() => {
         if (!currentStatus) return;
         renderOnboardPhases(
@@ -433,7 +445,14 @@
         startOnboardPolling();
       } else {
         stopOnboardPolling();
-        if (prevOnboarding) toast("Auto-Onboard finished");
+        if (prevOnboarding) {
+          // Transition true→false: Auto-Onboard just finished. Fire ONE full
+          // refresh() to pickup post-onboard data (new cases, snapshots,
+          // ocr-regions, games-list updates). Polling itself only fetches
+          // /status to stay light during the run.
+          toast("Auto-Onboard finished");
+          refresh().catch(() => {});
+        }
       }
       renderOnboardPhases(status.autoOnboardPhases ?? [], status.autoOnboardCurrentPhase ?? null, onboarding);
       $("#btnStart").disabled = active;
