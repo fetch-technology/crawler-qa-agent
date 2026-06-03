@@ -176,6 +176,12 @@ export type CaseResult = {
   skipReason?: string;
   actionsExecuted: number;
   assertions: AssertionResult[];
+  /** Synthetic precheck / heuristic checks (id starts with `_`). Surface
+   *  setup-state mismatches (e.g. "setup tried to set bet=7 but captured
+   *  0.2") for QA root-cause hints. DOES NOT count toward pass/fail
+   *  verdict — case `status` is computed from `assertions[]` only. Empty
+   *  array when no precheck applied. */
+  diagnostics?: AssertionResult[];
   /** Last (or only) spin captured. For multi-spin cases, see spinsCount. */
   spin: {
     bet: number;
@@ -289,6 +295,12 @@ export type CaseExecutorContext = {
    *  sandbox so `payoutModelCheck(spin)` can verify combo wins vs paytable.
    *  When null/untrusted the check is a no-op (never false-fails). */
   payoutModel?: import("../registry/types.js").PayoutModel | null;
+  /** Captured external browser tabs opened during this case (window.open
+   *  triggered by clicks). Populated by a context "page" listener attached
+   *  in executeCase. Click actions on elements with `externalPage: true`
+   *  target the most-recently-opened tab here. Cleared (tabs closed) at
+   *  end of case. Defaults to undefined — clicks fall back to ctx.page. */
+  externalTabs?: Array<Page>;
 };
 
 export type CaseInput = {
@@ -346,6 +358,40 @@ export async function executeCase(
     return { ...base, skipReason: input.skipReason, durationMs: Date.now() - start };
   }
 
+  // External tab tracking: graph-explorer registers historyButton's children
+  // (and other tab-opening triggers) with `externalPage: true`. When the
+  // case clicks the parent trigger, the game's window.open fires a new
+  // tab; the listener here captures it. Subsequent clicks on children
+  // with externalPage=true route to the captured tab instead of the
+  // original game page. Cleanup: tabs are closed at end of case so the
+  // browser doesn't accumulate handles across multi-case runs.
+  const externalTabs: Array<import("playwright").Page> = [];
+  // Forward-declare the spin-response listener so onExternalPage can attach
+  // it to new tabs the moment they're captured. `onResponse` is defined ~150
+  // lines below; this declaration just promises TypeScript it exists.
+  let onResponseRef: ((res: import("playwright").Response) => void) | null = null;
+  const onExternalPage = (p: import("playwright").Page): void => {
+    externalTabs.push(p);
+    console.log(`[case-action] external tab opened — case has ${externalTabs.length} active`);
+    // Mirror the spin-response listener onto the new tab so any
+    // spin/history/feature responses fired from the tab's context get
+    // captured too (rare for history pages but defensive — and necessary
+    // if a tab fires e.g. doSpin via shared cookies).
+    if (onResponseRef) p.on("response", onResponseRef);
+  };
+  ctx.page.context().on("page", onExternalPage);
+  // Expose to executeAction via ctx (mutable shared state). All click
+  // handlers see this same array; tabs added by listener flow in
+  // automatically. Cleanup at end of case.
+  ctx.externalTabs = externalTabs;
+  const closeExternalTabs = async (): Promise<void> => {
+    ctx.page.context().off("page", onExternalPage);
+    for (const p of externalTabs.splice(0)) {
+      if (onResponseRef) { try { p.off("response", onResponseRef); } catch { /* tab dead */ } }
+      try { await p.close(); } catch { /* already closed */ }
+    }
+  };
+
   // Per-case screen recorder (QA_RECORD_VIDEO=1 + ffmpeg in PATH). Started
   // here AFTER the skip check so skipped cases produce no .frames artifacts.
   // Stopped before each return below via stopVideo() — the result includes
@@ -363,7 +409,17 @@ export async function executeCase(
         caseId: input.id,
         fps: Number(process.env.QA_RECORD_VIDEO_FPS ?? 5),
       });
-      await videoRecorder.start(ctx.page);
+      // Pass an active-page callback so the recorder follows external tabs
+      // when the case switches focus. Always returns the most recent open
+      // external tab if any (matches click routing in executeAction); else
+      // falls back to the main game page.
+      await videoRecorder.start(ctx.page, () => {
+        for (let i = externalTabs.length - 1; i >= 0; i--) {
+          const p = externalTabs[i];
+          if (p && !p.isClosed()) return p;
+        }
+        return ctx.page;
+      });
     } else {
       warnings.push("QA_RECORD_VIDEO=1 but ffmpeg not found in PATH — skipping video");
     }
@@ -676,6 +732,12 @@ export async function executeCase(
     });
   };
   if (expectsSpin) ctx.page.on("response", onResponse);
+  // Wire the forward-declared ref so onExternalPage can attach the same
+  // handler to any tabs already in-flight or opened later in the case.
+  if (expectsSpin) {
+    onResponseRef = onResponse;
+    for (const p of externalTabs) p.on("response", onResponse);
+  }
 
   let actionsExecuted = 0;
   // Evidence: per-action telemetry. Each action push entry with timing +
@@ -971,6 +1033,7 @@ export async function executeCase(
     await processQueue.catch(() => undefined);  // drain any in-flight listeners
     const screenshotPath = await captureCaseScreenshot(ctx.page, ctx.gameSlug, input.id) ?? undefined;
     await stopVideo();
+    await closeExternalTabs();
     return {
       ...base,
       status: "fail",
@@ -1192,6 +1255,7 @@ export async function executeCase(
     }
     const screenshotPath = await captureCaseScreenshot(ctx.page, ctx.gameSlug, input.id) ?? undefined;
     await stopVideo();
+    await closeExternalTabs();
     return {
       ...base,
       status: "fail",
@@ -1557,7 +1621,15 @@ export async function executeCase(
     });
   }
 
-  const assertions = [...precheckAssertions, ...userAssertions, ...syntheticUiAssertions, ...syntheticExtraAssertions];
+  // Separate "diagnostics" (auto-injected synthetic checks like _precheck_bet)
+  // from real assertions. Diagnostics surface root-cause hints for QA but
+  // DON'T count toward pass/fail verdict — a precheck false-positive (vd
+  // bet-variation-min where `betAmount < 100` regex-matches as expected
+  // bet=100) used to flip the whole case to FAIL even though every real
+  // assertion passed. Dashboard renders them in a separate Diagnostics
+  // section so verdict + assertion list stay clean.
+  const assertions = [...userAssertions, ...syntheticUiAssertions, ...syntheticExtraAssertions];
+  const diagnostics = [...precheckAssertions];
   const allPass = assertions.every((a) => a.pass);
   // Capture screenshot for EVERY case so QA can review visual state
   // (pass or fail). 2026-05-25 evidence-pkg: previously fail-only.
@@ -1789,12 +1861,14 @@ export async function executeCase(
   // Stop video recording before assembling the final result so `videoPath`
   // is set when ffmpeg compose succeeded.
   await stopVideo();
+    await closeExternalTabs();
 
   const result: CaseResult = {
     ...base,
     status: allPass ? "pass" : "fail",
     actionsExecuted,
     assertions,
+    diagnostics: diagnostics.length > 0 ? diagnostics : undefined,
     spin: spin
       ? {
           bet: spin.bet,
@@ -1961,10 +2035,22 @@ async function executeAction(
     const el = ctx.uiMap[action.uiKey];
     if (!el) throw new Error(`uiKey '${action.uiKey}' not in registry`);
     const times = action.times ?? 1;
-    console.log(`[case-action] click ${action.uiKey} (${el.x},${el.y}) ×${times}${action.reason ? ` — ${action.reason}` : ""}`);
+    // Route to the right page: elements flagged `externalPage: true` were
+    // discovered on a separate browser tab opened by their parent trigger.
+    // Click them on the captured tab page; everything else goes to the
+    // original game page. Helper returns the active page or null when no
+    // tab is captured (logs warning + skips click in that case).
+    const clickPage = el.externalPage
+      ? (ctx.externalTabs && ctx.externalTabs.length > 0 ? ctx.externalTabs[ctx.externalTabs.length - 1] : null)
+      : ctx.page;
+    if (el.externalPage && !clickPage) {
+      console.warn(`[case-action] click ${action.uiKey}: externalPage=true but no tab captured yet — skipping (was the parent trigger clicked?)`);
+      return;
+    }
+    console.log(`[case-action] click ${action.uiKey} (${el.x},${el.y}) ×${times}${el.externalPage ? " [external tab]" : ""}${action.reason ? ` — ${action.reason}` : ""}`);
     for (let i = 0; i < times; i++) {
-      await ctx.page.mouse.click(el.x, el.y);
-      await ctx.page.waitForTimeout(150);
+      await clickPage!.mouse.click(el.x, el.y);
+      await clickPage!.waitForTimeout(150);
     }
     // Bet popup-open fallback: clicking betMinus when bet is already at min
     // (or betPlus at max) is a no-op because the button is DISABLED. For
@@ -2294,21 +2380,31 @@ function runPrechecks(
 
 /**
  * Extract literal bet value from custom_assertions check_code. Looks for
- * patterns like:
+ * EQUALITY patterns only (where the assertion pins bet to a target):
  *   spin.betAmount === 1.00
  *   Math.abs(spin.betAmount - 1.00) <= 0.01
  *   s.betAmount === 100 (inside collector.spins.every)
  * Returns first numeric literal found, or null.
+ *
+ * NOTE: Inequality patterns (< > <= >=) are INTENTIONALLY EXCLUDED.
+ * Those are upper/lower BOUNDS (e.g. "betAmount < 100" = "bet should be
+ * under 100"), not equality targets. Treating them as expected bet caused
+ * false-positive precheck fails on min/max ladder tests like
+ * `bet-variation-min` (assertion `spin.betAmount < 100` → precheck wrongly
+ * expected bet=100 → failed because case correctly hit ladder min 0.2).
  */
 function extractExpectedBetFromAssertions(
   assertions: Array<{ check_code: string }>,
 ): number | null {
   for (const a of assertions) {
-    // Match common patterns. Use `.` field accessor for spin.betAmount or s.betAmount
+    // Match EQUALITY patterns only. `spin.betAmount` or `s.betAmount`.
     const patterns: RegExp[] = [
-      /(?:spin|s)\.betAmount\s*-\s*(\d+(?:\.\d+)?)/, // Math.abs(spin.betAmount - X)
-      /(?:spin|s)\.betAmount\s*===?\s*(\d+(?:\.\d+)?)/, // spin.betAmount === X
-      /(?:spin|s)\.betAmount\s*[<>]=?\s*(\d+(?:\.\d+)?)/, // < > <= >= edges
+      // Math.abs(spin.betAmount - X) — common pinning idiom in catalog AI.
+      // Anchor with Math.abs so we don't match generic subtractions
+      // (e.g. `endingBalance - spin.betAmount + winAmount`).
+      /Math\.abs\(\s*(?:spin|s)\.betAmount\s*-\s*(\d+(?:\.\d+)?)/,
+      // Strict / loose equality.
+      /(?:spin|s)\.betAmount\s*===?\s*(\d+(?:\.\d+)?)/,
     ];
     for (const p of patterns) {
       const m = a.check_code.match(p);

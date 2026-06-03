@@ -111,6 +111,17 @@ export async function generateAiCatalog(input: AiCatalogInput): Promise<AiCatalo
   // Hydrates GameSpec.symbols[] from concrete OCR'd data instead of leaving
   // it empty with a "not extracted" caveat.
   const paytableData = await paytableStore.load(input.gameSlug).catch(() => null);
+  // QA spec override (game-spec-override.json) — pinned bet ladder /
+  // min / max / default. Applied inside buildGameSpec → catalog AI sees
+  // QA-corrected values. When file missing, no-op (auto-derived used).
+  const { gameSpecOverride } = await import("../registry/game-spec-override.js");
+  const ov = await gameSpecOverride.load(input.gameSlug).catch(() => null);
+  const betOverride = ov ? {
+    baseBet: ov.defaultBet,
+    betLadder: ov.betLadder,
+    betMin: ov.betMin,
+    betMax: ov.betMax,
+  } : undefined;
   const gameSpec = buildGameSpec({
     gameSlug: input.gameSlug,
     provider: input.provider,
@@ -119,6 +130,7 @@ export async function generateAiCatalog(input: AiCatalogInput): Promise<AiCatalo
     parsedSpins,
     spinApiUrl: input.spinApiUrl,
     paytable: paytableData,
+    betOverride,
   });
 
   // Build minimal rules markdown from provider + features.

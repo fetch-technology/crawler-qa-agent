@@ -139,6 +139,18 @@
       <button id="btnDeepDiscover" disabled style="background: #6366f1; font-size: 11px;" title="Recursive AI exploration: open every safe button, hash each new state, discover its elements, auto-probe. Bounded by depth/AI-calls/states.">Deep Discover (AI)</button>
       <button id="btnProbePending" disabled style="background: #7c5cff; font-size: 11px;" title="Auto-verify pending elements by clicking each + observing the expected signal (network/popup). Replaces most QA Pick work.">Probe Pending</button>
       <button id="btnAutoOnboard" disabled style="background: #16a34a; font-size: 11px;" title="One-click: deep-discover the UI graph + auto-probe + calibrate the payout model. Can take 30 minutes to over an hour per game depending on UI complexity + AI latency.">Auto-Onboard</button>
+      <button id="btnPauseOnboard" disabled style="background: #f59e0b; font-size: 11px; display: none;" title="Pause Auto-Onboard after the current phase finishes. Mid-phase pause not supported — phases (e.g. Deep Discover) are atomic. Resume via the Auto-Onboard button.">⏸ Pause</button>
+    </div>
+    <!-- Game Spec panel — shows captured + overridden bet ladder / min /
+         max / default. Editable fields write to game-spec-override.json
+         and flow into catalog gen. Hidden when no session / no gameSpec
+         captured yet. -->
+    <div id="gameSpecPanel" style="display: none; margin: 0 0 10px 0; padding: 8px 10px; background: #0d1117; border: 1px solid #2a3140; border-radius: 4px; font-size: 11px;">
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+        <strong style="color: #c8d0d8;">Game Spec</strong>
+        <span style="color: #5e6772; font-size: 10px;">QA edits flow into AI catalog gen</span>
+      </div>
+      <div id="gameSpecBody" style="font-family: ui-monospace, monospace; line-height: 1.8;"></div>
     </div>
     <!-- Per-phase Auto-Onboard progress panel. Populated live via /status
          polling while autoOnboardInProgress=true; persists after run so QA
@@ -324,6 +336,90 @@
     }
 
     let onboardPollTimer = null;
+    // Render Game Spec panel — displays captured values + lets QA edit
+    // betMin/betMax/defaultBet/betLadder. Edits write through to
+    // /api/qa/manual/game-spec (PUT) which saves game-spec-override.json
+    // + recomputes effective spec server-side. Catalog gen + translator
+    // both read the override so AI sees QA-corrected values.
+    function renderGameSpec(spec, override) {
+      const panel = document.getElementById("gameSpecPanel");
+      const body = document.getElementById("gameSpecBody");
+      if (!panel || !body) return;
+      if (!spec) {
+        panel.style.display = "none";
+        return;
+      }
+      panel.style.display = "block";
+      const isOverridden = (key) => override && override[key] != null;
+      const fieldRow = (label, key, value, isList) => {
+        const overrideMark = isOverridden(key)
+          ? `<span style="color:#facc15; font-size:10px; margin-left:6px;" title="QA override active">●</span>`
+          : "";
+        const display = isList
+          ? (Array.isArray(value) ? value.slice(0, 12).join(", ") + (value.length > 12 ? ` …+${value.length - 12}` : "") : value)
+          : value;
+        return `<div style="display:flex; align-items:center; gap:8px;">
+          <span style="color:#8b939c; min-width:100px; display:inline-block;">${label}:</span>
+          <code style="color:${isOverridden(key) ? "#facc15" : "#c8d0d8"};">${escapeHtml(String(display))}</code>
+          ${overrideMark}
+          <button onclick="editGameSpecField('${key}')" style="font-size:10px; padding:1px 6px; background:#1f2937; border:1px solid #374151; color:#9ca3af; border-radius:3px; cursor:pointer;">edit</button>
+        </div>`;
+      };
+      body.innerHTML = [
+        fieldRow("betMin", "betMin", spec.betMin, false),
+        fieldRow("betMax", "betMax", spec.betMax, false),
+        fieldRow("defaultBet", "defaultBet", spec.defaultBet, false),
+        fieldRow("betLadder", "betLadder", spec.betLadder, true),
+        fieldRow("coinValues", "coinValues", spec.coinValues, true),
+        fieldRow("lines", "lines", spec.lines, false),
+        fieldRow("betLevels", "betLevels", spec.betLevels, true),
+        override
+          ? `<div style="margin-top:6px; padding-top:6px; border-top:1px solid #1a1f2a; font-size:10px; color:#8b939c;">Override active (${Object.keys(override).filter((k) => k !== "note" && k !== "updatedAt" && override[k] != null).length} fields)${override.updatedAt ? ` · edited ${new Date(override.updatedAt).toLocaleString()}` : ""} <button onclick="clearGameSpecOverride()" style="font-size:10px; margin-left:6px; padding:1px 6px; background:#7f1d1d; border:none; color:#fee; border-radius:3px; cursor:pointer;">reset all</button></div>`
+          : "",
+      ].join("");
+    }
+
+    window.editGameSpecField = async (key) => {
+      const spec = currentStatus?.gameSpec;
+      if (!spec) return;
+      const current = spec[key];
+      const isList = Array.isArray(current);
+      const prompt = `Edit ${key}\n\n${isList ? "Enter comma-separated numbers (e.g. 0.2, 0.4, 0.6):" : "Enter new numeric value:"}\n\nCurrent: ${isList ? current.join(", ") : current}\n\n(Leave empty + OK to clear override for this field.)`;
+      const input = window.prompt(prompt, isList ? current.join(", ") : String(current));
+      if (input === null) return; // cancel
+      let value;
+      if (input.trim() === "") {
+        value = null; // clear this field
+      } else if (isList) {
+        const arr = input.split(",").map((s) => Number(s.trim())).filter((n) => Number.isFinite(n) && n > 0);
+        if (arr.length === 0) { toast("Invalid list — must be comma-separated numbers > 0", true); return; }
+        value = arr.sort((a, b) => a - b);
+      } else {
+        const n = Number(input);
+        if (!Number.isFinite(n)) { toast(`Invalid number: ${input}`, true); return; }
+        value = n;
+      }
+      try {
+        const r = await api("/api/qa/manual/game-spec", {
+          method: "PUT",
+          body: { [key]: value },
+        });
+        if (!r.ok) { toast(`Update failed: ${r.reason}`, true); return; }
+        toast(`✓ ${key} → ${Array.isArray(value) ? `[${value.length} items]` : value ?? "cleared"}`);
+        await refresh();
+      } catch (err) { toast(err.message, true); }
+    };
+
+    window.clearGameSpecOverride = async () => {
+      if (!confirm("Clear ALL game-spec overrides? Effective spec will revert to auto-captured values.")) return;
+      try {
+        const r = await api("/api/qa/manual/game-spec", { method: "PUT", body: { __clear: true } });
+        if (!r.ok) { toast(`Clear failed: ${r.reason}`, true); return; }
+        toast("✓ Override cleared — using captured spec");
+        await refresh();
+      } catch (err) { toast(err.message, true); }
+    };
+
     // Render Auto-Onboard's per-phase progress as a checklist. Reads
     // status.autoOnboardPhases[] from /status polling. Each phase shows:
     //   - icon (⏳/✓/✗/⊝) based on lifecycle state
@@ -438,9 +534,34 @@
       $("#btnProbePending").disabled = !active;
       $("#btnDeepDiscover").disabled = !active;
       const onboarding = !!status.autoOnboardInProgress;
+      const resumeAvail = !!status.autoOnboardResumeAvailable && !onboarding;
+      const pauseRequested = !!status.autoOnboardPauseRequested;
       const btnAuto = $("#btnAutoOnboard");
+      const btnPause = $("#btnPauseOnboard");
       btnAuto.disabled = !active || onboarding;
-      btnAuto.textContent = onboarding ? "Onboarding…" : "Auto-Onboard";
+      if (onboarding) {
+        btnAuto.textContent = "Onboarding…";
+      } else if (resumeAvail) {
+        const phases = status.autoOnboardPhases ?? [];
+        const okCount = phases.filter((p) => p.status === "ok" || p.status === "skip").length;
+        btnAuto.textContent = `▶ Resume Auto-Onboard (${okCount}/${phases.length})`;
+        btnAuto.style.background = "#facc15";
+        btnAuto.title = "Prior Auto-Onboard was interrupted/paused. Click to resume from where it stopped (skip phases already done). Hold Shift + click to force fresh restart.";
+      } else {
+        btnAuto.textContent = "Auto-Onboard";
+        btnAuto.style.background = "#16a34a";
+      }
+      // Pause button visible only while onboarding. Disable + label switch
+      // once pause is requested so QA doesn't double-click.
+      if (btnPause) {
+        if (onboarding) {
+          btnPause.style.display = "";
+          btnPause.disabled = pauseRequested;
+          btnPause.textContent = pauseRequested ? "⏸ Pausing after current phase…" : "⏸ Pause";
+        } else {
+          btnPause.style.display = "none";
+        }
+      }
       if (onboarding) {
         startOnboardPolling();
       } else {
@@ -455,6 +576,7 @@
         }
       }
       renderOnboardPhases(status.autoOnboardPhases ?? [], status.autoOnboardCurrentPhase ?? null, onboarding);
+      renderGameSpec(status.gameSpec ?? null, status.gameSpecOverride ?? null);
       $("#btnStart").disabled = active;
       $("#btnOcrRefreshShot").disabled = !active;
       $("#btnOcrAutoDetect").disabled = !active;
@@ -1964,6 +2086,28 @@
       const assertionsHtml = assertionRows
         ? `<ul style="margin: 6px 0 0; padding-left: 20px; font-size: 11px; line-height: 1.7;">${assertionRows}</ul>`
         : `<div style="color: #5e6772; font-size: 11px;">No assertions evaluated</div>`;
+
+      // Diagnostics — synthetic precheck assertions (e.g. _precheck_bet).
+      // Rendered in its own info-only section. Failures here DO NOT mark
+      // the case as failed (verdict is purely from real assertions); they
+      // just surface "your setup didn't reach the expected state" hints
+      // for QA root-cause analysis.
+      const diagnosticsList = Array.isArray(r.diagnostics) ? r.diagnostics : [];
+      const diagnosticsHtml = diagnosticsList.length > 0
+        ? `<div style="margin-top: 8px;">
+            <button onclick="toggleEvidence('diagnostics-${c.id}')" class="gray" style="font-size:11px;padding:4px 8px;">🔧 Diagnostics (${diagnosticsList.length})</button>
+            <div id="diagnostics-${c.id}" style="display:none;margin-top:6px;">
+              <div style="color:#5e6772; font-size:11px; font-style:italic; margin-bottom:4px;">Setup-state heuristics — info only, do NOT affect case verdict. Useful for "setup didn't reach expected state" diagnostics.</div>
+              <ul style="margin:6px 0 0; padding-left:20px; font-size:11px; line-height:1.7;">
+                ${diagnosticsList.map((d) => {
+                  const pill = d.pass ? "pass" : "fail";
+                  const detail = d.detail ? `<div style="margin-top:2px; color:#8b939c; font-size:10px;">${escapeHtml(d.detail)}</div>` : "";
+                  return `<li style="margin-bottom:6px;"><span class="pill ${pill}">${d.pass ? "OK" : "WARN"}</span> <strong>${escapeHtml(d.id)}</strong> ${escapeHtml(d.description)}${detail}</li>`;
+                }).join("")}
+              </ul>
+            </div>
+          </div>`
+        : "";
       // Evidence: screenshot captured for EVERY case (pass + fail).
       // Toggle Show/Hide, lazy-load PNG on first show.
       const hasScreenshot = Boolean(r.screenshotPath);
@@ -2258,6 +2402,7 @@
             ${assertionsHtml}
           </div>
         </div>
+        ${diagnosticsHtml}
         <div style="margin-top: 8px; color: #8b939c; font-size: 11px; text-transform: uppercase;">Evidence</div>
         ${screenshotHtml}
         ${videoHtml}
@@ -2969,14 +3114,30 @@
       finally { btn.disabled = false; btn.textContent = prev; }
     };
 
-    $("#btnAutoOnboard").onclick = async () => {
-      if (!confirm("Auto-Onboard runs: deep-discover (recursive AI exploration) + payout-model calibrate (spins at ≥2 bet levels). Takes 30 minutes to over an hour per game depending on UI complexity. Process runs in background — you can leave the tab open and check back later. Continue?")) return;
+    $("#btnPauseOnboard").onclick = async () => {
+      try {
+        const r = await api("/api/qa/manual/auto-onboard/pause", { method: "POST" });
+        if (!r.ok) { toast(`Pause failed: ${r.reason}`, true); return; }
+        toast("Pause requested — will stop after current phase finishes");
+      } catch (err) { toast(err.message, true); }
+    };
+
+    $("#btnAutoOnboard").onclick = async (event) => {
+      // Shift+click forces a fresh restart (ignore any prior resumable state).
+      // Default click auto-resumes from interrupted run if available.
+      const forceFresh = event && event.shiftKey;
+      const resumeAvail = !!currentStatus?.autoOnboardResumeAvailable;
+      const willResume = resumeAvail && !forceFresh;
+      const promptText = willResume
+        ? "Resume Auto-Onboard from where the prior run stopped (skip phases already done). Continue?"
+        : "Auto-Onboard runs: deep-discover (recursive AI exploration) + payout-model calibrate (spins at ≥2 bet levels). Takes 30 minutes to over an hour per game depending on UI complexity. Process runs in background — you can leave the tab open and check back later. Continue?";
+      if (!confirm(promptText)) return;
       const btn = $("#btnAutoOnboard");
       const prev = btn.textContent;
       btn.disabled = true; btn.textContent = "Onboarding…";
-      toast("Auto-Onboard started: deep-discover → payout calibrate…");
+      toast(willResume ? "Resuming Auto-Onboard from prior state…" : "Auto-Onboard started: deep-discover → payout calibrate…");
       try {
-        const r = await api("/api/qa/manual/auto-onboard", { method: "POST", body: {} });
+        const r = await api("/api/qa/manual/auto-onboard", { method: "POST", body: { resume: !forceFresh } });
         // Surface the discover sub-result in the persistent panel — it has the
         // safetyReport + warnings that explain why zero elements might appear.
         renderDiscoverResult("Auto-Onboard / discover", r.discover);

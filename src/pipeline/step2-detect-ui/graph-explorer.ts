@@ -287,36 +287,73 @@ export async function exploreUiGraph(
       let after: PNG | null = null;
       let cls: ReturnType<typeof classifyState> | null = null;
       let usedOffset = { dx: 0, dy: 0 };
-      for (const off of clickOffsets) {
-        const cx = Math.round(el.x + off.dx);
-        const cy = Math.round(el.y + off.dy);
-        try {
-          await page.mouse.click(cx, cy);
-        } catch (err) {
-          if (off.dx === 0 && off.dy === 0) {
-            warnings.push(`click ${frame.stateId}/${elKey} threw: ${String(err)}`);
+      // New-tab detection: some games (esp. external "Game History" services)
+      // open the popup as a separate browser tab via window.open(). Without
+      // listening, the original page's screenshot stays unchanged →
+      // classifyState reports "same state" → explorer marks self-loop and
+      // skips. Set up a one-shot listener BEFORE clicking; capture the new
+      // Page if one fires. Processed after the offset loop.
+      // Use a 1-slot array so TypeScript's flow analysis doesn't narrow
+      // `externalPage` to `never` based on the callback-only assignment.
+      const externalPageSlot: Array<import("playwright").Page> = [];
+      const ctx = page.context();
+      const onNewPage = (p: import("playwright").Page): void => {
+        if (externalPageSlot.length === 0) externalPageSlot.push(p);
+      };
+      ctx.on("page", onNewPage);
+      try {
+        for (const off of clickOffsets) {
+          const cx = Math.round(el.x + off.dx);
+          const cy = Math.round(el.y + off.dy);
+          try {
+            await page.mouse.click(cx, cy);
+          } catch (err) {
+            if (off.dx === 0 && off.dy === 0) {
+              warnings.push(`click ${frame.stateId}/${elKey} threw: ${String(err)}`);
+            }
+            continue;
           }
-          continue;
+          // Per-click settle — typically 1-3 frames suffice once the popup
+          // animation is complete. Was 10 (heavy flicker in headed mode); cut to
+          // 5 saves ~5 screenshots per safe-click without missing slow popups.
+          await waitUntilStable(page, {
+            maxIterations: 5,
+            changeThreshold: 0.01,
+            consecutiveStable: 2,
+          });
+          // Give the context's "page" event a beat to fire — new-page event
+          // is async after click. If a tab opened, abort offset retry (don't
+          // open a SECOND tab on the next offset).
+          await page.waitForTimeout(300);
+          if (externalPageSlot[0]) {
+            // Wait for DOM ready so AI discover has content to see. Bounded
+            // — some history pages are slow to load.
+            await externalPageSlot[0].waitForLoadState("domcontentloaded", { timeout: 8000 }).catch(() => undefined);
+            // Take screenshot of the NEW page (not the original). This is the
+            // "after" state image — used both for state hashing and saved as
+            // the baseline image. Note: classifyState compares against known
+            // states; external page hashes will almost always differ → treated
+            // as a brand new state below.
+            after = await snapshot(externalPageSlot[0]);
+            cls = classifyState(after, knownStates.map((s) => ({ id: s.id, baseline: s.baseline })));
+            usedOffset = off;
+            console.log(`[explorer/external-tab] ${frame.stateId}/${elKey} opened a new browser tab — discovering its contents`);
+            break;
+          }
+          const a = await snapshot(page);
+          const c = classifyState(a, knownStates.map((s) => ({ id: s.id, baseline: s.baseline })));
+          if (c.kind === "match" && c.stateId === frame.stateId) {
+            // Still on the same state — this offset missed. Try next.
+            continue;
+          }
+          // State changed (new or matches another known state) — use this click.
+          after = a;
+          cls = c;
+          usedOffset = off;
+          break;
         }
-        // Per-click settle — typically 1-3 frames suffice once the popup
-        // animation is complete. Was 10 (heavy flicker in headed mode); cut to
-        // 5 saves ~5 screenshots per safe-click without missing slow popups.
-        await waitUntilStable(page, {
-          maxIterations: 5,
-          changeThreshold: 0.01,
-          consecutiveStable: 2,
-        });
-        const a = await snapshot(page);
-        const c = classifyState(a, knownStates.map((s) => ({ id: s.id, baseline: s.baseline })));
-        if (c.kind === "match" && c.stateId === frame.stateId) {
-          // Still on the same state — this offset missed. Try next.
-          continue;
-        }
-        // State changed (new or matches another known state) — use this click.
-        after = a;
-        cls = c;
-        usedOffset = off;
-        break;
+      } finally {
+        ctx.off("page", onNewPage);
       }
 
       if (!after || !cls) {
@@ -341,6 +378,12 @@ export async function exploreUiGraph(
       // Match a known state? Record transition.
       if (cls.kind === "match") {
         transitions.push({ from: frame.stateId, via: elKey, to: cls.stateId });
+        // External tab opened but matches a state we already know (rare —
+        // e.g. external history page visited twice via different triggers).
+        // Close the dup tab so we don't accumulate handles.
+        if (externalPageSlot[0]) {
+          try { await externalPageSlot[0].close(); } catch { /* tab already closed */ }
+        }
         // Trigger alias (2026-06-01): a popup can be reached via multiple
         // triggers — e.g. betPlus AND betMinus both open the same bet
         // selector popup in PP slots. The FIRST trigger to discover the
@@ -398,7 +441,15 @@ export async function exploreUiGraph(
       const triggerHint = o.triggerHints[elKey] ?? "";
       const popupPrompt =
         (mainHint || triggerHint) ? USER_PROMPT_BASE + mainHint + (triggerHint ? "\n\n" + triggerHint : "") : undefined;
-      const newStateData = await aiDiscoverState(page, debugDir, aiCallsUsed, popupPrompt);
+      // If a new tab opened, run AI discover on THAT page (its DOM has the
+      // history/external content), not on the original game page (still
+      // showing the main screen). The captured screenshot already used the
+      // external page; aiDiscoverState screenshots again internally so we
+      // pass externalPageSlot[0] too. Coords returned are external-page-relative —
+      // case-executor would need to handle clicking in the new tab (out of
+      // scope for v1; we just REGISTER the structure here).
+      const discoverPage = externalPageSlot[0] ?? page;
+      const newStateData = await aiDiscoverState(discoverPage, debugDir, aiCallsUsed, popupPrompt);
       // Label sanity: AI sometimes returns the existing state's label (e.g.
       // "main") for a freshly-discovered popup — observed 2026-05-31 when AI
       // saw a popup with subtle background and defaulted to "main" + 0
@@ -436,6 +487,7 @@ export async function exploreUiGraph(
       // children are `autoButton__*`, not `autoplay_settings_popup__*`).
       const elementNamespace = elKey;
       const newElements = new Map<string, UiElement>();
+      const isExternal = !!externalPageSlot[0];
       for (const e of filteredNew.kept) {
         const namespacedKey = `${elementNamespace}__${e.key}`;
         newElements.set(namespacedKey, {
@@ -444,6 +496,12 @@ export async function exploreUiGraph(
           strategy: "ai_vision",
           confidence: e.confidence ?? 0.8,
           detectedAt: new Date().toISOString(),
+          // Mark elements discovered on an external browser tab so the
+          // case-executor knows to click on the captured tab page (not the
+          // original game page). The PARENT trigger element keeps its
+          // original coords on the game page — only the descendants live
+          // in the external tab.
+          ...(isExternal ? { externalPage: true } : {}),
         });
       }
 
@@ -473,13 +531,30 @@ export async function exploreUiGraph(
       knownStates.push({ id: newStateId, baseline: after, elements: newElements, close: null });
       transitions.push({ from: frame.stateId, via: elKey, to: newStateId });
 
-      if (frame.depth + 1 < o.maxDepth) {
+      // Depth recursion: skip for external-tab states. Recursive exploration
+      // of those would need to re-open the external tab + navigate path
+      // tracking that crosses page boundaries — out of scope for v1.
+      if (!externalPageSlot[0] && frame.depth + 1 < o.maxDepth) {
         frontier.push({ stateId: newStateId, depth: frame.depth + 1 });
       }
 
-      // Navigate back to parent state before next element.
-      await navigateBackTo(page, state.baseline);
-      await waitUntilStable(page, { maxIterations: 3, changeThreshold: 0.01, consecutiveStable: 2 });
+      if (externalPageSlot[0]) {
+        // External tab path: original page is still on `frame.stateId`
+        // (clicking the trigger opened a NEW tab, didn't navigate the
+        // original). Close the new tab to avoid accumulating handles across
+        // discovery. Skip navigateBackTo — original page didn't move.
+        try {
+          await externalPageSlot[0].close();
+          console.log(`[explorer/external-tab] closed new tab opened by ${frame.stateId}/${elKey}`);
+        } catch (err) {
+          warnings.push(`failed to close external tab for ${elKey}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      } else {
+        // Same-page popup path: navigate back so next element starts from
+        // the parent state's baseline (ESC / closeButton / route reload).
+        await navigateBackTo(page, state.baseline);
+        await waitUntilStable(page, { maxIterations: 3, changeThreshold: 0.01, consecutiveStable: 2 });
+      }
     }
   }
 

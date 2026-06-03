@@ -118,6 +118,11 @@ Critical rules about the uiMap_hierarchy:
 - Keys with "__" are NESTED (e.g. "buyBonusButton__freeSpinsOption" means clicking buyBonusButton opens a popup containing freeSpinsOption).
 - To click a nested element, your action sequence MUST first click each ancestor in order so the popup is open. Example to click "a__b__c": [{click a}, {wait_ms 1500}, {click a__b}, {wait_ms 1500}, {click a__b__c}].
 - Entries marked [human-verified] have HIGHLY trusted coordinates; prefer them over unverified ones if alternatives exist.
+- Entries marked [external-tab] live on a SEPARATE browser tab opened by their PARENT trigger (e.g. \`historyButton\` opens a new tab → \`historyButton__roundsTable\` is in that tab). When the action sequence needs to click an [external-tab] element:
+  1. First click the PARENT trigger (the top-level key, NOT marked [external-tab]).
+  2. Add a longer wait_ms (≥2000ms) so the new tab has time to load.
+  3. Then click the [external-tab] children. The case-executor auto-routes clicks to the captured tab; you don't need any special action.
+  4. After interacting, the tab is closed automatically at end of case. If the case is mid-flow and you need to return to the game (e.g. to spin afterwards), DO emit a click on the tab's closeButton (also [external-tab]) so the page focus returns cleanly.
 - DO NOT invent uiKeys not in the hierarchy. If a required element is missing, output {"actions":[],"reason":"missing uiKey <name>"}.
 
 Bet adjustment rules (CRITICAL):

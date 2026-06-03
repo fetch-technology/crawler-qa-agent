@@ -27,6 +27,7 @@ import { parserCache } from "../registry/parser-cache.js";
 import { uiRegistry } from "../registry/ui-registry.js";
 import { initMeta, meta } from "../registry/meta.js";
 import { providerCache } from "../registry/provider-cache.js";
+import { gameSpecOverride, applyOverride, type GameSpecOverride } from "../registry/game-spec-override.js";
 import { gameMechanics, deriveGameMechanics } from "../registry/game-mechanics.js";
 import { payoutModel } from "../registry/payout-model.js";
 import { paytable as paytableStore } from "../registry/paytable.js";
@@ -49,7 +50,7 @@ import { diffVsBaseline, regionAround } from "../utils/pixel-diff/index.js";
 import { dismissPopupsLoop, detectAnyPopup, detectDarkOverlay, isFreeSpinChainActive, SUBSTATE_POPUP_KEYWORDS } from "../utils/ocr-popup.js";
 import { resolvePopupKeywords } from "../registry/popup-keywords.js";
 import { resolveSubStateHints, SUB_STATE_HINTS_DEFAULTS, interpolateSliderStops, type SubStateHint } from "../registry/sub-state-hints.js";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import type { UiRegistry, UiElement } from "../registry/types.js";
 
 export type SessionStatus = {
@@ -97,6 +98,16 @@ export type SessionStatus = {
   /** Name of the phase currently running (or null if Auto-Onboard not active
    *  / phase between steps). Convenience for the dashboard's progress banner. */
   autoOnboardCurrentPhase: string | null;
+  /** True when _onboard-state.json exists with completedAt=null — a prior
+   *  Auto-Onboard run was interrupted (server kill / crash / pause). Dashboard
+   *  uses this to swap the button label "Auto-Onboard" → "Resume
+   *  Auto-Onboard (N/M done)" so QA can pick up where they left off. */
+  autoOnboardResumeAvailable: boolean;
+  /** True when QA clicked Pause and the server is currently finishing the
+   *  active phase before honoring the request. Dashboard shows "Pausing
+   *  after current phase…" so QA knows clicking again is a no-op.
+   *  Auto-clears when the autoOnboard loop exits (paused or completed). */
+  autoOnboardPauseRequested: boolean;
   /** Currently-running preview case (set when the previewCase mutex is held).
    *  Dashboard polls these to bypass long HTTP requests that proxies (frp
    *  HTTP vhost, nginx) kill at 60-120s. Flow: POST /preview-case kicks off
@@ -115,6 +126,26 @@ export type SessionStatus = {
   generateCatalogInProgress: boolean;
   generateCatalogStartedAt: string | null;
   generateCatalogLastFinishedAt: string | null;
+  /** Effective game spec — captured from do_init API merged with any QA
+   *  overrides from `game-spec-override.json`. Null until first network
+   *  response observed OR override file loaded on resume. Editable via
+   *  PUT /api/qa/manual/game-spec; updates flow into AI catalog gen so
+   *  test assertions reference QA-corrected values (e.g. betMin=0.20
+   *  instead of mis-calibrated 0.50). */
+  gameSpec: {
+    coinValues: number[];
+    lines: number;
+    defaultCoin: number;
+    betLevels: number[];
+    betMin: number;
+    betMax: number;
+    defaultBet: number;
+    betLadder: number[];
+  } | null;
+  /** QA's manual overrides applied to the captured spec. Subset of fields
+   *  QA chose to pin. Shown on dashboard so QA sees which values are
+   *  manual vs auto-captured. */
+  gameSpecOverride: import("../registry/game-spec-override.js").GameSpecOverride | null;
 };
 
 export type SubStateSuggestion = {
@@ -314,6 +345,23 @@ export class ManualSessionManager {
    *  Read-only from outside via status(). */
   private autoOnboardPhases: NonNullable<SessionStatus["autoOnboardPhases"]> = [];
   private autoOnboardCurrentPhase: string | null = null;
+  /** Timestamp of the active Auto-Onboard run (or last run if completed).
+   *  Persisted to _onboard-state.json so a resumed run keeps the original
+   *  start time + duration math stays correct across restart. */
+  private autoOnboardStartedAt: string | null = null;
+  /** True when the on-disk state file indicates a prior run was interrupted
+   *  (server killed / crashed mid-flow). Computed at session resume + after
+   *  reading _onboard-state.json; clears when a fresh Auto-Onboard
+   *  successfully completes. Frontend uses this to swap the button label
+   *  from "Auto-Onboard" → "Resume Auto-Onboard". */
+  private autoOnboardResumeAvailable = false;
+  /** Cooperative pause flag — set by pauseAutoOnboard(). The autoOnboard
+   *  loop polls this between phases; when true, it persists state + exits
+   *  cleanly (ok=true, reason="paused by request"). Granularity is
+   *  phase-level: mid-phase pause isn't supported because each phase
+   *  (deep-discover, calibrate, …) is an opaque async call. User has to
+   *  wait for the current phase to finish before pause takes effect. */
+  private autoOnboardPauseRequested = false;
   /** Mutex for previewCase. Without it, a proxy 504 timeout that's CLIENT-side
    *  doesn't cancel the server-side promise — case-executor keeps running.
    *  If the dashboard's Run-All loop catches the 504 as failure and fires the
@@ -367,6 +415,14 @@ export class ManualSessionManager {
     defaultBet: number;       // computed: defc * l
     betLadder: number[];      // computed: coinValues.map(c => c * l)
   } | null = null;
+  /** Last-captured RAW gameSpec before override applied. Kept so QA can
+   *  see the difference + a "reset to auto-captured" UI action can erase
+   *  the override file. Null until first do_init capture. */
+  private gameSpecRaw: NonNullable<ManualSessionManager["gameSpec"]> | null = null;
+  /** Cached override loaded from disk on session start. Mutations go
+   *  through saveGameSpecOverride() which writes the file + recomputes
+   *  effective `this.gameSpec`. */
+  private gameSpecOverrideCached: GameSpecOverride | null = null;
 
   /**
    * Game mechanic cache loaded from registry on resume(), or derived from
@@ -467,6 +523,8 @@ export class ManualSessionManager {
       autoOnboardInProgress: this.autoOnboardInProgress,
       autoOnboardPhases: this.autoOnboardPhases.map((p) => ({ ...p })),
       autoOnboardCurrentPhase: this.autoOnboardCurrentPhase,
+      autoOnboardResumeAvailable: this.autoOnboardResumeAvailable,
+      autoOnboardPauseRequested: this.autoOnboardPauseRequested,
       previewCaseInProgress: this.previewCaseInProgress,
       previewCaseId: this.previewCaseId,
       previewCaseLastFinishedId: this.previewCaseLastFinishedId,
@@ -474,6 +532,8 @@ export class ManualSessionManager {
       generateCatalogInProgress: this.generateCatalogInProgress,
       generateCatalogStartedAt: this.generateCatalogStartedAt,
       generateCatalogLastFinishedAt: this.generateCatalogLastFinishedAt,
+      gameSpec: this.gameSpec ? { ...this.gameSpec } : null,
+      gameSpecOverride: this.gameSpecOverrideCached ? { ...this.gameSpecOverrideCached } : null,
     };
   }
 
@@ -1538,6 +1598,86 @@ export class ManualSessionManager {
    * informative outcome). Re-running cold-start is the path to refresh it.
    */
 
+  /** Request a cooperative pause of the running Auto-Onboard. Returns 200
+   *  immediately; the actual pause happens after the current phase
+   *  finishes (granularity limit — phases like deep-discover are blackbox
+   *  ~5-15min). State is persisted via the normal endPhase write so resume
+   *  works identically to crash-recovery. */
+  pauseAutoOnboard(): { ok: boolean; reason?: string } {
+    if (!this.autoOnboardInProgress) {
+      return { ok: false, reason: "no Auto-Onboard is currently running" };
+    }
+    if (this.autoOnboardPauseRequested) {
+      return { ok: true, reason: "pause already requested — waiting for current phase to finish" };
+    }
+    this.autoOnboardPauseRequested = true;
+    console.log(`[manual/auto-onboard] ${this.gameSlug}: PAUSE REQUESTED — will exit after current phase`);
+    return { ok: true };
+  }
+
+  /** Path to the on-disk Auto-Onboard state file. Returns null when no
+   *  active session (slug needed for path resolution). */
+  private onboardStateFilePath(): string | null {
+    if (!this.gameSlug) return null;
+    return path.join(dirForGame(this.gameSlug), "_onboard-state.json");
+  }
+
+  /** Persist current phase progress so a server crash mid-onboard can
+   *  resume via loadOnboardState() on next click. Called after every
+   *  startPhase/endPhase + when autoOnboard finishes. `completedAt` is
+   *  null while the run is mid-flight; set when finally{} hits. */
+  private async saveOnboardState(): Promise<void> {
+    const file = this.onboardStateFilePath();
+    if (!file || !this.gameSlug) return;
+    const state = {
+      schemaVersion: 1 as const,
+      gameSlug: this.gameSlug,
+      startedAt: this.autoOnboardStartedAt ?? new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      completedAt: this.autoOnboardInProgress ? null : new Date().toISOString(),
+      currentPhase: this.autoOnboardCurrentPhase,
+      phases: this.autoOnboardPhases,
+    };
+    try {
+      await writeFile(file, JSON.stringify(state, null, 2) + "\n", "utf8");
+    } catch (err) {
+      console.warn(`[auto-onboard/state] persist failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  /** Read prior Auto-Onboard state from disk (if exists). Returns null when
+   *  no state file, file unreadable, or run completed (completedAt set). */
+  private async loadOnboardState(): Promise<{
+    phases: typeof this.autoOnboardPhases;
+    startedAt: string;
+    currentPhase: string | null;
+  } | null> {
+    const file = this.onboardStateFilePath();
+    if (!file) return null;
+    try {
+      const raw = await readFile(file, "utf8");
+      const state = JSON.parse(raw) as {
+        schemaVersion: number; phases: typeof this.autoOnboardPhases;
+        startedAt: string; completedAt: string | null;
+        currentPhase: string | null;
+      };
+      // Only resume from INTERRUPTED runs. Completed (success) runs leave
+      // their state on disk but autoOnboard ignores them — re-clicking
+      // starts fresh by design (catalog/translate auto-skip via their own
+      // idempotency, no need for phase-level skip).
+      if (state.completedAt != null) return null;
+      // Validate phase shape minimally — if schema drifted, bail.
+      if (!Array.isArray(state.phases) || state.phases.length === 0) return null;
+      return {
+        phases: state.phases,
+        startedAt: state.startedAt,
+        currentPhase: state.currentPhase,
+      };
+    } catch {
+      return null;
+    }
+  }
+
   /** Reset phase tracker at the start of an Auto-Onboard run. All known
    *  phases declared pending so the dashboard can render the full checklist
    *  before any phase actually runs. Phase NAMES here must match the labels
@@ -1569,6 +1709,9 @@ export class ManualSessionManager {
     p.status = "running";
     p.startedAt = new Date().toISOString();
     this.autoOnboardCurrentPhase = name;
+    // Persist async — don't block phase execution. Failure logged but
+    // doesn't break Auto-Onboard flow.
+    this.saveOnboardState().catch(() => undefined);
   }
 
   /** Mark a phase finished. `status` ∈ {ok, fail, skip}. Optional `note`
@@ -1581,12 +1724,18 @@ export class ManualSessionManager {
     if (p.startedAt) p.durationMs = Date.parse(p.completedAt) - Date.parse(p.startedAt);
     if (note) p.note = note;
     if (this.autoOnboardCurrentPhase === name) this.autoOnboardCurrentPhase = null;
+    this.saveOnboardState().catch(() => undefined);
   }
 
   async autoOnboard(
     opts: {
       deepDiscover?: { maxDepth?: number; maxAiCalls?: number; maxStates?: number };
       calibrationSpinsPerLevel?: number;
+      /** When true, attempt to resume from `_onboard-state.json` left by a
+       *  prior interrupted run — skip phases already marked ok/skip, run
+       *  the rest. Default true (auto-detect resume opportunity). Pass
+       *  false to FORCE fresh onboard ignoring any prior state. */
+      resume?: boolean;
     } = {},
   ): Promise<{
     ok: boolean;
@@ -1608,7 +1757,55 @@ export class ManualSessionManager {
       return { ok: false, reason: "another autoOnboard is already in progress for this session" };
     }
     this.autoOnboardInProgress = true;
-    this.initAutoOnboardPhases();
+    // Resume from prior interrupted run if state file present and not
+    // explicitly disabled. Skipped phases preserve their `ok`/`skip`
+    // status and notes; only `pending`/`running`/`fail` get re-attempted
+    // by the per-phase guards below. Default behavior: opt-in resume.
+    let resumed = false;
+    if (opts.resume !== false) {
+      const prior = await this.loadOnboardState();
+      if (prior) {
+        this.autoOnboardPhases = prior.phases;
+        this.autoOnboardStartedAt = prior.startedAt;
+        this.autoOnboardCurrentPhase = prior.currentPhase;
+        // Reset any phase stuck in "running" — it was interrupted, treat
+        // as pending so it re-runs cleanly.
+        for (const p of this.autoOnboardPhases) {
+          if (p.status === "running") {
+            p.status = "pending";
+            delete p.startedAt;
+          }
+        }
+        const okCount = this.autoOnboardPhases.filter((p) => p.status === "ok" || p.status === "skip").length;
+        console.log(`[manual/auto-onboard] ${this.gameSlug}: RESUMING — ${okCount}/${this.autoOnboardPhases.length} phases already done`);
+        resumed = true;
+      }
+    }
+    if (!resumed) {
+      this.initAutoOnboardPhases();
+      this.autoOnboardStartedAt = new Date().toISOString();
+    }
+    this.autoOnboardResumeAvailable = false; // clear — we're running now
+    this.autoOnboardPauseRequested = false; // reset from any prior pause
+    // Helper: returns true if phase should be skipped (already ok/skip in
+    // resumed state). Per-phase wrapping inline below to preserve original
+    // type narrowing of phase-specific result variables.
+    const isPhaseDone = (name: string): boolean => {
+      const p = this.autoOnboardPhases.find((x) => x.name === name);
+      return !!p && (p.status === "ok" || p.status === "skip");
+    };
+    // Helper: throws a sentinel error caught below to exit autoOnboard
+    // when QA clicked Pause. Called before each phase's start guard so
+    // the loop bails BETWEEN phases (mid-phase pause unsupported — each
+    // phase is an opaque async call). State persistence is unchanged —
+    // already-finished phases keep their ok/skip status in the on-disk
+    // state file → resume picks up where we left off.
+    const PAUSE_SENTINEL = Symbol("autoOnboardPaused");
+    const checkPause = (): void => {
+      if (this.autoOnboardPauseRequested) {
+        throw PAUSE_SENTINEL;
+      }
+    };
     try {
       console.log(`[manual/auto-onboard] ${this.gameSlug}: starting — deep-discover → verify → payout`);
 
@@ -1621,7 +1818,9 @@ export class ManualSessionManager {
       let ocrPromise: Promise<Awaited<ReturnType<typeof this.autoDetectOcrRegions>> | { ok: false; reason: string; saved: never[]; proposed: never[]; skipped: never[] }> = Promise.resolve(
         { ok: false, reason: "no baseline captured", saved: [], proposed: [], skipped: [] },
       );
-      if (this.session) {
+      checkPause();
+      const ocrSkipped = isPhaseDone("ocr-auto-detect");
+      if (this.session && !ocrSkipped) {
         this.startPhase("ocr-auto-detect");
         try {
           const baseline = await this.session.page.screenshot({ type: "png" });
@@ -1634,25 +1833,35 @@ export class ManualSessionManager {
         } catch (err) {
           console.warn(`[manual/auto-onboard] ${this.gameSlug}: baseline screenshot for OCR detection threw: ${err instanceof Error ? err.message : String(err)}`);
         }
+      } else if (ocrSkipped) {
+        console.log(`[manual/auto-onboard] ${this.gameSlug}: ocr-auto-detect SKIPPED (resumed — already done)`);
       }
 
-      this.startPhase("deep-discover");
-      const discover = await this.deepDiscover(opts.deepDiscover ?? {});
-      if (!discover.ok) {
-        this.endPhase("deep-discover", "fail", discover.reason);
-        // Still await the parallel OCR detection so we don't leave a dangling
-        // Claude call running in the background after we return.
-        const ocr = await ocrPromise;
-        this.endPhase("ocr-auto-detect", ocr.ok ? "ok" : "fail", ocr.ok ? `saved=${ocr.saved.length}` : (ocr.reason ?? "failed"));
-        return { ok: false, reason: `deep-discover failed: ${discover.reason ?? "unknown"}`, discover, ocr };
+      let discover: Awaited<ReturnType<typeof this.deepDiscover>>;
+      if (isPhaseDone("deep-discover")) {
+        console.log(`[manual/auto-onboard] ${this.gameSlug}: deep-discover SKIPPED (resumed — already done)`);
+        discover = { ok: true, addedKeys: [] };
+      } else {
+        this.startPhase("deep-discover");
+        discover = await this.deepDiscover(opts.deepDiscover ?? {});
+        if (!discover.ok) {
+          this.endPhase("deep-discover", "fail", discover.reason);
+          // Still await the parallel OCR detection so we don't leave a dangling
+          // Claude call running in the background after we return.
+          const ocr = await ocrPromise;
+          if (!ocrSkipped) this.endPhase("ocr-auto-detect", ocr.ok ? "ok" : "fail", ocr.ok ? `saved=${ocr.saved.length}` : (ocr.reason ?? "failed"));
+          return { ok: false, reason: `deep-discover failed: ${discover.reason ?? "unknown"}`, discover, ocr };
+        }
+        this.endPhase("deep-discover", "ok", `+${discover.addedKeys?.length ?? 0} elements`);
       }
-      this.endPhase("deep-discover", "ok", `+${discover.addedKeys?.length ?? 0} elements`);
       const ocr = await ocrPromise;
-      this.endPhase(
-        "ocr-auto-detect",
-        ocr.ok ? "ok" : "fail",
-        ocr.ok ? `saved=${ocr.saved.length} proposed=${ocr.proposed.length}` : (ocr.reason ?? "failed"),
-      );
+      if (!ocrSkipped) {
+        this.endPhase(
+          "ocr-auto-detect",
+          ocr.ok ? "ok" : "fail",
+          ocr.ok ? `saved=${ocr.saved.length} proposed=${ocr.proposed.length}` : (ocr.reason ?? "failed"),
+        );
+      }
       console.log(`[manual/auto-onboard] ${this.gameSlug}: ocr-region detection done — saved=${ocr.saved.length} proposed=${ocr.proposed.length} skipped=${ocr.skipped.length}`);
 
       // Registry-verify phase (2026-06-02). After deep-discover, audit the
@@ -1661,62 +1870,80 @@ export class ManualSessionManager {
       // discoverVia(), then bidirectionally mirror verified entries across
       // partner pairs (betPlus ↔ betMinus popup is identical). Bounded — one
       // discoverVia call per missing trigger, no infinite re-audit loops.
-      this.startPhase("verify-registry");
-      const verify = await this.verifyRegistry();
-      this.endPhase("verify-registry", "ok", `pruned=${verify.pruned.length} mirrored=${verify.mirrored.length}`);
-      console.log(
-        `[manual/auto-onboard] ${this.gameSlug}: verify — pruned=${verify.pruned.length} ` +
-        `re-discovered=${verify.reDiscoveredTriggers.length} ` +
-        `mirrored=${verify.mirrored.length}`,
-      );
+      checkPause();
+      let verify: Awaited<ReturnType<typeof this.verifyRegistry>>;
+      if (isPhaseDone("verify-registry")) {
+        console.log(`[manual/auto-onboard] ${this.gameSlug}: verify-registry SKIPPED (resumed — already done)`);
+        verify = { ok: true, pruned: [], reDiscoveredTriggers: [], mirrored: [] };
+      } else {
+        this.startPhase("verify-registry");
+        verify = await this.verifyRegistry();
+        this.endPhase("verify-registry", "ok", `pruned=${verify.pruned.length} mirrored=${verify.mirrored.length}`);
+        console.log(
+          `[manual/auto-onboard] ${this.gameSlug}: verify — pruned=${verify.pruned.length} ` +
+          `re-discovered=${verify.reDiscoveredTriggers.length} ` +
+          `mirrored=${verify.mirrored.length}`,
+        );
+      }
 
       // Deep-extract: vision-driven capture of paytable / rules / buy-options
       // / special-bets from in-game popups. Auto-Onboard previously skipped
       // this (cold-start only) → catalog regen had `auxiliary sources:
       // synthesized-from-registry` and AI guessed rules. Run BEFORE calibrate
       // so payout-model has paytable data when it derives symbol values.
-      this.startPhase("deep-extract");
-      const { phaseDeepExtract } = await import("../phases/phase-deep-extract.js");
-      const deepExtract = await phaseDeepExtract({
-        page: this.session.page,
-        gameSlug: this.gameSlug,
-        uiMap: this.registry,
-      });
-      this.endPhase(
-        "deep-extract",
-        deepExtract.ok ? "ok" : "fail",
-        deepExtract.extract
-          ? `paytable=${!!deepExtract.extract.paytableMd} rules=${!!deepExtract.extract.infoMd}`
-          : deepExtract.reason,
-      );
-      console.log(
-        `[manual/auto-onboard] ${this.gameSlug}: deep-extract `
-        + (deepExtract.ok ? `done in ${deepExtract.durationMs}ms` : `failed: ${deepExtract.reason}`),
-      );
+      checkPause();
+      if (isPhaseDone("deep-extract")) {
+        console.log(`[manual/auto-onboard] ${this.gameSlug}: deep-extract SKIPPED (resumed — already done)`);
+      } else {
+        this.startPhase("deep-extract");
+        const { phaseDeepExtract } = await import("../phases/phase-deep-extract.js");
+        const deepExtract = await phaseDeepExtract({
+          page: this.session.page,
+          gameSlug: this.gameSlug,
+          uiMap: this.registry,
+        });
+        this.endPhase(
+          "deep-extract",
+          deepExtract.ok ? "ok" : "fail",
+          deepExtract.extract
+            ? `paytable=${!!deepExtract.extract.paytableMd} rules=${!!deepExtract.extract.infoMd}`
+            : deepExtract.reason,
+        );
+        console.log(
+          `[manual/auto-onboard] ${this.gameSlug}: deep-extract `
+          + (deepExtract.ok ? `done in ${deepExtract.durationMs}ms` : `failed: ${deepExtract.reason}`),
+        );
+      }
 
       // Calibrate payout + persist network rounds to canonical
       // network/network.jsonl (so subsequent catalog regen has spin samples
       // without needing case-evidence aggregation).
-      this.startPhase("calibrate-payout");
-      const { withNetworkPersist } = await import("../phases/phase-persist-network.js");
+      checkPause();
       let payout: Awaited<ReturnType<typeof this.calibratePayoutModel>>;
-      let persistNet: Awaited<ReturnType<typeof withNetworkPersist>>["persist"] | null = null;
-      try {
-        const wrapped = await withNetworkPersist(
-          { page: this.session.page, gameSlug: this.gameSlug },
-          () => this.calibratePayoutModel({ spinsPerLevel: opts.calibrationSpinsPerLevel }),
+      if (isPhaseDone("calibrate-payout")) {
+        console.log(`[manual/auto-onboard] ${this.gameSlug}: calibrate-payout SKIPPED (resumed — already done)`);
+        payout = { ok: true };
+      } else {
+        this.startPhase("calibrate-payout");
+        const { withNetworkPersist } = await import("../phases/phase-persist-network.js");
+        let persistNet: Awaited<ReturnType<typeof withNetworkPersist>>["persist"] | null = null;
+        try {
+          const wrapped = await withNetworkPersist(
+            { page: this.session.page, gameSlug: this.gameSlug },
+            () => this.calibratePayoutModel({ spinsPerLevel: opts.calibrationSpinsPerLevel }),
+          );
+          payout = wrapped.workResult;
+          persistNet = wrapped.persist;
+          console.log(`[manual/auto-onboard] ${this.gameSlug}: persisted ${persistNet.roundsAppended ?? 0} network rounds → network.jsonl (total ${persistNet.totalRoundsOnDisk ?? "?"})`);
+        } catch (err) {
+          payout = { ok: false, reason: err instanceof Error ? err.message : String(err) };
+        }
+        this.endPhase(
+          "calibrate-payout",
+          payout.ok ? "ok" : "fail",
+          payout.ok ? `trusted=${payout.trusted ?? false} combos=${payout.combosMatched ?? 0}/${payout.combosTotal ?? 0}` : payout.reason,
         );
-        payout = wrapped.workResult;
-        persistNet = wrapped.persist;
-        console.log(`[manual/auto-onboard] ${this.gameSlug}: persisted ${persistNet.roundsAppended ?? 0} network rounds → network.jsonl (total ${persistNet.totalRoundsOnDisk ?? "?"})`);
-      } catch (err) {
-        payout = { ok: false, reason: err instanceof Error ? err.message : String(err) };
       }
-      this.endPhase(
-        "calibrate-payout",
-        payout.ok ? "ok" : "fail",
-        payout.ok ? `trusted=${payout.trusted ?? false} combos=${payout.combosMatched ?? 0}/${payout.combosTotal ?? 0}` : payout.reason,
-      );
 
       // Generate AI catalog now that all inputs (registry, network rounds,
       // aux sources, parser.json from calibrate's createParserForGame call)
@@ -1725,68 +1952,126 @@ export class ManualSessionManager {
       // ready to run cases. Skip when already exists (idempotent — don't
       // burn AI cost on every Auto-Onboard re-run; QA uses the dedicated
       // "Generate Cases" button to force regen).
-      this.startPhase("generate-catalog");
-      const { phaseGenerateCatalog } = await import("../phases/phase-generate-catalog.js");
+      checkPause();
       const existingCatalog = await loadAiCatalog(this.gameSlug).catch(() => null);
-      let catalog: Awaited<ReturnType<typeof phaseGenerateCatalog>> | null = null;
-      if (existingCatalog && existingCatalog.cases.length > 0) {
-        this.endPhase("generate-catalog", "skip", `existing ${existingCatalog.cases.length} cases reused`);
-        console.log(`[manual/auto-onboard] ${this.gameSlug}: catalog already exists (${existingCatalog.cases.length} cases) — skipping generation. Use "Generate Cases" to regenerate.`);
+      let catalog: Awaited<ReturnType<typeof import("../phases/phase-generate-catalog.js").phaseGenerateCatalog>> | null = null;
+      if (isPhaseDone("generate-catalog")) {
+        console.log(`[manual/auto-onboard] ${this.gameSlug}: generate-catalog SKIPPED (resumed — already done)`);
       } else {
-        catalog = await phaseGenerateCatalog({ gameSlug: this.gameSlug });
-        this.endPhase(
-          "generate-catalog",
-          catalog.ok ? "ok" : "fail",
-          catalog.ok ? `${catalog.totalCases} cases · rounds=${catalog.roundsLoaded} aux=${catalog.hadAuxSources}` : catalog.reason,
-        );
-        console.log(
-          `[manual/auto-onboard] ${this.gameSlug}: catalog `
-          + (catalog.ok
-            ? `generated ${catalog.totalCases} cases (rounds=${catalog.roundsLoaded} aux=${catalog.hadAuxSources}, ${catalog.durationMs}ms)`
-            : `failed: ${catalog.reason}`),
-        );
+        this.startPhase("generate-catalog");
+        const { phaseGenerateCatalog } = await import("../phases/phase-generate-catalog.js");
+        if (existingCatalog && existingCatalog.cases.length > 0) {
+          this.endPhase("generate-catalog", "skip", `existing ${existingCatalog.cases.length} cases reused`);
+          console.log(`[manual/auto-onboard] ${this.gameSlug}: catalog already exists (${existingCatalog.cases.length} cases) — skipping generation. Use "Generate Cases" to regenerate.`);
+        } else {
+          catalog = await phaseGenerateCatalog({ gameSlug: this.gameSlug });
+          this.endPhase(
+            "generate-catalog",
+            catalog.ok ? "ok" : "fail",
+            catalog.ok ? `${catalog.totalCases} cases · rounds=${catalog.roundsLoaded} aux=${catalog.hadAuxSources}` : catalog.reason,
+          );
+          console.log(
+            `[manual/auto-onboard] ${this.gameSlug}: catalog `
+            + (catalog.ok
+              ? `generated ${catalog.totalCases} cases (rounds=${catalog.roundsLoaded} aux=${catalog.hadAuxSources}, ${catalog.durationMs}ms)`
+              : `failed: ${catalog.reason}`),
+          );
+        }
       }
 
       // Translate cases so each case has a ready-to-run actions array.
       // Cheap (~$0.02-0.10 per case, parallel-able) and means subsequent
       // "Run" doesn't pay the per-case translation AI cost on demand.
-      this.startPhase("translate-cases");
-      const { phaseTranslateCases } = await import("../phases/phase-translate-cases.js");
-      const translate = (catalog?.ok || existingCatalog)
-        ? await phaseTranslateCases({ gameSlug: this.gameSlug })
-        : null;
-      if (translate) {
-        this.endPhase(
-          "translate-cases",
-          translate.ok ? "ok" : "fail",
-          translate.ok ? `${translate.totalCases} total` : translate.reason,
-        );
-        console.log(
-          `[manual/auto-onboard] ${this.gameSlug}: translate `
-          + (translate.ok ? `done (${translate.totalCases} total, +${translate.newCount} new, ${translate.durationMs}ms)` : `failed: ${translate.reason}`),
-        );
+      checkPause();
+      let translate: Awaited<ReturnType<typeof import("../phases/phase-translate-cases.js").phaseTranslateCases>> | null = null;
+      if (isPhaseDone("translate-cases")) {
+        console.log(`[manual/auto-onboard] ${this.gameSlug}: translate-cases SKIPPED (resumed — already done)`);
       } else {
-        this.endPhase("translate-cases", "skip", "no catalog to translate");
+        this.startPhase("translate-cases");
+        const { phaseTranslateCases } = await import("../phases/phase-translate-cases.js");
+        translate = (catalog?.ok || existingCatalog)
+          ? await phaseTranslateCases({ gameSlug: this.gameSlug })
+          : null;
+        if (translate) {
+          this.endPhase(
+            "translate-cases",
+            translate.ok ? "ok" : "fail",
+            translate.ok ? `${translate.totalCases} total` : translate.reason,
+          );
+          console.log(
+            `[manual/auto-onboard] ${this.gameSlug}: translate `
+            + (translate.ok ? `done (${translate.totalCases} total, +${translate.newCount} new, ${translate.durationMs}ms)` : `failed: ${translate.reason}`),
+          );
+        } else {
+          this.endPhase("translate-cases", "skip", "no catalog to translate");
+        }
       }
 
       // Run cases — the catalog is now guaranteed to exist (either pre-
       // existing or just generated). Skips gracefully if generation failed.
-      this.startPhase("run-cases");
-      const testRun = await this.runAllTestcases({ continueOnFail: true });
-      this.endPhase(
-        "run-cases",
-        testRun.ok ? "ok" : "skip",
-        testRun.ok ? `${testRun.passed}/${testRun.results.length} pass` : testRun.reason,
-      );
+      checkPause();
+      let testRun: Awaited<ReturnType<typeof this.runAllTestcases>>;
+      if (isPhaseDone("run-cases")) {
+        console.log(`[manual/auto-onboard] ${this.gameSlug}: run-cases SKIPPED (resumed — already done)`);
+        testRun = { ok: true, results: [], passed: 0, failed: 0, skipped: 0 };
+      } else {
+        this.startPhase("run-cases");
+        testRun = await this.runAllTestcases({ continueOnFail: true });
+        this.endPhase(
+          "run-cases",
+          testRun.ok ? "ok" : "skip",
+          testRun.ok ? `${testRun.passed}/${testRun.results.length} pass` : testRun.reason,
+        );
+      }
       console.log(
         `[manual/auto-onboard] ${this.gameSlug}: test-run ${testRun.ok ? "complete" : "skipped"}` +
         (testRun.ok ? ` — ${testRun.results.length} cases, ${testRun.passed} pass, ${testRun.failed} fail, ${testRun.skipped} skip` : ` — ${testRun.reason}`),
       );
 
-      console.log(`[manual/auto-onboard] ${this.gameSlug}: done — discover.added=${discover.addedKeys?.length ?? 0} verify.mirrored=${verify.mirrored.length} ocr.saved=${ocr.saved.length} deep-extract.ok=${deepExtract.ok} payout.trusted=${payout.trusted ?? false} catalog=${catalog?.ok ?? (existingCatalog ? "existing" : "skip")} test=${testRun.ok ? `${testRun.passed}/${testRun.results.length}p` : "skip"}`);
+      const deepExtractStatus = this.autoOnboardPhases.find((p) => p.name === "deep-extract")?.status ?? "unknown";
+      console.log(`[manual/auto-onboard] ${this.gameSlug}: done — discover.added=${discover.addedKeys?.length ?? 0} verify.mirrored=${verify.mirrored.length} ocr.saved=${ocr.saved.length} deep-extract=${deepExtractStatus} payout.trusted=${payout.trusted ?? false} catalog=${catalog?.ok ?? (existingCatalog ? "existing" : "skip")} test=${testRun.ok ? `${testRun.passed}/${testRun.results.length}p` : "skip"}`);
       return { ok: true, discover, verify, ocr, payout, testRun };
+    } catch (err) {
+      // Pause sentinel → exit cleanly with paused=true so the on-disk state
+      // file (written via the normal endPhase calls) marks the run as
+      // resumable. completedAt stays null so loadOnboardState will return
+      // it on next click. autoOnboardResumeAvailable gets set in the
+      // finally block so the dashboard's Resume button appears.
+      if (err === PAUSE_SENTINEL) {
+        console.log(`[manual/auto-onboard] ${this.gameSlug}: PAUSED — state persisted, resume via dashboard button`);
+        this.autoOnboardResumeAvailable = true;
+        return { ok: true, reason: "paused by request" };
+      }
+      throw err;
     } finally {
       this.autoOnboardInProgress = false;
+      this.autoOnboardPauseRequested = false;
+      // Persist final state. If we paused via PAUSE_SENTINEL, the early
+      // return above didn't reach the "no-pause" path; saveOnboardState
+      // here writes the on-disk file with completedAt depending on whether
+      // we're paused (autoOnboardResumeAvailable=true) or actually done.
+      // The saveOnboardState helper uses autoOnboardInProgress (just set
+      // to false) to determine completedAt — so paused runs ALSO get
+      // completedAt set on disk, which would defeat resume. Override by
+      // writing the file manually with completedAt=null when paused.
+      if (this.autoOnboardResumeAvailable && this.gameSlug) {
+        const file = this.onboardStateFilePath();
+        if (file) {
+          try {
+            await writeFile(file, JSON.stringify({
+              schemaVersion: 1,
+              gameSlug: this.gameSlug,
+              startedAt: this.autoOnboardStartedAt ?? new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              completedAt: null, // paused — resumable
+              currentPhase: null,
+              phases: this.autoOnboardPhases,
+            }, null, 2) + "\n", "utf8");
+          } catch { /* non-fatal */ }
+        }
+      } else {
+        await this.saveOnboardState().catch(() => undefined);
+      }
     }
   }
 
@@ -2854,6 +3139,27 @@ export class ManualSessionManager {
         el.status === "verified" ? "confirmed" :
         el.status === "rejected" ? "rejected" : "pending";
     }
+    // Load QA's game-spec overrides so the next do_init capture applies
+    // them automatically (or the dashboard shows them immediately even
+    // before the first network response).
+    this.gameSpecOverrideCached = await gameSpecOverride.load(gameSlug).catch(() => null);
+    if (this.gameSpecOverrideCached) {
+      const overrideKeys = Object.keys(this.gameSpecOverrideCached).filter((k) => k !== "note" && k !== "updatedAt");
+      console.log(`[manual] loaded game-spec override on resume: [${overrideKeys.join(", ")}]`);
+    }
+
+    // Check for interrupted Auto-Onboard state on disk so the dashboard
+    // can offer "Resume Auto-Onboard" instead of starting fresh. Also
+    // restore the phases array so the panel renders prior progress.
+    const prior = await this.loadOnboardState();
+    if (prior) {
+      this.autoOnboardPhases = prior.phases;
+      this.autoOnboardCurrentPhase = null; // run was interrupted, no live phase
+      this.autoOnboardStartedAt = prior.startedAt;
+      this.autoOnboardResumeAvailable = true;
+      const okCount = prior.phases.filter((p) => p.status === "ok" || p.status === "skip").length;
+      console.log(`[manual] resumable Auto-Onboard state detected — ${okCount}/${prior.phases.length} phases were done`);
+    }
 
     await crawl(this.session.page, { gameUrl: m.gameUrl, gameSlug });
 
@@ -3752,10 +4058,44 @@ export class ManualSessionManager {
     const betLevels = blsMatch ? blsMatch[1]!.split(",").map(Number).filter(Number.isFinite) : [];
     const defaultBetLevelIdx = defblMatch ? Math.max(1, Number(defblMatch[1])) - 1 : 0;
     const defaultBetLevel = betLevels.length > 0 ? (betLevels[defaultBetLevelIdx] ?? betLevels[0] ?? 1) : 1;
-    const betMin = minMatch ? Number(minMatch[1]) : coinValues[0]! * lines * (betLevels[0] ?? 1);
-    const betMax = maxMatch
-      ? Number(maxMatch[1])
-      : coinValues[coinValues.length - 1]! * lines * (betLevels[betLevels.length - 1] ?? 1);
+    // PP `bls` field has TWO different semantics across games:
+    //   (A) "Lines selector" — bls values are SELECTABLE LINE COUNTS
+    //       (often includes `l` itself). Total bet = coin × bls_active.
+    //       Example: l=20, bls=[20,25] → player picks 20 or 25 lines →
+    //       bet = coin × selected_lines. Real ladder min = coin × min(bls).
+    //   (B) "Bet level multiplier" — bls values are MULTIPLIERS applied
+    //       on top of coin × lines. Total bet = coin × lines × bls_active.
+    //       Example: l=1024, bls=[1, 1.25, 1.5, 1.9] (ante multipliers).
+    // Detect: if `lines` appears in `bls`, treat as semantic (A); else (B).
+    // Misclassification → ladder/min/max off by a factor of `lines`.
+    const blsIncludesLines = betLevels.includes(lines);
+    const blsSemantic: "lines-selector" | "multiplier" = blsIncludesLines ? "lines-selector" : "multiplier";
+    const baseFactor = (lvl: number): number => blsSemantic === "lines-selector" ? lvl : lines * lvl;
+    const computedMin = coinValues[0]! * baseFactor(betLevels[0] ?? 1);
+    const computedMax = coinValues[coinValues.length - 1]! * baseFactor(betLevels[betLevels.length - 1] ?? 1);
+    const rawMin = minMatch ? Number(minMatch[1]) : NaN;
+    const rawMax = maxMatch ? Number(maxMatch[1]) : NaN;
+    // Trust server field only when within [0.5×, 2×] of computed ladder.
+    // Outside that band the field is likely UNRELATED to per-spin bet:
+    //   - too small (rawMin < 0.5×computed): server's `total_bet_min` is
+    //     echoing min COIN value (0.01) instead of min total bet (0.2).
+    //   - too large (rawMax > 2×computed): server's `total_bet_max` is
+    //     likely a session/table/payout cap (e.g. 5000), not per-spin max.
+    // In either direction-mismatch case, fall back to ladder-computed
+    // which matches UI + paytable.
+    const inBand = (raw: number, computed: number): boolean =>
+      Number.isFinite(raw) && raw >= computed * 0.5 && raw <= computed * 2;
+    const betMin = inBand(rawMin, computedMin) ? rawMin : computedMin;
+    const betMax = inBand(rawMax, computedMax) ? rawMax : computedMax;
+    if (Number.isFinite(rawMin) && rawMin !== betMin) {
+      console.warn(`[manual/spec] total_bet_min=${rawMin} outside plausibility band (computed=${computedMin}) — likely mis-named "min coin". Using computed.`);
+    }
+    if (Number.isFinite(rawMax) && rawMax !== betMax) {
+      console.warn(`[manual/spec] total_bet_max=${rawMax} outside plausibility band (computed=${computedMax}) — likely a session/table/payout cap, not per-spin max. Using computed.`);
+    }
+    if (blsSemantic === "lines-selector") {
+      console.log(`[manual/spec] bls=[${betLevels.join(",")}] includes l=${lines} → treating as line-count selector (bet = coin × bls_active)`);
+    }
     // betLadder: every achievable coin×lines×level. Sorted + deduped so the
     // translator can compute step distance for set_bet_to_value. Round to 2
     // decimals to avoid floating-noise duplicates (e.g. 13.3 vs 13.299...).
@@ -3763,21 +4103,66 @@ export class ManualSessionManager {
     const levelsForLadder = betLevels.length > 0 ? betLevels : [1];
     for (const c of coinValues) {
       for (const lvl of levelsForLadder) {
-        ladderSet.add(Math.round(c * lines * lvl * 100) / 100);
+        // baseFactor() returns either `lvl` (lines-selector semantic) or
+        // `lines * lvl` (multiplier semantic) — keeps ladder math
+        // consistent with betMin/betMax computed above.
+        ladderSet.add(Math.round(c * baseFactor(lvl) * 100) / 100);
       }
     }
     const betLadder = Array.from(ladderSet).sort((a, b) => a - b);
-    this.gameSpec = {
+    const raw = {
       coinValues,
       lines,
       defaultCoin,
       betLevels,
       betMin,
       betMax,
-      defaultBet: Math.round(defaultCoin * lines * defaultBetLevel * 100) / 100,
+      defaultBet: Math.round(defaultCoin * baseFactor(defaultBetLevel) * 100) / 100,
       betLadder,
     };
-    console.log(`[manual/spec] captured: ladder=${this.gameSpec.betLadder.slice(0, 5).join(",")}…(${this.gameSpec.betLadder.length}) default=${this.gameSpec.defaultBet} (coin=${defaultCoin}×lines=${lines}×bl=${defaultBetLevel}) min=${betMin} max=${betMax}`);
+    this.gameSpecRaw = raw;
+    // Apply QA override on top — override fields win, others fall through.
+    this.gameSpec = applyOverride(raw, this.gameSpecOverrideCached);
+    if (this.gameSpecOverrideCached) {
+      const overrideKeys = Object.keys(this.gameSpecOverrideCached).filter((k) => k !== "note" && k !== "updatedAt");
+      console.log(`[manual/spec] captured + override applied — overridden fields: [${overrideKeys.join(", ")}]`);
+    }
+    console.log(`[manual/spec] captured: ladder=${this.gameSpec.betLadder.slice(0, 5).join(",")}…(${this.gameSpec.betLadder.length}) default=${this.gameSpec.defaultBet} (coin=${defaultCoin}×lines=${lines}×bl=${defaultBetLevel}) min=${this.gameSpec.betMin} max=${this.gameSpec.betMax}`);
+  }
+
+  /** Update the QA override file + recompute `this.gameSpec` so subsequent
+   *  catalog gen / translator calls see the new values. Pass `null` to
+   *  CLEAR all overrides (resets effective spec back to raw captured). */
+  async setGameSpecOverride(patch: GameSpecOverride | null): Promise<{ ok: boolean; effective: typeof this.gameSpec; reason?: string }> {
+    if (!this.gameSlug) return { ok: false, effective: null, reason: "no active session" };
+    try {
+      if (patch === null) {
+        // Erase override → effective reverts to raw.
+        this.gameSpecOverrideCached = null;
+        await gameSpecOverride.save(this.gameSlug, {});
+      } else {
+        // Merge with prior override so partial PATCH updates work.
+        const merged: GameSpecOverride = {
+          ...(this.gameSpecOverrideCached ?? {}),
+          ...patch,
+          updatedAt: new Date().toISOString(),
+        };
+        // Strip null/undefined fields — those signal "clear this override".
+        for (const k of Object.keys(merged) as Array<keyof GameSpecOverride>) {
+          if (merged[k] == null) delete merged[k];
+        }
+        this.gameSpecOverrideCached = merged;
+        await gameSpecOverride.save(this.gameSlug, merged);
+      }
+      // Recompute effective spec if raw is available.
+      if (this.gameSpecRaw) {
+        this.gameSpec = applyOverride(this.gameSpecRaw, this.gameSpecOverrideCached);
+      }
+      console.log(`[manual/spec] override updated → effective: min=${this.gameSpec?.betMin} max=${this.gameSpec?.betMax} default=${this.gameSpec?.defaultBet}`);
+      return { ok: true, effective: this.gameSpec };
+    } catch (err) {
+      return { ok: false, effective: this.gameSpec, reason: err instanceof Error ? err.message : String(err) };
+    }
   }
 
   /**

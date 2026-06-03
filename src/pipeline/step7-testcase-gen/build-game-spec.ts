@@ -19,16 +19,35 @@ export type SpecInput = {
   /** C1: paytable from registry (deep-extract.ts populates it during cold-start).
    *  When provided, symbols[] is hydrated from it instead of being empty. */
   paytable?: Paytable | null;
+  /** QA-edited overrides for bet ladder / default bet / min / max. Applied
+   *  AFTER observedBets[] are derived from parsedSpins — override wins so
+   *  catalog AI sees QA-corrected values even when calibration captured
+   *  different numbers (e.g. ante mode contamination). Unset fields keep
+   *  the auto-derived value. */
+  betOverride?: {
+    baseBet?: number;
+    betLadder?: number[];
+    betMin?: number;
+    betMax?: number;
+  };
 };
 
 export function buildGameSpec(input: SpecInput): GameSpec {
   const slug = input.gameSlug;
   const gameName = input.provider?.gameName ?? slug;
 
-  const observedBets = Array.from(
+  const observedBetsFromSpins = Array.from(
     new Set(input.parsedSpins.map((s) => s.bet).filter((b) => b > 0)),
   ).sort((a, b) => a - b);
-  const baseBet = observedBets[0] ?? null;
+  // Override layer: QA-pinned ladder/min/max win over derived. Falls
+  // through to observed when override absent. baseBet — prefer override's
+  // defaultBet, else observedBets[0]. Catalog AI sees this as `base_bet`
+  // + bet_sizes which drives "default-bet-equals-X" assertions.
+  const ov = input.betOverride ?? {};
+  const observedBets = ov.betLadder && ov.betLadder.length > 0
+    ? [...ov.betLadder].sort((a, b) => a - b)
+    : observedBetsFromSpins;
+  const baseBet = ov.baseBet ?? observedBets[0] ?? null;
 
   const features: GameSpec["features"] = [];
   if (input.features) {

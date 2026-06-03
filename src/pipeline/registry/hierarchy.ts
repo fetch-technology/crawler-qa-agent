@@ -62,8 +62,13 @@ export function formatRegistryHierarchy(registry: UiRegistry, opts: HierarchyOpt
       el.status === "rejected" ? "✗ rejected" :
       "⏳ pending";
     const verifiedByQA = el.verifiedBy === "QA" ? " [human-verified]" : "";
+    // Mark external-tab elements so the AI translator includes appropriate
+    // waits + understands the trigger opens a new browser tab. Case-executor
+    // routes the click automatically based on the flag at runtime; this
+    // marker is just to help AI write better setup_instructions.
+    const externalMark = el.externalPage ? " [external-tab]" : "";
     const prefix = indent.repeat(depth);
-    lines.push(`${prefix}- ${key} → ${displayKey} (${el.x},${el.y}) ${statusMark}${verifiedByQA} [${el.strategy}]`);
+    lines.push(`${prefix}- ${key} → ${displayKey} (${el.x},${el.y}) ${statusMark}${verifiedByQA}${externalMark} [${el.strategy}]`);
     const children = childrenMap.get(key) ?? [];
     for (const c of children) renderNode(c, depth + 1);
   }

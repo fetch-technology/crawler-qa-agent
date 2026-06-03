@@ -35,6 +35,7 @@ export const REGISTRY_FILES = {
   uiGraph: "ui-graph.json",
   testcases: "testcases.yaml",
   meta: "_meta.json",
+  gameSpecOverride: "game-spec-override.json",
 } as const;
 
 export function fileForGame(slug: GameSlug, key: keyof typeof REGISTRY_FILES): string {

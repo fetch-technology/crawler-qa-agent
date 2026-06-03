@@ -311,10 +311,15 @@ export async function probeElement(
           } else {
             await page.waitForTimeout(1500);
 
-            // (B) Bet-selector popup detection.
+            // (B) Bet-selector popup detection. Capture popup detection
+            // once + reuse for signal (D) below.
             let popupHit: string | null = null;
+            let popupDetected = false;
+            let popupText = "";
             try {
               const det = await detectAnyPopup(page, { substateKeywords: SUBSTATE_POPUP_KEYWORDS });
+              popupDetected = det.hasPopup;
+              popupText = det.detectedText;
               if (det.hasPopup) {
                 const betKeywords = ["bet", "coin value", "total bet", "lines", "wager"];
                 const m = betKeywords.find((k) => det.detectedText.includes(k));
@@ -337,23 +342,41 @@ export async function probeElement(
               } catch {}
             }
 
-            // (D) Substantial full-screen pixel diff (popup likely open).
+            // (D) Substantial full-screen pixel diff WITH bet-ladder
+            // evidence in the popup text. Tightened 2026-06-03 after
+            // false-positive observation: clicking menuButton (or any
+            // adjacent UI) produces pixDiff >8% via the menu drawer
+            // opening → probe wrongly marked betPlus/betMinus verified.
+            // The fix requires the visual change to (a) be a real popup
+            // (detectAnyPopup detected overlay/text) AND (b) contain at
+            // least 2 ladder-like values (numeric or "$0.20" patterns)
+            // that suggest a bet selector menu. Generic popups (menu
+            // drawer, paytable) don't usually carry multiple "$N.NN"
+            // values clustered together, so this filters them out.
             let pixDiff = 0;
+            let ladderHits = 0;
             if (!signal && beforeFullBuf) {
               try {
                 const afterFullBuf = await page.screenshot({ type: "png" });
                 pixDiff = await bufferPixelDiff(beforeFullBuf, afterFullBuf);
-                // 8% chosen empirically: ambient animation < 1%, a single
-                // bet-readout digit flipping ≤ 2%, a bet selector popup
-                // opening ≥ 15% (typically 30-50%).
-                if (pixDiff > 0.08) signal = `betFullScreenDiff:${(pixDiff * 100).toFixed(1)}%`;
+                if (pixDiff > 0.08 && popupDetected) {
+                  // Count distinct monetary-style values in popup text.
+                  // Patterns: "$0.20", "0.20", "0,20" — slot bet ladders
+                  // typically expose 8-15 such values. 2+ matches → real
+                  // bet selector; 0-1 → noise / non-bet popup.
+                  const numMatches = popupText.match(/\$?\d+[.,]\d{1,2}\b/g) ?? [];
+                  ladderHits = new Set(numMatches).size;
+                  if (ladderHits >= 2) {
+                    signal = `betFullScreenDiff:${(pixDiff * 100).toFixed(1)}%+ladder:${ladderHits}`;
+                  }
+                }
               } catch {}
             }
 
             console.log(
               `[probe/bet] ${kind} offset ${i} (click=${x},${y}): ` +
-              `signal=${signal ?? "none"} popup=${popupHit ?? "no"} ` +
-              `bet=${beforeBet}->${afterBet} fullPixDiff=${(pixDiff * 100).toFixed(1)}%`,
+              `signal=${signal ?? "none"} popup=${popupDetected ? (popupHit ?? "no-kw") : "no"} ` +
+              `bet=${beforeBet}->${afterBet} fullPixDiff=${(pixDiff * 100).toFixed(1)}% ladderHits=${ladderHits}`,
             );
           }
           break;

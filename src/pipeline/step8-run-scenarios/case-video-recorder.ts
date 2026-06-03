@@ -42,14 +42,28 @@ export class CaseVideoRecorder {
     });
   }
 
-  async start(page: Page): Promise<void> {
+  /** Start recording. Pass a `getActivePage` callback when the case may
+   *  switch focus between multiple pages (e.g. external history tab opened
+   *  via window.open) — the recorder re-resolves the source page each frame
+   *  so the video follows whichever page the case is interacting with.
+   *  When omitted, frames come from the original `page` always (legacy
+   *  single-page behavior). */
+  async start(page: Page, getActivePage?: () => Page): Promise<void> {
     await mkdir(this.framesDir, { recursive: true });
     const intervalMs = Math.max(50, Math.floor(1000 / this.fps));
     console.log(`[case-video] start recording → ${this.framesDir} (fps=${this.fps}, interval=${intervalMs}ms)`);
     this.timer = setInterval(() => {
       if (this.stopped || this.inFlight) return;
       this.inFlight = true;
-      page.screenshot({ type: "png", fullPage: false })
+      // Resolve the source page each frame so external-tab activity gets
+      // recorded too. Fallback to the original page when the callback
+      // returns a closed/null page.
+      let src: Page = page;
+      try {
+        const candidate = getActivePage?.();
+        if (candidate && !candidate.isClosed()) src = candidate;
+      } catch { /* getActivePage threw — fall back to original */ }
+      src.screenshot({ type: "png", fullPage: false })
         .then(async (buf) => {
           if (this.stopped) return;
           const idx = this.frameIdx++;

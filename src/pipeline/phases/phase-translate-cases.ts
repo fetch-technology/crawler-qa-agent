@@ -72,6 +72,16 @@ export async function phaseTranslateCases(args: {
     args.spinApiUrl !== undefined ? Promise.resolve(null) : apiMapping.load(slug),
   ]);
   const spinApiUrl = args.spinApiUrl !== undefined ? args.spinApiUrl : (api?.spinApi?.url ?? null);
+  // QA override for bet ladder / min / max → flows into translator's
+  // GameSpec hint so set_bet_to_value() targets the corrected ladder.
+  const { gameSpecOverride } = await import("../registry/game-spec-override.js");
+  const ov = await gameSpecOverride.load(slug).catch(() => null);
+  const betOverride = ov ? {
+    baseBet: ov.defaultBet,
+    betLadder: ov.betLadder,
+    betMin: ov.betMin,
+    betMax: ov.betMax,
+  } : undefined;
   const bigSpec = buildGameSpec({
     gameSlug: slug,
     provider,
@@ -80,6 +90,7 @@ export async function phaseTranslateCases(args: {
     parsedSpins: [],
     spinApiUrl,
     paytable,
+    betOverride,
   });
   // translateAllCases' GameSpec is a 4-field subset (betLadder/defaultBet/
   // betMin/betMax) — distinct from buildGameSpec's rich shape used by the

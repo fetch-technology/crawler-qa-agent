@@ -32,6 +32,15 @@ export type UiElement = {
   /** When verifiedBy === "probe", a short tag describing the signal that
    *  confirmed (e.g. "spinResponse", "pixelDiff+OCR", "betOcrChanged"). */
   probeSignal?: string;
+  /** True when this element lives on an EXTERNAL browser tab opened by
+   *  clicking its parent trigger (window.open / target="_blank") — common
+   *  for legacy game-history popups. Case-executor uses this to route the
+   *  click to the captured tab page instead of the original game page.
+   *  Coords are tab-relative (top-left of the new window, NOT of the game
+   *  iframe). When the parent trigger click first opens the tab, all
+   *  descendant clicks on namespaced children (`parentKey__child`) target
+   *  the same tab until it's closed. */
+  externalPage?: boolean;
 };
 
 export type UiRegistry = {

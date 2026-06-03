@@ -551,8 +551,35 @@ export async function handleManualRoute(
     // P3 — one-click chain: deep-discover (P2) + payout-model calibrate. Returns
     // combined summary so dashboard can show a single "game ready" verdict.
     if (url === "/api/qa/manual/auto-onboard" && method === "POST") {
-      const body = await asJsonBody<{ deepDiscover?: { maxDepth?: number; maxAiCalls?: number; maxStates?: number }; calibrationSpinsPerLevel?: number }>(req);
+      const body = await asJsonBody<{ deepDiscover?: { maxDepth?: number; maxAiCalls?: number; maxStates?: number }; calibrationSpinsPerLevel?: number; resume?: boolean }>(req);
       const r = await resolveSession(req, body as any, url).autoOnboard(body);
+      return sendJson(res, r.ok ? 200 : 400, r), true;
+    }
+
+    // PUT /api/qa/manual/game-spec { betMin?, betMax?, defaultBet?, betLadder?,
+    //   coinValues?, lines?, defaultCoin?, betLevels?, note? }
+    // Update QA overrides applied on top of the auto-captured GameSpec.
+    // Body fields are MERGED with prior override (partial PATCH). Pass
+    // `null` for the whole body (or { __clear: true }) to erase. The
+    // effective spec flows into AI catalog gen + action translator so
+    // assertions reference QA-corrected values.
+    if (url === "/api/qa/manual/game-spec" && method === "PUT") {
+      const body = await asJsonBody<{ __clear?: boolean } & Partial<import("./manual-session.js").ManualSessionManager>>(req);
+      const session = resolveSession(req, body as any, url);
+      const patch = body && (body as any).__clear === true ? null : (body as any);
+      const r = await session.setGameSpecOverride(patch);
+      return sendJson(res, r.ok ? 200 : 400, r), true;
+    }
+
+    // POST /api/qa/manual/auto-onboard/pause — request a cooperative
+    // pause. Server marks the flag + responds immediately; the running
+    // autoOnboard checks between phases and exits cleanly after the
+    // current phase finishes. State is persisted via the normal endPhase
+    // path — resume reuses the same _onboard-state.json flow as
+    // crash-recovery. Use case: QA spots a registry gap mid-onboard,
+    // wants to manually Discover an element before catalog gen.
+    if (url === "/api/qa/manual/auto-onboard/pause" && method === "POST") {
+      const r = resolveSession(req, null, url).pauseAutoOnboard();
       return sendJson(res, r.ok ? 200 : 400, r), true;
     }
 

@@ -32,6 +32,7 @@ import { uiRegistry } from "../registry/ui-registry.js";
 import { providerCache } from "../registry/provider-cache.js";
 import { featureRegistry } from "../registry/feature-registry-store.js";
 import { apiMapping } from "../registry/api-mapping.js";
+import { gameSpecOverride } from "../registry/game-spec-override.js";
 import { createParserForGame } from "../step6-build-model/parser-factory.js";
 import { dirForGame } from "../registry/paths.js";
 import type { NetworkRound, CapturedRequest, CapturedResponse } from "../step3-capture-network/types.js";
