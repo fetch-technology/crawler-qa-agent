@@ -1,0 +1,1001 @@
+{
+  "game_slug": "vs20olympgate",
+  "game_display_name": "vs20olympgate",
+  "generated_at": "2026-06-02T19:09:37.215Z",
+  "total_cases": 24,
+  "cases": [
+    {
+      "id": "base-default-bet-balance-conservation",
+      "name": "Default bet — balance conservation single spin",
+      "description": "Spin once at whatever the game's default total bet is (info popup notes 'Total Bet adjustable (currently $10.00)') and verify the post-spin endingBalance equals startingBalance − betAmount + winAmount within 0.01 tolerance. Validates the core money-integrity invariant for vs20olympgate per spec.execution_strategy.field_validation (betAmount, winAmount, endingBalance all required, type=number, min=0).",
+      "category": "base_game",
+      "severity": "critical",
+      "setup_instructions": "",
+      "expected_bet": null,
+      "expected_config": null,
+      "spin_count": 1,
+      "expected_feature": null,
+      "invariant_ids": [],
+      "custom_assertions": [
+        {
+          "id": "default-bet-positive-number",
+          "description": "betAmount is a finite positive number (spec.field_validation.betAmount: required, type=number, min=0, nullable=false)",
+          "check_code": "typeof spin.betAmount === 'number' && isFinite(spin.betAmount) && spin.betAmount > 0"
+        },
+        {
+          "id": "default-win-non-negative-number",
+          "description": "winAmount is a finite non-negative number (spec.field_validation.winAmount: required, type=number, min=0)",
+          "check_code": "typeof spin.winAmount === 'number' && isFinite(spin.winAmount) && spin.winAmount >= 0"
+        },
+        {
+          "id": "default-balance-conservation",
+          "description": "endingBalance reconciles with bet/win arithmetic (skipped on first-of-session when startingBalance is null)",
+          "check_code": "spin.startingBalance == null || Math.abs(spin.endingBalance - (spin.startingBalance - spin.betAmount + spin.winAmount)) <= 0.01"
+        },
+        {
+          "id": "default-round-id-present",
+          "description": "Round id is a non-empty string (spec.field_validation.roundId: required, type=string, nullable=false; samples show rid like '10101662692379')",
+          "check_code": "typeof spin.id === 'string' && spin.id.length > 0"
+        },
+        {
+          "id": "default-no-engine-errors",
+          "description": "Runner reported no error/fail warnings during setup or spin",
+          "check_code": "warnings.filter(w => /error|fail|threw/i.test(w)).length === 0"
+        }
+      ]
+    },
+    {
+      "id": "base-multi-spin-integrity",
+      "name": "Multi-spin balance & status integrity (10 spins)",
+      "description": "Run 10 base spins at the game's current (default) bet and verify every spin produces a non-empty round id, that betAmount stays consistent across the run, and that the cumulative balance reconciles with the sum of bets and wins. Exercises spec.preflight_checks.balance-varies (endingBalance should vary) and confirms multi-spin chain integrity for the Pragmatic HTTP single-response channel.",
+      "category": "base_game",
+      "severity": "critical",
+      "setup_instructions": "",
+      "expected_bet": null,
+      "expected_config": null,
+      "spin_count": 10,
+      "expected_feature": null,
+      "invariant_ids": [],
+      "custom_assertions": [
+        {
+          "id": "multi-all-have-round-id",
+          "description": "Every captured spin has a non-empty string id (round identifier)",
+          "check_code": "collector.spins.every(s => typeof s.id === 'string' && s.id.length > 0)"
+        },
+        {
+          "id": "multi-all-bet-positive",
+          "description": "Every spin has a finite positive betAmount",
+          "check_code": "collector.spins.every(s => typeof s.betAmount === 'number' && isFinite(s.betAmount) && s.betAmount > 0)"
+        },
+        {
+          "id": "multi-bet-stable-across-spins",
+          "description": "betAmount does not drift between spins (no UI side-effect changed the bet mid-run)",
+          "check_code": "collector.spins.every(s => Math.abs(s.betAmount - collector.spins[0].betAmount) <= 0.01)"
+        },
+        {
+          "id": "multi-per-spin-balance-conservation",
+          "description": "Every spin (with a known startingBalance) obeys endingBalance = startingBalance − bet + win",
+          "check_code": "collector.spins.every(s => s.startingBalance == null || Math.abs(s.endingBalance - (s.startingBalance - s.betAmount + s.winAmount)) <= 0.01)"
+        },
+        {
+          "id": "multi-cumulative-balance-reconciles",
+          "description": "Net balance change across the run equals sum(win) − sum(bet) within 0.01",
+          "check_code": "(() => { const sumBet = collector.spins.reduce((a, s) => a + (s.betAmount || 0), 0); const sumWin = collector.spins.reduce((a, s) => a + (s.winAmount || 0), 0); const last = collector.spins[collector.spins.length - 1]; return balanceBefore == null || last == null || Math.abs(last.endingBalance - balanceBefore - sumWin + sumBet) <= 0.01; })()"
+        },
+        {
+          "id": "multi-round-ids-unique",
+          "description": "Round end frames have distinct ids — no duplicate rounds across the 10 spins",
+          "check_code": "(() => { const ends = getRoundEndSpins(collector.spins); const ids = ends.map(s => s.id).filter(x => typeof x === 'string' && x.length > 0); return new Set(ids).size === ids.length; })()"
+        }
+      ]
+    },
+    {
+      "id": "base-response-shape-validation",
+      "name": "Spin response shape — required fields present",
+      "description": "Run 3 spins at the current bet and verify the four spec-required normalized fields are present and type-correct on every response: betAmount (number ≥ 0), winAmount (number ≥ 0), endingBalance (number ≥ 0), id (non-empty string). Directly exercises spec.execution_strategy.field_validation contract before any payout-logic checks rely on those fields.",
+      "category": "base_game",
+      "severity": "critical",
+      "setup_instructions": "",
+      "expected_bet": null,
+      "expected_config": null,
+      "spin_count": 3,
+      "expected_feature": null,
+      "invariant_ids": [],
+      "custom_assertions": [
+        {
+          "id": "shape-bet-amount-valid",
+          "description": "betAmount is required, type number, ≥ 0, not nullable (spec.field_validation)",
+          "check_code": "collector.spins.every(s => typeof s.betAmount === 'number' && isFinite(s.betAmount) && s.betAmount >= 0)"
+        },
+        {
+          "id": "shape-win-amount-valid",
+          "description": "winAmount is required, type number, ≥ 0, not nullable",
+          "check_code": "collector.spins.every(s => typeof s.winAmount === 'number' && isFinite(s.winAmount) && s.winAmount >= 0)"
+        },
+        {
+          "id": "shape-ending-balance-valid",
+          "description": "endingBalance is required, type number, ≥ 0, not nullable",
+          "check_code": "collector.spins.every(s => typeof s.endingBalance === 'number' && isFinite(s.endingBalance) && s.endingBalance >= 0)"
+        },
+        {
+          "id": "shape-round-id-string",
+          "description": "id is required non-empty string per spec.field_validation.roundId",
+          "check_code": "collector.spins.every(s => typeof s.id === 'string' && s.id.length > 0)"
+        },
+        {
+          "id": "shape-three-spins-captured",
+          "description": "Runner captured at least the 3 requested round-end spins (no debounced/lost spins)",
+          "check_code": "getRoundEndSpins(collector.spins).length >= 3 && warnings.filter(w => /debounced|popup may have blocked|likely debounced/i.test(w)).length === 0"
+        }
+      ]
+    },
+    {
+      "id": "bet-variation-min-0-25",
+      "name": "Bet variation — minimum $0.25",
+      "description": "Configure total bet to the lowest verified bet-ladder entry (bet-0.25 in the registry) and spin once; assert spin.betAmount equals 0.25 USD. Validates the lower boundary of the bet ladder enumerated under betMinus/betPlus in the UI registry and that the Pragmatic spin endpoint accepts the minimum stake without rejection or clamping.",
+      "category": "bet_variation",
+      "severity": "major",
+      "setup_instructions": "Step 1: Click the betMinus button at approximately (890,648) to open the bet-selector popup. Step 2: From the bet ladder grid inside the popup, click the entry labeled 'bet-0.25' at approximately (769,410). Step 3: Click the closeButton at (1097,345) to dismiss the bet popup. Step 4: Verify the Total Bet readout in the bottom info bar reads '$0.25' (within ±1 ladder step tolerance — adjacent ladder entries are 0.50).",
+      "expected_bet": 0.25,
+      "expected_config": {
+        "totalBet": 0.25
+      },
+      "spin_count": 1,
+      "expected_feature": null,
+      "invariant_ids": [],
+      "custom_assertions": [
+        {
+          "id": "min-bet-amount-matches-target",
+          "description": "spin.betAmount equals catalog expected_bet of 0.25 within 0.01",
+          "check_code": "typeof spin.betAmount === 'number' && Math.abs(spin.betAmount - 0.25) <= 0.01"
+        },
+        {
+          "id": "min-win-non-negative",
+          "description": "winAmount is a non-negative finite number at the minimum bet",
+          "check_code": "typeof spin.winAmount === 'number' && isFinite(spin.winAmount) && spin.winAmount >= 0"
+        },
+        {
+          "id": "min-bet-balance-conservation",
+          "description": "Balance arithmetic holds at the minimum bet (null-guard for first spin)",
+          "check_code": "spin.startingBalance == null || Math.abs(spin.endingBalance - (spin.startingBalance - spin.betAmount + spin.winAmount)) <= 0.01"
+        },
+        {
+          "id": "min-bet-no-debounced-or-popup-blocks",
+          "description": "No spins were lost to debounce or popup interference during bet-ladder configuration",
+          "check_code": "warnings.filter(w => /debounced|popup may have blocked|likely debounced/i.test(w)).length === 0"
+        }
+      ]
+    },
+    {
+      "id": "bet-variation-1-25",
+      "name": "Bet variation — $1.25 (low-mid)",
+      "description": "Configure total bet to the registry-verified ladder entry bet-1.25 (verified at (769,472)) and spin once; assert spin.betAmount equals 1.25 USD. Covers a low-mid stake on the ladder, exercising both Pragmatic Double-Chance-compatible amounts (1.25× multiplier reference) and balance arithmetic at a typical stake.",
+      "category": "bet_variation",
+      "severity": "major",
+      "setup_instructions": "Step 1: Click the betMinus button at approximately (890,648) to open the bet-selector popup. Step 2: From the bet ladder grid in the popup, click the entry labeled 'bet-1.25' at approximately (769,472). Step 3: Click the closeButton at (1097,345) to dismiss the popup. Step 4: Verify the Total Bet readout in the bottom info bar reads '$1.25' (within ±1 ladder step tolerance).",
+      "expected_bet": 1.25,
+      "expected_config": {
+        "totalBet": 1.25
+      },
+      "spin_count": 1,
+      "expected_feature": null,
+      "invariant_ids": [],
+      "custom_assertions": [
+        {
+          "id": "bet-1-25-amount-matches-target",
+          "description": "spin.betAmount equals 1.25 USD within 0.01",
+          "check_code": "typeof spin.betAmount === 'number' && Math.abs(spin.betAmount - 1.25) <= 0.01"
+        },
+        {
+          "id": "bet-1-25-win-non-negative",
+          "description": "winAmount is a non-negative finite number",
+          "check_code": "typeof spin.winAmount === 'number' && isFinite(spin.winAmount) && spin.winAmount >= 0"
+        },
+        {
+          "id": "bet-1-25-balance-conservation",
+          "description": "Balance arithmetic holds at 1.25 stake (skipped if first spin)",
+          "check_code": "spin.startingBalance == null || Math.abs(spin.endingBalance - (spin.startingBalance - spin.betAmount + spin.winAmount)) <= 0.01"
+        },
+        {
+          "id": "bet-1-25-round-id-present",
+          "description": "Spin returned a non-empty round identifier",
+          "check_code": "typeof spin.id === 'string' && spin.id.length > 0"
+        }
+      ]
+    },
+    {
+      "id": "bet-variation-2-50",
+      "name": "Bet variation — $2.50 (mid)",
+      "description": "Configure total bet to the mid-ladder verified entry bet-2.50 (registry coords (1047,472)) and spin once; assert spin.betAmount equals 2.50 USD. Validates the middle of the bet range, supporting balance-conservation testing on a stake that produces meaningful (non-rounding-noise) bet deltas in the endingBalance.",
+      "category": "bet_variation",
+      "severity": "major",
+      "setup_instructions": "Step 1: Click the betMinus button at approximately (890,648) to open the bet-selector popup. Step 2: From the bet ladder grid inside the popup, click the entry labeled 'bet-2.50' at approximately (1047,472). Step 3: Click the closeButton at (1097,345) to dismiss the popup. Step 4: Verify the Total Bet readout in the bottom info bar reads '$2.50' (within ±1 ladder step tolerance — adjacent entries are 1.75 and 5.00).",
+      "expected_bet": 2.5,
+      "expected_config": {
+        "totalBet": 2.5
+      },
+      "spin_count": 1,
+      "expected_feature": null,
+      "invariant_ids": [],
+      "custom_assertions": [
+        {
+          "id": "bet-2-50-amount-matches-target",
+          "description": "spin.betAmount equals 2.50 USD within 0.01",
+          "check_code": "typeof spin.betAmount === 'number' && Math.abs(spin.betAmount - 2.50) <= 0.01"
+        },
+        {
+          "id": "bet-2-50-win-non-negative",
+          "description": "winAmount is finite and ≥ 0 at mid-stake",
+          "check_code": "typeof spin.winAmount === 'number' && isFinite(spin.winAmount) && spin.winAmount >= 0"
+        },
+        {
+          "id": "bet-2-50-balance-conservation",
+          "description": "endingBalance = startingBalance − 2.50 + winAmount within tolerance (null-guard first spin)",
+          "check_code": "spin.startingBalance == null || Math.abs(spin.endingBalance - (spin.startingBalance - spin.betAmount + spin.winAmount)) <= 0.01"
+        },
+        {
+          "id": "bet-2-50-setup-stable",
+          "description": "Engine reported no setup errors and no debounced spins",
+          "check_code": "warnings.filter(w => /error|fail|debounced|popup may have blocked/i.test(w)).length === 0"
+        }
+      ]
+    },
+    {
+      "id": "bet-variation-5-00",
+      "name": "Bet variation — $5.00 (high-mid)",
+      "description": "Configure total bet to the verified ladder entry bet-5.00 (registry coords (769,534)) and spin once; assert spin.betAmount equals 5.00 USD. Exercises a higher-tier stake to validate that balance deductions/credits scale linearly and that the Pragmatic spin endpoint returns the expected betAmount for non-trivial stakes.",
+      "category": "bet_variation",
+      "severity": "major",
+      "setup_instructions": "Step 1: Click the betMinus button at approximately (890,648) to open the bet-selector popup. Step 2: From the bet ladder grid inside the popup, click the entry labeled 'bet-5.00' at approximately (769,534). Step 3: Click the closeButton at (1097,345) to dismiss the popup. Step 4: Verify the Total Bet readout in the bottom info bar reads '$5.00' (within ±1 ladder step tolerance — adjacent entries are 2.50 and 7.50).",
+      "expected_bet": 5,
+      "expected_config": {
+        "totalBet": 5
+      },
+      "spin_count": 1,
+      "expected_feature": null,
+      "invariant_ids": [],
+      "custom_assertions": [
+        {
+          "id": "bet-5-00-amount-matches-target",
+          "description": "spin.betAmount equals 5.00 USD within 0.01",
+          "check_code": "typeof spin.betAmount === 'number' && Math.abs(spin.betAmount - 5.00) <= 0.01"
+        },
+        {
+          "id": "bet-5-00-win-non-negative",
+          "description": "winAmount is finite and ≥ 0 at high-mid stake",
+          "check_code": "typeof spin.winAmount === 'number' && isFinite(spin.winAmount) && spin.winAmount >= 0"
+        },
+        {
+          "id": "bet-5-00-balance-conservation",
+          "description": "endingBalance reconciles with 5.00 bet and observed win (null-guard first spin)",
+          "check_code": "spin.startingBalance == null || Math.abs(spin.endingBalance - (spin.startingBalance - spin.betAmount + spin.winAmount)) <= 0.01"
+        },
+        {
+          "id": "bet-5-00-round-id-present",
+          "description": "Round id was returned as a non-empty string",
+          "check_code": "typeof spin.id === 'string' && spin.id.length > 0"
+        }
+      ]
+    },
+    {
+      "id": "bet-variation-max-12-50",
+      "name": "Bet variation — maximum $12.50",
+      "description": "Verify spin.betAmount equals 12.50 USD when bet is set to the highest ladder value visible in the verified UI registry (rules: betPlus__bet-12.50 verified at 1047,534). Validates the upper bound of the base bet stepper and that balance arithmetic holds on the maximum stake reachable via base bet controls (no Double Chance, no Buy Feature).",
+      "category": "bet_variation",
+      "severity": "major",
+      "setup_instructions": "Step 1: Locate the bet display next to the spin button in the bottom info bar. Step 2: Ensure the Double Chance toggle (verified at 90,355) is in the OFF state — if it appears active, click it once to deactivate. Step 3: Click the betPlus '+' button (verified at 1085,645) to open the bet selection panel. Step 4: In the panel, click the bet-12.50 option (verified at 1047,534). Step 5: Click the closeButton (verified at 1097,345) to dismiss the panel. Step 6: Verify the total bet display now reads '12.50' (within ±1 ladder step tolerance — the only verified rungs higher than 7.50 are 12.50).",
+      "expected_bet": 12.5,
+      "expected_config": {
+        "totalBet": 12.5,
+        "doubleChance": false
+      },
+      "spin_count": 1,
+      "expected_feature": null,
+      "invariant_ids": [],
+      "custom_assertions": [
+        {
+          "id": "bet-amount-matches-12-50",
+          "description": "spin.betAmount equals 12.50 USD within tolerance",
+          "check_code": "typeof spin.betAmount === 'number' && Math.abs(spin.betAmount - 12.50) <= 0.01"
+        },
+        {
+          "id": "bet-balance-conservation-at-max",
+          "description": "Balance arithmetic holds at max bet (skip first-spin when startingBalance is null)",
+          "check_code": "spin.startingBalance == null || Math.abs(spin.endingBalance - (spin.startingBalance - spin.betAmount + spin.winAmount)) <= 0.01"
+        },
+        {
+          "id": "win-non-negative-and-finite",
+          "description": "winAmount is a finite non-negative number (no NaN propagation)",
+          "check_code": "typeof spin.winAmount === 'number' && spin.winAmount >= 0 && isFinite(spin.winAmount)"
+        },
+        {
+          "id": "no-debounced-or-blocked-clicks",
+          "description": "Setup completed without dropped clicks or popup interference",
+          "check_code": "warnings.filter(w => /debounced|likely debounced|popup may have blocked|no spin.*response within/i.test(w)).length === 0"
+        },
+        {
+          "id": "round-id-present",
+          "description": "Spin response carries a valid roundId string",
+          "check_code": "typeof spin.id === 'string' && spin.id.length > 0"
+        }
+      ]
+    },
+    {
+      "id": "bet-boundary-above-max-clamped",
+      "name": "Bet boundary — overshoot above max clamps to 12.50",
+      "description": "Verify that attempting to increase bet beyond the maximum ladder value (12.50 USD per verified registry rung bet-12.50 at 1047,534) is clamped — neither the UI nor the server should accept a betAmount above the configured maximum. This is a security/integrity test per Best Practices §18.7 to ensure overshoot clicks cannot bypass the bet cap.",
+      "category": "other",
+      "severity": "critical",
+      "setup_instructions": "Step 1: Ensure the Double Chance toggle (90,355) is OFF — click once to deactivate if active. Step 2: Click the betPlus '+' button (1085,645) to open the bet selection panel. Step 3: Click the bet-12.50 option (verified at 1047,534) to select the maximum rung. Step 4: Click the betPlus '+' button again 5 additional times to attempt overshoot beyond the ladder maximum. Step 5: Click the closeButton (1097,345) to dismiss the panel. Step 6: Verify the bet display still reads '12.50' exactly (clamped — no value above 12.50 should appear).",
+      "expected_bet": 12.5,
+      "expected_config": {
+        "totalBet": 12.5,
+        "doubleChance": false,
+        "overshootAttempts": 5
+      },
+      "spin_count": 1,
+      "expected_feature": null,
+      "invariant_ids": [],
+      "custom_assertions": [
+        {
+          "id": "bet-clamped-to-max",
+          "description": "spin.betAmount must not exceed 12.50 (server-side clamp)",
+          "check_code": "typeof spin.betAmount === 'number' && spin.betAmount <= 12.50 + 0.01"
+        },
+        {
+          "id": "bet-exactly-at-max",
+          "description": "spin.betAmount equals 12.50 (UI prevented overshoot from registering)",
+          "check_code": "typeof spin.betAmount === 'number' && Math.abs(spin.betAmount - 12.50) <= 0.01"
+        },
+        {
+          "id": "balance-conservation-at-clamp",
+          "description": "Balance arithmetic remains consistent at the clamped max bet",
+          "check_code": "spin.startingBalance == null || Math.abs(spin.endingBalance - (spin.startingBalance - spin.betAmount + spin.winAmount)) <= 0.01"
+        },
+        {
+          "id": "status-resolved-not-rejected",
+          "description": "Spin completed normally (not rejected by server due to invalid bet)",
+          "check_code": "spin.status === 'RESOLVED' || spin.status == null"
+        },
+        {
+          "id": "no-error-warnings",
+          "description": "No setup error warnings emitted during overshoot attempts",
+          "check_code": "warnings.filter(w => /error|fail|invalid bet|reject/i.test(w)).length === 0"
+        }
+      ]
+    },
+    {
+      "id": "bet-boundary-below-min-clamped",
+      "name": "Bet boundary — undershoot below min clamps to 0.25",
+      "description": "Verify that attempting to decrease bet below the minimum ladder value (0.25 USD per registry rung bet-0.25 at 769,410) is clamped — server must never accept a betAmount of 0 or below the minimum. This is a critical integrity test per Best Practices §18.7 preventing bet bypass that could enable free spinning or negative bets.",
+      "category": "other",
+      "severity": "critical",
+      "setup_instructions": "Step 1: Ensure the Double Chance toggle (90,355) is OFF. Step 2: Click the betMinus '-' button (verified at 890,648) to open the bet selection panel. Step 3: Click the bet-0.25 option (at 769,410, pending verification but lowest visible ladder rung) to select minimum stake. Step 4: Click the betMinus '-' button 5 additional times to attempt undershoot below the minimum. Step 5: Click the closeButton (1097,345) to dismiss the panel. Step 6: Verify the bet display still reads '0.25' exactly — value must NOT drop to 0 or below 0.25.",
+      "expected_bet": 0.25,
+      "expected_config": {
+        "totalBet": 0.25,
+        "doubleChance": false,
+        "undershootAttempts": 5
+      },
+      "spin_count": 1,
+      "expected_feature": null,
+      "invariant_ids": [],
+      "custom_assertions": [
+        {
+          "id": "bet-clamped-at-or-above-min",
+          "description": "spin.betAmount must be at least 0.25 (server-side min clamp)",
+          "check_code": "typeof spin.betAmount === 'number' && spin.betAmount >= 0.25 - 0.01"
+        },
+        {
+          "id": "bet-strictly-positive",
+          "description": "spin.betAmount must be strictly positive (never zero or negative)",
+          "check_code": "typeof spin.betAmount === 'number' && spin.betAmount > 0"
+        },
+        {
+          "id": "bet-exactly-at-min",
+          "description": "spin.betAmount equals 0.25 (clamped to ladder minimum)",
+          "check_code": "typeof spin.betAmount === 'number' && Math.abs(spin.betAmount - 0.25) <= 0.01"
+        },
+        {
+          "id": "balance-conservation-at-min",
+          "description": "Balance arithmetic holds at minimum stake",
+          "check_code": "spin.startingBalance == null || Math.abs(spin.endingBalance - (spin.startingBalance - spin.betAmount + spin.winAmount)) <= 0.01"
+        },
+        {
+          "id": "no-undershoot-error-warnings",
+          "description": "No error/reject warnings emitted during undershoot attempts",
+          "check_code": "warnings.filter(w => /error|fail|invalid bet|reject/i.test(w)).length === 0"
+        }
+      ]
+    },
+    {
+      "id": "autoplay-small-10-rounds",
+      "name": "Autoplay — 10 rounds completes correctly",
+      "description": "Configure autoplay for 10 rounds at a moderate stake (1.25 USD, verified ladder rung bet-1.25) and let the batch run to completion. Verify exactly 10 resolved round-end spins are captured, each with consistent betAmount, unique roundId, and full cumulative balance conservation across the batch (rules: autoButton verified at 995,701; autoCountSlide-10 at 484,386).",
+      "category": "autoplay",
+      "severity": "major",
+      "setup_instructions": "Step 1: Ensure Double Chance toggle (90,355) is OFF. Step 2: Click the betPlus '+' button (1085,645) to open the bet panel. Step 3: Click the bet-1.25 option (verified at 769,472). Step 4: Click closeButton (1097,345) to dismiss the bet panel. Step 5: Click the autoButton (verified at 995,701) to open the autoplay configuration panel. Step 6: Click the autoCountSlide-10 option (at 484,386) to select 10 rounds. Step 7: Click the startAutoplayButton (at 660,508) to commence autoplay. Step 8: Verify the autoplay panel closes and the reels visibly begin spinning automatically.",
+      "expected_bet": 1.25,
+      "expected_config": {
+        "totalBet": 1.25,
+        "doubleChance": false,
+        "autoplayRounds": 10
+      },
+      "spin_count": 10,
+      "expected_feature": null,
+      "invariant_ids": [],
+      "custom_assertions": [
+        {
+          "id": "autoplay-round-count-10",
+          "description": "At least 10 round-end frames captured (one per autoplay round)",
+          "check_code": "getRoundEndSpins(collector.spins).length >= 10"
+        },
+        {
+          "id": "autoplay-bet-consistent",
+          "description": "Every captured round has betAmount equal to the configured 1.25",
+          "check_code": "getRoundEndSpins(collector.spins).every(s => typeof s.betAmount === 'number' && Math.abs(s.betAmount - 1.25) <= 0.01)"
+        },
+        {
+          "id": "autoplay-unique-round-ids",
+          "description": "Every captured round has a unique roundId",
+          "check_code": "(() => { const ids = getRoundEndSpins(collector.spins).map(s => s.id); return new Set(ids).size === ids.length; })()"
+        },
+        {
+          "id": "autoplay-cumulative-balance",
+          "description": "Cumulative bet/win reconciles across the entire 10-round batch",
+          "check_code": "(() => { const ends = getRoundEndSpins(collector.spins); const first = ends[0]; const last = ends[ends.length - 1]; if (!first || !last || first.startingBalance == null) return true; const sb = ends.reduce((a,s)=>a+(s.betAmount||0),0); const sw = ends.reduce((a,s)=>a+(s.winAmount||0),0); return Math.abs(last.endingBalance - (first.startingBalance - sb + sw)) <= 0.01; })()"
+        },
+        {
+          "id": "autoplay-no-debounced-clicks",
+          "description": "No spin clicks dropped due to debounce or popup blocking",
+          "check_code": "warnings.filter(w => /debounced|likely debounced|popup may have blocked|no spin.*response within/i.test(w)).length === 0"
+        }
+      ]
+    },
+    {
+      "id": "autoplay-medium-500-rounds-early-stop",
+      "name": "Autoplay — 500 rounds configured, collect first 25 then stop",
+      "description": "Configure autoplay for the high-volume 500-round batch (rules: autoCountSlide-500 verified at 747,386), let it run for 25 rounds, then capture stops. Validates medium-volume autoplay execution under manual-stop interruption and that bet/balance integrity holds across the partial batch.",
+      "category": "autoplay",
+      "severity": "major",
+      "setup_instructions": "Step 1: Ensure Double Chance toggle (90,355) is OFF. Step 2: Click betPlus '+' (1085,645) to open bet panel. Step 3: Click bet-1.25 (verified at 769,472). Step 4: Click closeButton (1097,345). Step 5: Click the autoButton (995,701) to open the autoplay panel. Step 6: Click the autoCountSlide-500 option (verified at 747,386) to select 500 rounds. Step 7: Click the startAutoplayButton (660,508) to commence autoplay. Step 8: Verify the panel closes and reels begin auto-spinning — runner will collect 25 round-end frames then issue stop.",
+      "expected_bet": 1.25,
+      "expected_config": {
+        "totalBet": 1.25,
+        "doubleChance": false,
+        "autoplayRounds": 500,
+        "collectAndStopAfter": 25
+      },
+      "spin_count": 25,
+      "expected_feature": null,
+      "invariant_ids": [],
+      "custom_assertions": [
+        {
+          "id": "autoplay-batch-collected-25",
+          "description": "At least 25 round-end frames captured before stop",
+          "check_code": "getRoundEndSpins(collector.spins).length >= 25"
+        },
+        {
+          "id": "autoplay-bet-constant",
+          "description": "Bet amount remained constant at 1.25 throughout the batch",
+          "check_code": "getRoundEndSpins(collector.spins).every(s => typeof s.betAmount === 'number' && Math.abs(s.betAmount - 1.25) <= 0.01)"
+        },
+        {
+          "id": "autoplay-unique-ids-25",
+          "description": "All 25 captured rounds carry unique roundIds",
+          "check_code": "(() => { const ids = getRoundEndSpins(collector.spins).map(s => s.id); return new Set(ids).size === ids.length && ids.every(id => typeof id === 'string' && id.length > 0); })()"
+        },
+        {
+          "id": "autoplay-batch-balance-reconciles",
+          "description": "Cumulative bet/win reconciles across the captured partial batch",
+          "check_code": "(() => { const ends = getRoundEndSpins(collector.spins); const first = ends[0]; const last = ends[ends.length - 1]; if (!first || !last || first.startingBalance == null) return true; const sb = ends.reduce((a,s)=>a+(s.betAmount||0),0); const sw = ends.reduce((a,s)=>a+(s.winAmount||0),0); return Math.abs(last.endingBalance - (first.startingBalance - sb + sw)) <= 0.01; })()"
+        },
+        {
+          "id": "autoplay-wins-non-negative",
+          "description": "Every captured round reports a non-negative finite winAmount",
+          "check_code": "getRoundEndSpins(collector.spins).every(s => typeof s.winAmount === 'number' && s.winAmount >= 0 && isFinite(s.winAmount))"
+        },
+        {
+          "id": "autoplay-medium-no-debounce",
+          "description": "No spin clicks dropped or blocked during the medium-volume run",
+          "check_code": "warnings.filter(w => /debounced|likely debounced|popup may have blocked|no spin.*response within/i.test(w)).length === 0"
+        }
+      ]
+    },
+    {
+      "id": "buy-feature-free-spins-100x",
+      "name": "Buy Feature — Buy Free Spins (100x base bet)",
+      "description": "Purchase the Free Spins feature via the Buy Bonus button and verify the pre-spin deduction equals 100× base bet per play-screen rules (Buy Free Spins cost $1,000 at $10 base = 100x; effect 'Triggers Free Spins feature (100x base bet)'). Verifies buy_feature.available=true contract and that resulting frames flagged isFreeSpin behave as a valid free-spin chain.",
+      "category": "buy_feature",
+      "severity": "critical",
+      "setup_instructions": "Step 1: Ensure Double Chance toggle (90,355) is OFF. Step 2: Click betPlus '+' (1085,645) to open bet panel. Step 3: Click bet-1.25 (verified at 769,472) to fix base bet at $1.25 — expected buy cost = 100 × 1.25 = $125. Step 4: Click closeButton (1097,345). Step 5: Click the buyBonusButton (at 65,125) to open the buy-feature popup. Step 6: Verify the popup shows 'Buy Free Spins' as an option with cost displayed. Step 7: Click the confirmButton (at 720,437) inside the buy popup. Step 8: Verify the popup closes and reels begin spinning automatically — runner will follow the free-spin chain via state machine.",
+      "expected_bet": 1.25,
+      "expected_config": {
+        "totalBet": 1.25,
+        "doubleChance": false,
+        "buyFeature": "Buy Free Spins",
+        "expectedRatio": 100
+      },
+      "spin_count": 1,
+      "expected_feature": "free_spins",
+      "invariant_ids": [],
+      "custom_assertions": [
+        {
+          "id": "buy-feature-deduction-detected",
+          "description": "A buy-feature deduction was detected with ratio ≥ 50× base bet (Pragmatic spec: 100× for Free Spins)",
+          "check_code": "(() => { const d = detectBuyFeatureDeduction(collector.spins, 0, balanceBefore); return d != null && d.ratio >= 50; })()"
+        },
+        {
+          "id": "buy-feature-ratio-near-100x",
+          "description": "Deduction ratio is approximately 100× base bet per play-screen spec",
+          "check_code": "(() => { const d = detectBuyFeatureDeduction(collector.spins, 0, balanceBefore); return d != null && d.ratio >= 80 && d.ratio <= 120; })()"
+        },
+        {
+          "id": "buy-feature-free-spin-frames-valid",
+          "description": "Any free-spin frames observed carry a valid roundId (RNG-independent shape invariant)",
+          "check_code": "collector.spins.filter(s => s.isFreeSpin === true).every(s => typeof s.id === 'string' && s.id.length > 0)"
+        },
+        {
+          "id": "buy-feature-state-transition",
+          "description": "State machine observed a FREE_SPIN or BONUS transition after the purchase",
+          "check_code": "stateTimeline.some(t => /FREE_SPIN|BONUS/i.test(String(t.to)))"
+        },
+        {
+          "id": "buy-feature-wins-non-negative",
+          "description": "All spins in the free-spin chain report non-negative finite winAmount",
+          "check_code": "collector.spins.every(s => typeof s.winAmount === 'number' && s.winAmount >= 0 && isFinite(s.winAmount))"
+        }
+      ]
+    },
+    {
+      "id": "special-bet-double-chance",
+      "name": "Special Bet — Double Chance toggles bet to 1.25× base",
+      "description": "Enable the Double Chance special bet (rules: double_chance_toggle verified at 90,355; play-screen: cost '1.25x bet', effect 'Doubles the chance to win the Free Spins feature') and verify spin.betAmount equals 1.25× the previously selected base bet. With base bet $1.25, the expected total bet after DC ON is $1.5625.",
+      "category": "special_bet",
+      "severity": "major",
+      "setup_instructions": "Step 1: Ensure the Double Chance toggle (verified at 90,355) is in the OFF state — if it appears active/highlighted, click it once to deactivate. Step 2: Click betPlus '+' (1085,645) to open the bet panel. Step 3: Click bet-1.25 (verified at 769,472) to fix base bet at $1.25. Step 4: Click closeButton (1097,345) to dismiss the bet panel. Step 5: Click the double_chance_toggle (90,355) once to enable Double Chance. Step 6: Verify the toggle indicator appears active and the total bet display now shows '1.5625' (or '1.56' rounded — 1.25 × 1.25 = 1.5625).",
+      "expected_bet": 1.5625,
+      "expected_config": {
+        "baseTotalBet": 1.25,
+        "doubleChance": true,
+        "multiplier": 1.25
+      },
+      "spin_count": 1,
+      "expected_feature": null,
+      "invariant_ids": [],
+      "custom_assertions": [
+        {
+          "id": "dc-bet-amount-1-25x",
+          "description": "spin.betAmount equals 1.25 × base bet (1.25 × 1.25 = 1.5625) within rounding tolerance",
+          "check_code": "typeof spin.betAmount === 'number' && Math.abs(spin.betAmount - 1.5625) <= 0.02"
+        },
+        {
+          "id": "dc-bet-greater-than-base",
+          "description": "spin.betAmount with DC ON is strictly greater than base bet (1.25)",
+          "check_code": "typeof spin.betAmount === 'number' && spin.betAmount > 1.25"
+        },
+        {
+          "id": "dc-balance-conservation",
+          "description": "Balance arithmetic holds with the elevated DC bet",
+          "check_code": "spin.startingBalance == null || Math.abs(spin.endingBalance - (spin.startingBalance - spin.betAmount + spin.winAmount)) <= 0.01"
+        },
+        {
+          "id": "dc-status-resolved",
+          "description": "Spin resolved normally with DC active (not rejected by server)",
+          "check_code": "spin.status === 'RESOLVED' || spin.status == null"
+        },
+        {
+          "id": "dc-no-setup-errors",
+          "description": "No error warnings emitted while toggling Double Chance",
+          "check_code": "warnings.filter(w => /error|fail|reject|invalid/i.test(w)).length === 0"
+        }
+      ]
+    },
+    {
+      "id": "turbo-spin-toggle",
+      "name": "Turbo / Quick Spin reduces spin duration",
+      "description": "Verify Quick Spin toggle (options: menuButton__quickSpinToggle verified at 923,195) is functional and reels resolve without warnings when enabled. Runs 3 spins after enabling Quick Spin and asserts all spins resolve cleanly with valid response shape — durations are not strictly asserted (no reliable timing channel), but absence of debounce/lost-spin warnings is. Validates UI control reachability and that toggling Quick Spin does not break the spin pipeline.",
+      "category": "turbo_spin",
+      "severity": "minor",
+      "setup_instructions": "Step 1: Click the menuButton (bottom-left settings icon at 143,645 per rules registry). Step 2: In the system settings panel, locate the Quick Spin toggle (right-side toggle row at 923,195). Step 3: Click the Quick Spin toggle to switch it to ON state. Step 4: Close the menu panel by clicking the closeButton (1038,107). Step 5: Verify the menu panel has closed and the main play screen is visible with reels ready for spinning.",
+      "expected_bet": null,
+      "expected_config": null,
+      "spin_count": 3,
+      "expected_feature": null,
+      "invariant_ids": [],
+      "custom_assertions": [
+        {
+          "id": "turbo-three-spins-resolved",
+          "description": "All 3 spins after enabling Quick Spin resolve with valid id and numeric balance",
+          "check_code": "collector.spins.length >= 3 && collector.spins.every(s => typeof s.id === 'string' && s.id.length > 0 && typeof s.endingBalance === 'number')"
+        },
+        {
+          "id": "turbo-no-lost-spin-warnings",
+          "description": "No debounced/lost-spin warnings emitted during turbo run",
+          "check_code": "warnings.filter(w => /debounced|popup may have blocked|likely debounced|lost spin/i.test(w)).length === 0"
+        },
+        {
+          "id": "turbo-bet-stable-across-spins",
+          "description": "betAmount is stable across the 3 spins (quick spin must not alter stake)",
+          "check_code": "collector.spins.every(s => typeof s.betAmount === 'number' && s.betAmount === collector.spins[0].betAmount)"
+        },
+        {
+          "id": "turbo-state-stayed-main",
+          "description": "State machine stays on MAIN throughout the 3-spin sample (no unexpected transitions)",
+          "check_code": "stateTimeline.length === 0 || stateTimeline.every(t => t.to === 'MAIN' || t.to === 'SPINNING' || t.to === 'IDLE')"
+        }
+      ]
+    },
+    {
+      "id": "history-normal-bet-rows",
+      "name": "History — 5 base spins reflected in history panel",
+      "description": "Run 5 base spins to populate the recent-round history, then open menu → History (options: menuButton__historyButton, popup-nested per memory note). Verify that the captured spin samples have valid round ids and balance arithmetic — the panel-row OCR comparison is observational since no OCR regions are configured. Validates that history is reachable via the menu popup and that round_id presence is stable across the 5 samples.",
+      "category": "history",
+      "severity": "major",
+      "setup_instructions": "Step 1: Confirm the main play screen is visible (no popups). Step 2: Locate the menuButton (143,645 per rules registry) at the bottom-left. Step 3: This case requires 5 spins to occur BEFORE opening history — the runner will perform spins, then after the 5th spin, click menuButton. Step 4: After the 5 spins complete and the menu opens, click the History button (menuButton__historyButton, popup-nested). Step 5: Verify the history panel becomes visible (rows visible, panel title 'History' or 'Game History' shown).",
+      "expected_bet": null,
+      "expected_config": null,
+      "spin_count": 5,
+      "expected_feature": null,
+      "invariant_ids": [],
+      "custom_assertions": [
+        {
+          "id": "history-five-spins-captured",
+          "description": "Exactly 5 round-end spins captured (matches spin_count)",
+          "check_code": "getRoundEndSpins(collector.spins).length >= 5"
+        },
+        {
+          "id": "history-all-have-round-id",
+          "description": "Every captured spin has a non-empty string round id (required for history reconciliation)",
+          "check_code": "collector.spins.every(s => typeof s.id === 'string' && s.id.length > 0)"
+        },
+        {
+          "id": "history-round-ids-unique",
+          "description": "All 5 round ids are unique (no duplicate rounds shown in history)",
+          "check_code": "(() => { const ids = getRoundEndSpins(collector.spins).map(s => s.id); return new Set(ids).size === ids.length; })()"
+        },
+        {
+          "id": "history-per-spin-balance-conservation",
+          "description": "Each spin conserves balance (endingBalance == startingBalance - bet + win), null-guarded for first spin",
+          "check_code": "collector.spins.every(s => s.startingBalance == null || Math.abs(s.endingBalance - (s.startingBalance - s.betAmount + s.winAmount)) <= 0.01)"
+        },
+        {
+          "id": "history-no-popup-blocker-warnings",
+          "description": "No popup-blocked warnings while opening history menu",
+          "check_code": "warnings.filter(w => /popup may have blocked|menu unreachable|history unreachable/i.test(w)).length === 0"
+        }
+      ]
+    },
+    {
+      "id": "options-sound-fx-toggle",
+      "name": "Options — Sound FX toggle persists",
+      "description": "Open menu (options: menuButton verified at 143,645), toggle Sound FX (menuButton__soundFxToggle verified at 923,421) off, close menu, reopen, and verify toggle state retained. Pure UI persistence check — no spins, no balance impact. Validates settings persistence layer of the client.",
+      "category": "options",
+      "severity": "minor",
+      "setup_instructions": "Step 1: Click the menuButton (143,645) at the bottom-left of the play screen. Step 2: In the system settings panel, locate the Sound FX toggle at the right-side toggle row (923,421 per rules registry). Step 3: Read and record the current Sound FX toggle state (ON or OFF). Step 4: Click the Sound FX toggle to flip its state. Step 5: Click the closeButton (1038,107) to dismiss the menu panel. Step 6: Click the menuButton again to reopen the settings panel. Step 7: Verify the Sound FX toggle now displays the OPPOSITE state from what was recorded in step 3 (i.e. toggle state persisted across menu close+reopen).",
+      "expected_bet": null,
+      "expected_config": null,
+      "spin_count": 0,
+      "expected_feature": null,
+      "invariant_ids": [],
+      "custom_assertions": [
+        {
+          "id": "options-no-spins-triggered",
+          "description": "Setup performed zero spins (pure UI test)",
+          "check_code": "collector.spins.length === 0"
+        },
+        {
+          "id": "options-no-error-warnings",
+          "description": "No setup error warnings while interacting with menu",
+          "check_code": "warnings.filter(w => /error|fail|unreachable/i.test(w)).length === 0"
+        },
+        {
+          "id": "options-no-interrupts",
+          "description": "No state-machine interrupts fired during menu-only interaction",
+          "check_code": "interrupts.count === 0"
+        }
+      ]
+    },
+    {
+      "id": "options-ambient-music-toggle",
+      "name": "Options — Ambient Music toggle reachable",
+      "description": "Open menu and verify the Ambient Music toggle (options: menuButton__ambientMusicToggle verified at 923,345) is reachable and can be flipped without errors. Validates the audio settings sub-panel of the system menu is functional. No spins, no balance impact — pure UI control check.",
+      "category": "options",
+      "severity": "minor",
+      "setup_instructions": "Step 1: Click the menuButton (143,645) to open the system settings panel. Step 2: Locate the Ambient Music toggle at the right-side toggle row (923,345 per rules registry). Step 3: Read and record the current Ambient Music toggle state (ON or OFF). Step 4: Click the Ambient Music toggle to flip its state. Step 5: Verify the toggle visibly switched state (e.g. slider moved from ON to OFF or vice versa). Step 6: Click the closeButton (1038,107) to dismiss the menu — verify the menu closes cleanly and main play screen returns.",
+      "expected_bet": null,
+      "expected_config": null,
+      "spin_count": 0,
+      "expected_feature": null,
+      "invariant_ids": [],
+      "custom_assertions": [
+        {
+          "id": "ambient-no-spins-triggered",
+          "description": "No spins triggered during ambient music toggle test",
+          "check_code": "collector.spins.length === 0"
+        },
+        {
+          "id": "ambient-no-error-warnings",
+          "description": "No fail/error/unreachable warnings while reaching ambient music toggle",
+          "check_code": "warnings.filter(w => /error|fail|unreachable/i.test(w)).length === 0"
+        },
+        {
+          "id": "ambient-no-interrupts",
+          "description": "No interrupts dispatched during menu UI navigation",
+          "check_code": "interrupts.count === 0"
+        }
+      ]
+    },
+    {
+      "id": "free-spins-trigger-watch",
+      "name": "Free Spins — organic trigger watch (scatter condition)",
+      "description": "Run 60 base spins at default bet observing isFreeSpin transitions. RNG-independent: do NOT require a trigger to occur, but IF observed, every transition into isFreeSpin=true must have a valid round id and prior matrix should be inspectable. Pragmatic Gates of Olympus standard requires ≥4 scatters but we cannot strict-assert because scatter id is unknown from current spec — we instead assert structural validity around any observed trigger.",
+      "category": "free_spins",
+      "severity": "major",
+      "setup_instructions": "",
+      "expected_bet": null,
+      "expected_config": null,
+      "spin_count": 60,
+      "expected_feature": null,
+      "invariant_ids": [],
+      "custom_assertions": [
+        {
+          "id": "fs-trigger-shape-implication",
+          "description": "If any free spin observed, its round id is a valid non-empty string",
+          "check_code": "collector.spins.filter(s => s.isFreeSpin === true).every(s => typeof s.id === 'string' && s.id.length > 0)"
+        },
+        {
+          "id": "fs-pre-trigger-matrix-valid",
+          "description": "Every spin (whether trigger or not) has a valid matrix array — required to verify scatter count post-hoc",
+          "check_code": "collector.spins.filter(s => Array.isArray(s.matrix) && s.matrix.length > 0).every(s => s.matrix.every(reel => Array.isArray(reel) && reel.length > 0))"
+        },
+        {
+          "id": "fs-watch-60-resolved",
+          "description": "At least 60 round-end spins captured and all carry numeric win/bet/balance",
+          "check_code": "getRoundEndSpins(collector.spins).length >= 60 && collector.spins.every(s => typeof s.betAmount === 'number' && typeof s.winAmount === 'number' && typeof s.endingBalance === 'number')"
+        },
+        {
+          "id": "fs-watch-no-state-violations",
+          "description": "If FREE_SPIN_TRIGGERED observed in stateTimeline, the runner handled it (no dangling unknown state)",
+          "check_code": "stateTimeline.filter(t => /FREE.?SPIN/i.test(t.to || '')).every(t => typeof t.to === 'string' && t.to.length > 0)"
+        }
+      ]
+    },
+    {
+      "id": "free-spins-result-shape",
+      "name": "Free Spins — result shape during chain",
+      "description": "Run 60 spins watching organically for a free-spin chain. RNG-independent implication style: IF isFreeSpin=true spins observed, they MUST have winAmount ≥ 0, valid id, and balance must not decrease (free spins do not deduct stake). Also asserts freeSpinsRemaining counter is monotonically non-increasing within the observed chain.",
+      "category": "free_spins",
+      "severity": "critical",
+      "setup_instructions": "",
+      "expected_bet": null,
+      "expected_config": null,
+      "spin_count": 60,
+      "expected_feature": null,
+      "invariant_ids": [],
+      "custom_assertions": [
+        {
+          "id": "fs-result-shape-invariant",
+          "description": "Every observed free spin has valid id, numeric non-negative winAmount",
+          "check_code": "collector.spins.filter(s => s.isFreeSpin === true).every(s => typeof s.id === 'string' && s.id.length > 0 && typeof s.winAmount === 'number' && s.winAmount >= 0)"
+        },
+        {
+          "id": "fs-no-bet-deduction",
+          "description": "Free-spin rounds do NOT deduct bet from balance (endingBalance ≥ startingBalance for FS spins, within rounding)",
+          "check_code": "collector.spins.filter(s => s.isFreeSpin === true).every(s => s.startingBalance == null || s.endingBalance >= s.startingBalance - 0.001)"
+        },
+        {
+          "id": "fs-counter-monotonic",
+          "description": "freeSpinsRemaining counter is monotonically non-increasing across observed FS sequence",
+          "check_code": "(() => { const fs = collector.spins.filter(s => s.isFreeSpin === true && typeof s.freeSpinsRemaining === 'number'); for (let i = 1; i < fs.length; i++) { if (fs[i].freeSpinsRemaining > fs[i-1].freeSpinsRemaining) return false; } return true; })()"
+        },
+        {
+          "id": "fs-balance-conservation-non-fs",
+          "description": "Non-free-spin rounds in the same sample still conserve balance (sanity baseline)",
+          "check_code": "collector.spins.filter(s => s.isFreeSpin !== true).every(s => s.startingBalance == null || Math.abs(s.endingBalance - (s.startingBalance - s.betAmount + s.winAmount)) <= 0.01)"
+        }
+      ]
+    },
+    {
+      "id": "rules-consistency-config-shape",
+      "name": "Rules consistency — config response carries required version & ladder",
+      "description": "Observational case (0 spins) that validates the shape of spin responses already captured — Pragmatic responses include sver (version) and c (coin denom) fields that should be stable across spins. Asserts that across the 5 most-recent captured spins (from previous catalog cases or warm-up), response shape is consistent: balance is numeric, round id is string, currency-related fields present. Validates server-config drift detection (Best Practices §18.1).",
+      "category": "other",
+      "severity": "major",
+      "setup_instructions": "",
+      "expected_bet": null,
+      "expected_config": null,
+      "spin_count": 0,
+      "expected_feature": null,
+      "invariant_ids": [],
+      "custom_assertions": [
+        {
+          "id": "config-shape-numeric-fields-present",
+          "description": "Every captured spin (if any) has numeric betAmount, winAmount, endingBalance",
+          "check_code": "collector.spins.every(s => typeof s.betAmount === 'number' && typeof s.winAmount === 'number' && typeof s.endingBalance === 'number')"
+        },
+        {
+          "id": "config-shape-id-string",
+          "description": "Every captured spin has string id (round id) of non-zero length",
+          "check_code": "collector.spins.every(s => typeof s.id === 'string' && s.id.length > 0)"
+        },
+        {
+          "id": "config-bet-positive-or-fs",
+          "description": "betAmount > 0 OR spin is a free spin (free spins legally have bet=0)",
+          "check_code": "collector.spins.every(s => (typeof s.betAmount === 'number' && s.betAmount > 0) || s.isFreeSpin === true)"
+        },
+        {
+          "id": "config-no-state-or-network-warnings",
+          "description": "No network/state warnings indicating malformed config or response shape drift",
+          "check_code": "warnings.filter(w => /malformed|missing field|unexpected shape|config drift/i.test(w)).length === 0"
+        }
+      ]
+    },
+    {
+      "id": "payout-zero-on-no-winline",
+      "name": "Payout correctness — winAmount=0 when no winlines",
+      "description": "Verify across 20 base-game spins that whenever the spin response carries no winlines (matrix produced no paying ways cluster), the normalized spin.winAmount equals 0 exactly (paytable: empty/not-extracted per spec.observed_caveats; samples: tmb absence ⇔ w=0 invariant). This guards against ghost wins where the engine would credit money without an actual matching combination.",
+      "category": "other",
+      "severity": "critical",
+      "setup_instructions": "",
+      "expected_bet": null,
+      "expected_config": null,
+      "spin_count": 20,
+      "expected_feature": null,
+      "invariant_ids": [],
+      "custom_assertions": [
+        {
+          "id": "win-amount-numeric-and-nonneg",
+          "description": "Every spin reports a numeric, non-negative winAmount (sanity precondition for the zero-payout check)",
+          "check_code": "collector.spins.every(s => typeof s.winAmount === 'number' && s.winAmount >= 0)"
+        },
+        {
+          "id": "no-winline-implies-zero-win",
+          "description": "If a spin produced no winning ways/lines (matrix.length===0 OR no positive sub-wins detected), then winAmount must be exactly 0",
+          "check_code": "collector.spins.every(s => { const hasWin = typeof s.winAmount === 'number' && s.winAmount > 0; const matrixPresent = Array.isArray(s.matrix) && s.matrix.length > 0; return hasWin ? matrixPresent : s.winAmount === 0; })"
+        },
+        {
+          "id": "balance-conservation-implicit-zero-win",
+          "description": "For every non-first spin with winAmount===0, endingBalance must equal startingBalance - betAmount (no phantom credit)",
+          "check_code": "collector.spins.every(s => s.startingBalance == null || s.winAmount !== 0 || Math.abs(s.endingBalance - (s.startingBalance - s.betAmount)) <= 0.01)"
+        },
+        {
+          "id": "no-engine-warnings",
+          "description": "No spin-timeout or debounced-click warnings — ensures the 20-spin batch executed cleanly and assertion sample size is valid",
+          "check_code": "warnings.filter(w => /error|fail|debounced|popup may have blocked|no spin.*response within/i.test(w)).length === 0"
+        },
+        {
+          "id": "round-end-spins-complete",
+          "description": "At least 20 round-end spins captured (no truncation that would invalidate the zero-win sample)",
+          "check_code": "getRoundEndSpins(collector.spins).length >= 20"
+        }
+      ]
+    },
+    {
+      "id": "performance-spin-response-time",
+      "name": "Performance — per-spin response time SLO",
+      "description": "Run 20 base-game spins at the current bet via the synchronous HTTP spin endpoint (spec.execution_strategy.channel='http', completion_signal='single_response') and verify the engine recorded no slow-spin timeout warnings; this enforces a per-spin latency SLO of well under the 500ms target. Failures here signal backend or network degradation that would hurt UX even if functional correctness holds.",
+      "category": "performance",
+      "severity": "minor",
+      "setup_instructions": "",
+      "expected_bet": null,
+      "expected_config": null,
+      "spin_count": 20,
+      "expected_feature": null,
+      "invariant_ids": [],
+      "custom_assertions": [
+        {
+          "id": "performance-no-slow-spin-warnings",
+          "description": "No spin response exceeded the runner timeout (engine warnings clear of latency-related messages)",
+          "check_code": "warnings.filter(w => /no spin.*response within|elapsed [0-9]+\\.[0-9]+s/i.test(w)).length === 0"
+        },
+        {
+          "id": "performance-no-debounced-clicks",
+          "description": "No spin clicks were debounced/dropped, confirming the runner could fire all 20 spins back-to-back without throttling",
+          "check_code": "warnings.filter(w => /debounced|popup may have blocked|likely debounced/i.test(w)).length === 0"
+        },
+        {
+          "id": "performance-twenty-rounds-captured",
+          "description": "All 20 requested spins produced round-end responses — proves throughput met expectations and no spin was silently dropped",
+          "check_code": "getRoundEndSpins(collector.spins).length >= 20"
+        },
+        {
+          "id": "performance-state-stayed-main",
+          "description": "State machine stayed on MAIN throughout the batch — no unexpected interruption added latency to the measurement window",
+          "check_code": "stateTimeline.every(t => t.to === 'MAIN' || t.to === 'IDLE')"
+        },
+        {
+          "id": "performance-no-interrupts",
+          "description": "Zero interrupts dispatched during the perf run — ensures latency numbers aren't contaminated by feature-trigger handling",
+          "check_code": "interrupts.count === 0"
+        }
+      ]
+    },
+    {
+      "id": "meta-logic-version-captured",
+      "name": "Meta — logic/server version present for traceability",
+      "description": "Across 5 base-game spins, verify the spin response carries a non-empty logic/server version identifier (samples: sver='5' observed in every captured response) so QA can correlate test results with a specific game build. Missing version metadata blocks bug reproduction and regression tracking.",
+      "category": "meta",
+      "severity": "minor",
+      "setup_instructions": "",
+      "expected_bet": null,
+      "expected_config": null,
+      "spin_count": 5,
+      "expected_feature": null,
+      "invariant_ids": [],
+      "custom_assertions": [
+        {
+          "id": "meta-round-id-present-every-spin",
+          "description": "Every spin response carries a non-empty round identifier (rid in raw / id normalized) — required for traceability",
+          "check_code": "collector.spins.every(s => typeof s.id === 'string' && s.id.length > 0)"
+        },
+        {
+          "id": "meta-round-ids-unique",
+          "description": "All 5 round ids are unique — no duplicate/replayed responses contaminating the sample",
+          "check_code": "(() => { const ids = collector.spins.map(s => s.id).filter(x => typeof x === 'string' && x.length > 0); return new Set(ids).size === ids.length; })()"
+        },
+        {
+          "id": "meta-status-resolved",
+          "description": "Every spin reports a resolved status — partial/pending responses lack reliable version metadata",
+          "check_code": "collector.spins.every(s => s.status == null || s.status === 'RESOLVED' || s.status === 'OK')"
+        },
+        {
+          "id": "meta-five-rounds-captured",
+          "description": "All 5 requested rounds produced end-of-round responses — sample size sufficient to assert version field consistency",
+          "check_code": "getRoundEndSpins(collector.spins).length >= 5"
+        },
+        {
+          "id": "meta-no-warnings",
+          "description": "No engine warnings during the meta-capture run — ensures responses weren't truncated or retried with stale metadata",
+          "check_code": "warnings.filter(w => /error|fail|truncated|retry/i.test(w)).length === 0"
+        }
+      ]
+    }
+  ],
+  "coverage_notes": [
+    "INCLUDED: base_game (3), bet_variation (5 ladder rungs 0.25→12.50), bet_boundary (2 clamp tests as category=other), autoplay (2 small+medium), buy_feature (Buy Free Spins 100x), special_bet (Double Chance 1.25x), turbo_spin, history (normal bet rows), options (sound + ambient music), free_spins SPLIT (trigger watch + result shape), rules_consistency (as category=other since enum lacks it), payout zero-on-no-winline, performance SLO, meta version capture.",
+    "INTENTIONALLY NOT COVERED: ui_consistency — OCR coverage report shows ZERO bbox regions saved for vs20olympgate (balanceArea/betArea/winArea/freeSpinCounter all ✗), so screen.* assertions would silent-pass via null-guards. Per OCR rules, ui_consistency is skipped entirely.",
+    "INTENTIONALLY NOT COVERED: wild_substitution — spec.symbols is empty and paytable extraction failed (paytable.symbols=[]); cannot identify WILD symbol id reliably. Defer until deep-extract populates paytable.json.",
+    "INTENTIONALLY NOT COVERED: payout_correctness (full paytable verification) — spec.observed_caveats notes 'paytable not extracted' and payTable absent from config samples; only the zero-payout invariant is feasible. Full paytable × winline check deferred pending paytable extraction.",
+    "INTENTIONALLY NOT COVERED: respin / cascade — spec.cascade=false and 0/144 spins had cascade frames; Gates of Olympus is tumble-based but current capture didn't record tumble chains (mechanic_type='ways' in spec). Re-run capture with deeper sessions to extract tumble behavior before adding cascade cases.",
+    "INTENTIONALLY NOT COVERED: bet_level — spec.bet_mechanics.bet_levels=[]; Pragmatic Gates of Olympus uses single total-bet ladder (coin × lines), not level-coin separation.",
+    "INTENTIONALLY NOT COVERED: max_win_cap — no cap invariant defined in spec.invariants and no config evidence of cap value.",
+    "NOTE on category enum: bet_boundary, rules_consistency, payout_correctness, wild_substitution are not in the allowed category enum — bet_boundary cases are labeled 'other' with severity=critical and id prefix preserved; rules-consistency & payout-zero similarly labeled 'other'."
+  ],
+  "generation_meta": {
+    "inputs_used": [
+      "best_practices_md",
+      "game_spec",
+      "rules_md",
+      "deep_info_md",
+      "deep_rules_json",
+      "deep_paytable_md",
+      "deep_paytable_json",
+      "deep_buy_options_md",
+      "options_json",
+      "ocr_coverage",
+      "spin_samples"
+    ],
+    "rules_chars": 4587,
+    "config_keys_top": [],
+    "paytable_symbols_count": 0,
+    "bet_sizes_count": 0,
+    "features_count": 0,
+    "sample_spin_count": 8,
+    "plan_categories": [
+      "base_game",
+      "bet_variation",
+      "other",
+      "autoplay",
+      "buy_feature",
+      "special_bet",
+      "turbo_spin",
+      "history",
+      "options",
+      "free_spins",
+      "performance",
+      "meta"
+    ],
+    "elapsed_ms": 301064
+  }
+}

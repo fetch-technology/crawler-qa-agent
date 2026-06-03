@@ -71,6 +71,32 @@ export type SessionStatus = {
    *  page reload — without it the button re-enables and QA assumes the run
    *  stopped, even though the server-side job is still running. */
   autoOnboardInProgress: boolean;
+  /** Per-phase progress for the active or last Auto-Onboard run. Dashboard
+   *  renders this as a checklist (✓/✗/⏳/skip) so QA can see which steps
+   *  succeeded + how long each took. Empty array when no Auto-Onboard has
+   *  ever run on this session. Snapshot from the moment status() is called
+   *  — phases mutate live during the run. */
+  autoOnboardPhases: Array<{
+    /** Slug-style name: "deep-discover", "verify", "ocr", "deep-extract",
+     *  "calibrate", "generate-catalog", "translate-cases", "run-cases". */
+    name: string;
+    /** Lifecycle:
+     *   - "pending": queued, hasn't started
+     *   - "running": currently executing
+     *   - "ok":      finished successfully
+     *   - "fail":    threw OR returned ok=false
+     *   - "skip":    deliberately skipped (e.g. catalog already exists) */
+    status: "pending" | "running" | "ok" | "fail" | "skip";
+    /** ISO timestamps for client-side duration tracking. */
+    startedAt?: string;
+    completedAt?: string;
+    durationMs?: number;
+    /** Short summary surfaced in dashboard tooltip. */
+    note?: string;
+  }>;
+  /** Name of the phase currently running (or null if Auto-Onboard not active
+   *  / phase between steps). Convenience for the dashboard's progress banner. */
+  autoOnboardCurrentPhase: string | null;
   /** Currently-running preview case (set when the previewCase mutex is held).
    *  Dashboard polls these to bypass long HTTP requests that proxies (frp
    *  HTTP vhost, nginx) kill at 60-120s. Flow: POST /preview-case kicks off
@@ -84,6 +110,11 @@ export type SessionStatus = {
    *  never started because mutex was held". */
   previewCaseLastFinishedId: string | null;
   previewCaseLastFinishedAt: string | null;
+  /** Generate-catalog endpoint state — for client polling fallback when
+   *  the long-running POST gets cut by proxy 504. */
+  generateCatalogInProgress: boolean;
+  generateCatalogStartedAt: string | null;
+  generateCatalogLastFinishedAt: string | null;
 };
 
 export type SubStateSuggestion = {
@@ -278,6 +309,11 @@ export class ManualSessionManager {
    *  autoOnboard 5 times in a row, last 4 overwriting the first's results.
    *  Set when work begins, cleared in finally. Re-entries return 409. */
   private autoOnboardInProgress = false;
+  /** Per-phase progress tracker — see SessionStatus.autoOnboardPhases doc.
+   *  Lives across Auto-Onboard runs (replaced each run via initAutoOnboardPhases).
+   *  Read-only from outside via status(). */
+  private autoOnboardPhases: NonNullable<SessionStatus["autoOnboardPhases"]> = [];
+  private autoOnboardCurrentPhase: string | null = null;
   /** Mutex for previewCase. Without it, a proxy 504 timeout that's CLIENT-side
    *  doesn't cancel the server-side promise — case-executor keeps running.
    *  If the dashboard's Run-All loop catches the 504 as failure and fires the
@@ -290,6 +326,13 @@ export class ManualSessionManager {
   private previewCaseId: string | null = null;
   private previewCaseLastFinishedId: string | null = null;
   private previewCaseLastFinishedAt: string | null = null;
+  /** Polling-pattern bookkeeping for /api/qa/manual/generate-catalog.
+   *  Same pattern as previewCase: long-running endpoint (30-90s typical)
+   *  often dies behind proxies at 60s timeout, so client falls back to
+   *  polling /status with these flags to detect completion. */
+  private generateCatalogInProgress = false;
+  private generateCatalogStartedAt: string | null = null;
+  private generateCatalogLastFinishedAt: string | null = null;
   /** P3 — game-specific buttons the AI noticed beyond the expected list during
    *  the last discovery, AUTO-ADDED to the registry as pending. Tracked so the
    *  dashboard can highlight them for QA to verify / rename / remove. */
@@ -422,11 +465,38 @@ export class ManualSessionManager {
       expectedElements: [...this.expectedElementKeys],
       discoveryAutoAdded: [...this.discoveryAutoAdded],
       autoOnboardInProgress: this.autoOnboardInProgress,
+      autoOnboardPhases: this.autoOnboardPhases.map((p) => ({ ...p })),
+      autoOnboardCurrentPhase: this.autoOnboardCurrentPhase,
       previewCaseInProgress: this.previewCaseInProgress,
       previewCaseId: this.previewCaseId,
       previewCaseLastFinishedId: this.previewCaseLastFinishedId,
       previewCaseLastFinishedAt: this.previewCaseLastFinishedAt,
+      generateCatalogInProgress: this.generateCatalogInProgress,
+      generateCatalogStartedAt: this.generateCatalogStartedAt,
+      generateCatalogLastFinishedAt: this.generateCatalogLastFinishedAt,
     };
+  }
+
+  /** Wrap an operation with the generate-catalog mutex + status tracking
+   *  so the dashboard can detect completion via /status polling when the
+   *  HTTP response itself is cut by a proxy 504. Caller MUST own the
+   *  outer route handler — this just sets/clears flags + records
+   *  timestamps. Re-entrant calls reject so concurrent requests serialize. */
+  async withGenerateCatalogMutex<T>(work: () => Promise<T>): Promise<{ ok: boolean; reason?: string; result?: T }> {
+    if (this.generateCatalogInProgress) {
+      return { ok: false, reason: "another generate-catalog is already running on this session (HTTP 409)" };
+    }
+    this.generateCatalogInProgress = true;
+    this.generateCatalogStartedAt = new Date().toISOString();
+    try {
+      const result = await work();
+      return { ok: true, result };
+    } catch (err) {
+      return { ok: false, reason: err instanceof Error ? err.message : String(err) };
+    } finally {
+      this.generateCatalogInProgress = false;
+      this.generateCatalogLastFinishedAt = new Date().toISOString();
+    }
   }
 
   /** Click at the cached coord of a registered element. QA watches result. */
@@ -1467,6 +1537,52 @@ export class ManualSessionManager {
    * complete but with `paytableAgreement=false` → model untrusted (a safe,
    * informative outcome). Re-running cold-start is the path to refresh it.
    */
+
+  /** Reset phase tracker at the start of an Auto-Onboard run. All known
+   *  phases declared pending so the dashboard can render the full checklist
+   *  before any phase actually runs. Phase NAMES here must match the labels
+   *  passed to `startPhase()` exactly. */
+  private initAutoOnboardPhases(): void {
+    const names = [
+      "deep-discover",
+      "verify-registry",
+      "ocr-auto-detect",
+      "deep-extract",
+      "calibrate-payout",
+      "generate-catalog",
+      "translate-cases",
+      "run-cases",
+    ];
+    this.autoOnboardPhases = names.map((name) => ({ name, status: "pending" as const }));
+    this.autoOnboardCurrentPhase = null;
+  }
+
+  /** Mark a phase as running. Captures startedAt for duration tracking.
+   *  Sets currentPhase so the dashboard's progress banner can show "Phase X
+   *  of N: <name>" without inspecting the array. */
+  private startPhase(name: string): void {
+    const p = this.autoOnboardPhases.find((x) => x.name === name);
+    if (!p) {
+      console.warn(`[phase-tracker] unknown phase "${name}" — not declared in initAutoOnboardPhases`);
+      return;
+    }
+    p.status = "running";
+    p.startedAt = new Date().toISOString();
+    this.autoOnboardCurrentPhase = name;
+  }
+
+  /** Mark a phase finished. `status` ∈ {ok, fail, skip}. Optional `note`
+   *  shows in dashboard tooltip (e.g. "30 elements added", "ffmpeg missing"). */
+  private endPhase(name: string, status: "ok" | "fail" | "skip", note?: string): void {
+    const p = this.autoOnboardPhases.find((x) => x.name === name);
+    if (!p) return;
+    p.status = status;
+    p.completedAt = new Date().toISOString();
+    if (p.startedAt) p.durationMs = Date.parse(p.completedAt) - Date.parse(p.startedAt);
+    if (note) p.note = note;
+    if (this.autoOnboardCurrentPhase === name) this.autoOnboardCurrentPhase = null;
+  }
+
   async autoOnboard(
     opts: {
       deepDiscover?: { maxDepth?: number; maxAiCalls?: number; maxStates?: number };
@@ -1492,6 +1608,7 @@ export class ManualSessionManager {
       return { ok: false, reason: "another autoOnboard is already in progress for this session" };
     }
     this.autoOnboardInProgress = true;
+    this.initAutoOnboardPhases();
     try {
       console.log(`[manual/auto-onboard] ${this.gameSlug}: starting — deep-discover → verify → payout`);
 
@@ -1505,6 +1622,7 @@ export class ManualSessionManager {
         { ok: false, reason: "no baseline captured", saved: [], proposed: [], skipped: [] },
       );
       if (this.session) {
+        this.startPhase("ocr-auto-detect");
         try {
           const baseline = await this.session.page.screenshot({ type: "png" });
           ocrPromise = this.autoDetectOcrRegions({ baselineScreenshot: baseline }).catch((err) => ({
@@ -1518,14 +1636,23 @@ export class ManualSessionManager {
         }
       }
 
+      this.startPhase("deep-discover");
       const discover = await this.deepDiscover(opts.deepDiscover ?? {});
       if (!discover.ok) {
+        this.endPhase("deep-discover", "fail", discover.reason);
         // Still await the parallel OCR detection so we don't leave a dangling
         // Claude call running in the background after we return.
         const ocr = await ocrPromise;
+        this.endPhase("ocr-auto-detect", ocr.ok ? "ok" : "fail", ocr.ok ? `saved=${ocr.saved.length}` : (ocr.reason ?? "failed"));
         return { ok: false, reason: `deep-discover failed: ${discover.reason ?? "unknown"}`, discover, ocr };
       }
+      this.endPhase("deep-discover", "ok", `+${discover.addedKeys?.length ?? 0} elements`);
       const ocr = await ocrPromise;
+      this.endPhase(
+        "ocr-auto-detect",
+        ocr.ok ? "ok" : "fail",
+        ocr.ok ? `saved=${ocr.saved.length} proposed=${ocr.proposed.length}` : (ocr.reason ?? "failed"),
+      );
       console.log(`[manual/auto-onboard] ${this.gameSlug}: ocr-region detection done — saved=${ocr.saved.length} proposed=${ocr.proposed.length} skipped=${ocr.skipped.length}`);
 
       // Registry-verify phase (2026-06-02). After deep-discover, audit the
@@ -1534,33 +1661,129 @@ export class ManualSessionManager {
       // discoverVia(), then bidirectionally mirror verified entries across
       // partner pairs (betPlus ↔ betMinus popup is identical). Bounded — one
       // discoverVia call per missing trigger, no infinite re-audit loops.
+      this.startPhase("verify-registry");
       const verify = await this.verifyRegistry();
+      this.endPhase("verify-registry", "ok", `pruned=${verify.pruned.length} mirrored=${verify.mirrored.length}`);
       console.log(
         `[manual/auto-onboard] ${this.gameSlug}: verify — pruned=${verify.pruned.length} ` +
         `re-discovered=${verify.reDiscoveredTriggers.length} ` +
         `mirrored=${verify.mirrored.length}`,
       );
 
+      // Deep-extract: vision-driven capture of paytable / rules / buy-options
+      // / special-bets from in-game popups. Auto-Onboard previously skipped
+      // this (cold-start only) → catalog regen had `auxiliary sources:
+      // synthesized-from-registry` and AI guessed rules. Run BEFORE calibrate
+      // so payout-model has paytable data when it derives symbol values.
+      this.startPhase("deep-extract");
+      const { phaseDeepExtract } = await import("../phases/phase-deep-extract.js");
+      const deepExtract = await phaseDeepExtract({
+        page: this.session.page,
+        gameSlug: this.gameSlug,
+        uiMap: this.registry,
+      });
+      this.endPhase(
+        "deep-extract",
+        deepExtract.ok ? "ok" : "fail",
+        deepExtract.extract
+          ? `paytable=${!!deepExtract.extract.paytableMd} rules=${!!deepExtract.extract.infoMd}`
+          : deepExtract.reason,
+      );
+      console.log(
+        `[manual/auto-onboard] ${this.gameSlug}: deep-extract `
+        + (deepExtract.ok ? `done in ${deepExtract.durationMs}ms` : `failed: ${deepExtract.reason}`),
+      );
+
+      // Calibrate payout + persist network rounds to canonical
+      // network/network.jsonl (so subsequent catalog regen has spin samples
+      // without needing case-evidence aggregation).
+      this.startPhase("calibrate-payout");
+      const { withNetworkPersist } = await import("../phases/phase-persist-network.js");
       let payout: Awaited<ReturnType<typeof this.calibratePayoutModel>>;
+      let persistNet: Awaited<ReturnType<typeof withNetworkPersist>>["persist"] | null = null;
       try {
-        payout = await this.calibratePayoutModel({ spinsPerLevel: opts.calibrationSpinsPerLevel });
+        const wrapped = await withNetworkPersist(
+          { page: this.session.page, gameSlug: this.gameSlug },
+          () => this.calibratePayoutModel({ spinsPerLevel: opts.calibrationSpinsPerLevel }),
+        );
+        payout = wrapped.workResult;
+        persistNet = wrapped.persist;
+        console.log(`[manual/auto-onboard] ${this.gameSlug}: persisted ${persistNet.roundsAppended ?? 0} network rounds → network.jsonl (total ${persistNet.totalRoundsOnDisk ?? "?"})`);
       } catch (err) {
         payout = { ok: false, reason: err instanceof Error ? err.message : String(err) };
       }
+      this.endPhase(
+        "calibrate-payout",
+        payout.ok ? "ok" : "fail",
+        payout.ok ? `trusted=${payout.trusted ?? false} combos=${payout.combosMatched ?? 0}/${payout.combosTotal ?? 0}` : payout.reason,
+      );
 
-      // Phase 4 (2026-06-02): auto-run all test cases in the catalog. Skips
-      // gracefully when the catalog doesn't exist yet (game hasn't been
-      // cold-started for testcase-gen). For now, generation lives in
-      // cold-start (`qa:cold` → generateAiCatalog with full network capture);
-      // auto-onboard only RUNS the cases. Future: invoke a generator hook
-      // here when AI catalog generation is decoupled from cold-start.
+      // Generate AI catalog now that all inputs (registry, network rounds,
+      // aux sources, parser.json from calibrate's createParserForGame call)
+      // are on disk. This was previously a separate "Generate Cases" button
+      // click; folding it into Auto-Onboard means a single click = game
+      // ready to run cases. Skip when already exists (idempotent — don't
+      // burn AI cost on every Auto-Onboard re-run; QA uses the dedicated
+      // "Generate Cases" button to force regen).
+      this.startPhase("generate-catalog");
+      const { phaseGenerateCatalog } = await import("../phases/phase-generate-catalog.js");
+      const existingCatalog = await loadAiCatalog(this.gameSlug).catch(() => null);
+      let catalog: Awaited<ReturnType<typeof phaseGenerateCatalog>> | null = null;
+      if (existingCatalog && existingCatalog.cases.length > 0) {
+        this.endPhase("generate-catalog", "skip", `existing ${existingCatalog.cases.length} cases reused`);
+        console.log(`[manual/auto-onboard] ${this.gameSlug}: catalog already exists (${existingCatalog.cases.length} cases) — skipping generation. Use "Generate Cases" to regenerate.`);
+      } else {
+        catalog = await phaseGenerateCatalog({ gameSlug: this.gameSlug });
+        this.endPhase(
+          "generate-catalog",
+          catalog.ok ? "ok" : "fail",
+          catalog.ok ? `${catalog.totalCases} cases · rounds=${catalog.roundsLoaded} aux=${catalog.hadAuxSources}` : catalog.reason,
+        );
+        console.log(
+          `[manual/auto-onboard] ${this.gameSlug}: catalog `
+          + (catalog.ok
+            ? `generated ${catalog.totalCases} cases (rounds=${catalog.roundsLoaded} aux=${catalog.hadAuxSources}, ${catalog.durationMs}ms)`
+            : `failed: ${catalog.reason}`),
+        );
+      }
+
+      // Translate cases so each case has a ready-to-run actions array.
+      // Cheap (~$0.02-0.10 per case, parallel-able) and means subsequent
+      // "Run" doesn't pay the per-case translation AI cost on demand.
+      this.startPhase("translate-cases");
+      const { phaseTranslateCases } = await import("../phases/phase-translate-cases.js");
+      const translate = (catalog?.ok || existingCatalog)
+        ? await phaseTranslateCases({ gameSlug: this.gameSlug })
+        : null;
+      if (translate) {
+        this.endPhase(
+          "translate-cases",
+          translate.ok ? "ok" : "fail",
+          translate.ok ? `${translate.totalCases} total` : translate.reason,
+        );
+        console.log(
+          `[manual/auto-onboard] ${this.gameSlug}: translate `
+          + (translate.ok ? `done (${translate.totalCases} total, +${translate.newCount} new, ${translate.durationMs}ms)` : `failed: ${translate.reason}`),
+        );
+      } else {
+        this.endPhase("translate-cases", "skip", "no catalog to translate");
+      }
+
+      // Run cases — the catalog is now guaranteed to exist (either pre-
+      // existing or just generated). Skips gracefully if generation failed.
+      this.startPhase("run-cases");
       const testRun = await this.runAllTestcases({ continueOnFail: true });
+      this.endPhase(
+        "run-cases",
+        testRun.ok ? "ok" : "skip",
+        testRun.ok ? `${testRun.passed}/${testRun.results.length} pass` : testRun.reason,
+      );
       console.log(
         `[manual/auto-onboard] ${this.gameSlug}: test-run ${testRun.ok ? "complete" : "skipped"}` +
         (testRun.ok ? ` — ${testRun.results.length} cases, ${testRun.passed} pass, ${testRun.failed} fail, ${testRun.skipped} skip` : ` — ${testRun.reason}`),
       );
 
-      console.log(`[manual/auto-onboard] ${this.gameSlug}: done — discover.added=${discover.addedKeys?.length ?? 0} verify.mirrored=${verify.mirrored.length} ocr.saved=${ocr.saved.length} payout.trusted=${payout.trusted ?? false} test=${testRun.ok ? `${testRun.passed}/${testRun.results.length}p` : "skip"}`);
+      console.log(`[manual/auto-onboard] ${this.gameSlug}: done — discover.added=${discover.addedKeys?.length ?? 0} verify.mirrored=${verify.mirrored.length} ocr.saved=${ocr.saved.length} deep-extract.ok=${deepExtract.ok} payout.trusted=${payout.trusted ?? false} catalog=${catalog?.ok ?? (existingCatalog ? "existing" : "skip")} test=${testRun.ok ? `${testRun.passed}/${testRun.results.length}p` : "skip"}`);
       return { ok: true, discover, verify, ocr, payout, testRun };
     } finally {
       this.autoOnboardInProgress = false;

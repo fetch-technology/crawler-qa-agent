@@ -556,6 +556,43 @@ export async function handleManualRoute(
       return sendJson(res, r.ok ? 200 : 400, r), true;
     }
 
+    // POST /api/qa/manual/generate-catalog { gameSlug? }
+    // In-process AI catalog generation (Session-1 refactor). Reuses
+    // whatever Auto-Onboard already persisted on disk: ui-registry,
+    // network/network.jsonl (canonical rounds), auxiliary-sources/*.md,
+    // provider-cache, features, parser.json. No browser re-launch, no
+    // proxy timeout risk — typically ~30-90s.
+    if (url === "/api/qa/manual/generate-catalog" && method === "POST") {
+      const body = await asJsonBody<{ gameSlug?: string }>(req);
+      const session = resolveSession(req, body as any, url);
+      const slug = (body?.gameSlug && typeof body.gameSlug === "string")
+        ? body.gameSlug
+        : session.status().gameSlug;
+      if (!slug) return sendJson(res, 400, { ok: false, reason: "gameSlug required (no active session and no body.gameSlug)" }), true;
+      // Wrapped with mutex + status tracking so the dashboard can detect
+      // completion via polling /status (generateCatalogInProgress +
+      // generateCatalogLastFinishedAt) when the HTTP response is cut by a
+      // proxy 504 — typical for 30-90s catalog gen behind 60s frp/nginx.
+      const wrapped = await session.withGenerateCatalogMutex(async () => {
+        const { phaseGenerateCatalog } = await import("./../phases/phase-generate-catalog.js");
+        const { phaseTranslateCases } = await import("./../phases/phase-translate-cases.js");
+        const cat = await phaseGenerateCatalog({ gameSlug: slug });
+        if (!cat.ok) return { catalog: cat, translate: null };
+        const translate = await phaseTranslateCases({ gameSlug: slug }).catch((err) => ({
+          ok: false as const, reason: err instanceof Error ? err.message : String(err),
+        }));
+        return { catalog: cat, translate };
+      });
+      if (!wrapped.ok) {
+        // Mutex held (409) or work threw — surface to client. Client may
+        // already be polling if HTTP times out; this just returns fast.
+        return sendJson(res, 409, { ok: false, reason: wrapped.reason }), true;
+      }
+      const inner = wrapped.result!;
+      if (!inner.catalog.ok) return sendJson(res, 400, inner.catalog), true;
+      return sendJson(res, 200, { ok: true, catalog: inner.catalog, translate: inner.translate }), true;
+    }
+
     // POST /api/qa/manual/verify-registry — manually trigger the registry
     // verify pass (prune legacy namespaces, re-discover missing children,
     // mirror partner-pair entries). Standalone hook so QA can re-run verify

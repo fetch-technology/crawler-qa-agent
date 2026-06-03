@@ -67,12 +67,30 @@ export async function createParserForGame(
     kind = opts.parserKind;
   } else {
     const cache = await parserCache.load(gameSlug);
-    if (!cache) {
-      throw new Error(
-        `No parser.json for "${gameSlug}". Run qa:cold first, or pass { parserKind } override.`,
-      );
+    if (cache) {
+      kind = cache.parser;
+    } else {
+      // Lazy fallback — Auto-Onboard doesn't persist parser.json (only
+      // cold-start does), but provider-cache.json is written when the
+      // session detects a provider. Derive parser kind from there + save
+      // parser.json so subsequent calls skip this path. Mapping matches
+      // step6/registry.ts: Pragmatic → PragmaticParser, else → GenericParser.
+      const { providerCache } = await import("../registry/provider-cache.js");
+      const provider = await providerCache.load(gameSlug);
+      if (!provider) {
+        throw new Error(
+          `No parser.json or provider-cache.json for "${gameSlug}". Run qa:cold or Auto-Onboard first, or pass { parserKind } override.`,
+        );
+      }
+      kind = provider.provider === "Pragmatic" ? "PragmaticParser" : "GenericParser";
+      try {
+        await parserCache.save(gameSlug, { parser: kind, version: 1 });
+        console.log(`[parser-factory] persisted parser.json for "${gameSlug}" (derived from provider="${provider.provider}" → ${kind})`);
+      } catch (err) {
+        // Non-fatal — kind is already resolved, we just couldn't cache.
+        console.warn(`[parser-factory] failed to persist parser.json: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
-    kind = cache.parser;
   }
   const parser = pickParserByKind(kind);
 

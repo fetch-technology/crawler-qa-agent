@@ -81,9 +81,13 @@ export function registryStats(registry: UiRegistry): {
   pending: number;
   rejected: number;
   humanVerified: number;
+  /** Entries verified by either QA click-through or by probe (Auto-Onboard's
+   *  element-probe step actually clicks the UI and confirms a state-hash
+   *  change — empirically as reliable as QA verification for most buttons). */
+  trusted: number;
   maxDepth: number;
 } {
-  let total = 0, verified = 0, pending = 0, rejected = 0, humanVerified = 0, maxDepth = 0;
+  let total = 0, verified = 0, pending = 0, rejected = 0, humanVerified = 0, trusted = 0, maxDepth = 0;
   for (const [k, el] of Object.entries(registry)) {
     if (!el) continue;
     total++;
@@ -92,21 +96,28 @@ export function registryStats(registry: UiRegistry): {
     else if (status === "rejected") rejected++;
     else pending++;
     if (el.verifiedBy === "QA") humanVerified++;
+    if (el.verifiedBy === "QA" || el.verifiedBy === "probe") trusted++;
     const depth = k.split("__").length;
     if (depth > maxDepth) maxDepth = depth;
   }
-  return { total, verified, pending, rejected, humanVerified, maxDepth };
+  return { total, verified, pending, rejected, humanVerified, trusted, maxDepth };
 }
 
 /**
  * True if registry has been substantively human-verified. Used by cold-start
- * to decide whether to skip AI discovery and reuse existing coords.
+ * to decide whether to skip AI discovery and reuse existing coords. Accepts
+ * BOTH QA-confirmed entries AND probe-verified entries — the probe step
+ * actually clicks the UI element and observes a state-hash change before
+ * marking, which is a stronger signal than AI-vision guess and trustworthy
+ * enough to skip cold-start's Step 2 re-verify. Threshold 50% so games that
+ * are mostly Auto-Onboarded (probe-verified core + some pending sub-state
+ * entries) qualify.
  */
 export function isHumanVerified(registry: UiRegistry | null): boolean {
   if (!registry) return false;
   const stats = registryStats(registry);
-  // Heuristic: at least 3 entries AND >=50% human-verified.
-  return stats.total >= 3 && stats.humanVerified / stats.total >= 0.5;
+  // Heuristic: at least 3 entries AND >=50% trusted (QA or probe).
+  return stats.total >= 3 && stats.trusted / stats.total >= 0.5;
 }
 
 void {} as unknown as UiElement;

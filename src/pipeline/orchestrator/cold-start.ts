@@ -21,7 +21,6 @@ import {
 import "../step6-build-model/index.js";
 import { pickParser } from "../step6-build-model/registry.js";
 import { generateTestcases, toYaml } from "../step7-testcase-gen/index.js";
-import { generateAiCatalog } from "../step7-testcase-gen/ai-catalog.js";
 import {
   ApiResponseShapeRule,
   FinancialRule,
@@ -93,13 +92,20 @@ export async function coldStart(opts: PipelineOptions): Promise<PipelineResult> 
     // navigation graph. Replaces old hard-coded sub-screen-discover.
     // QA_GRAPH_DISCOVERY=0 → fall back to hard-coded popup discovery for speed.
     // QA_GRAPH_DISCOVERY=legacy → old hard-coded behavior.
-    // Also auto-skip if registry is human-verified AND has nested sub-state
-    // entries (sign that manual discovery covered the graph).
-    const hasNestedVerified = Object.entries(uiMap).some(
+    // Auto-skip when EITHER (a) any nested entry is QA-verified, OR (b) the
+    // registry is trusted (isHumanVerified — now accepts probe-verified, set
+    // by Auto-Onboard's element-probe step) AND has any nested entries (sign
+    // that some popup discovery already happened). Treats Auto-Onboard's
+    // graph-explore output as authoritative so "Generate Cases" after onboard
+    // doesn't re-explore for ~3-5min.
+    const hasNestedQa = Object.entries(uiMap).some(
       ([k, el]) => k.includes("__") && el?.verifiedBy === "QA",
     );
-    if (hasNestedVerified) {
+    const hasAnyNested = Object.entries(uiMap).some(([k, el]) => k.includes("__") && el);
+    if (hasNestedQa) {
       console.log("[step2/graph] human-verified nested entries found — skipping AI graph exploration");
+    } else if (isHumanVerified(uiMap) && hasAnyNested) {
+      console.log("[step2/graph] trusted registry (probe-verified) + nested entries present — skipping AI graph exploration");
     } else if (process.env.QA_GRAPH_DISCOVERY === "0") {
       console.log("[step2/graph] skipped via QA_GRAPH_DISCOVERY=0");
     } else if (process.env.QA_GRAPH_DISCOVERY === "legacy") {
@@ -250,16 +256,23 @@ export async function coldStart(opts: PipelineOptions): Promise<PipelineResult> 
     // content, save under fixtures/registry/<slug>/auxiliary-sources/. Feeds AI
     // catalog with exact paytable multipliers, RTP, feature mechanics, buy-option
     // costs. Skips popups whose trigger is missing from uiMap (rare).
+    // Session-2 refactor: use phase-deep-extract instead of inline call.
+    // Same QA_DEEP_EXTRACT=0 opt-out gate (handled inside the phase). Both
+    // cold-start CLI and dashboard Auto-Onboard go through this single
+    // implementation now.
     let deepExtractResult: import("../step4-feature-discovery/deep-extract.js").DeepExtractResult | null = null;
-    if (process.env.QA_DEEP_EXTRACT !== "0") {
-      try {
-        const { deepExtractInfo } = await import("../step4-feature-discovery/deep-extract.js");
-        deepExtractResult = await deepExtractInfo(session.page, uiMap, slug);
-      } catch (err) {
-        console.warn(
-          `[step4c/deep-extract] failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
-        );
+    try {
+      const { phaseDeepExtract } = await import("../phases/phase-deep-extract.js");
+      const res = await phaseDeepExtract({ page: session.page, gameSlug: slug, uiMap });
+      if (!res.ok) {
+        console.warn(`[step4c/deep-extract] ${res.reason ?? "failed"} (non-fatal)`);
+      } else {
+        deepExtractResult = res.extract;
       }
+    } catch (err) {
+      console.warn(
+        `[step4c/deep-extract] failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
 
     // Step 6b — Preflight (Tier 1.3) — fail-fast on bad samples before running
@@ -288,14 +301,18 @@ export async function coldStart(opts: PipelineOptions): Promise<PipelineResult> 
     });
     await testcasesStore.save(slug, toYaml(tcDoc));
 
-    // Step 7b — AI-rich catalog (20-40 cases with executable invariants).
-    // Optional, gated by env var to skip in fast-CI lanes.
+    // Step 7b — AI-rich catalog. Session-2 refactor: route through
+    // phaseGenerateCatalog with overrides so cold-start + dashboard share
+    // the single implementation. Overrides skip the disk reads since
+    // cold-start already has these in memory from earlier steps.
     let aiCatalog: import("../../ai/test-catalog.js").TestCaseCatalog | null = null;
     if (process.env.QA_AI_CATALOG !== "0") {
-      const cat = await generateAiCatalog({
+      const { phaseGenerateCatalog } = await import("../phases/phase-generate-catalog.js");
+      const providerForCatalog = await providerCache.load(slug);
+      const catResult = await phaseGenerateCatalog({
         gameSlug: slug,
-        provider: await providerCache.load(slug),
         uiMap,
+        provider: providerForCatalog,
         features,
         rounds,
         parser,
@@ -309,9 +326,13 @@ export async function coldStart(opts: PipelineOptions): Promise<PipelineResult> 
           rulesJson: deepExtractResult.rulesJson,
         } : null,
       });
-      aiCatalog = cat.catalog;
-      if (cat.catalog) {
-        console.log(`[step7/ai-catalog] generated ${cat.catalog.total_cases} cases → ${cat.catalogJsonPath}`);
+      if (catResult.ok && catResult.catalogPath) {
+        aiCatalog = await (await import("../step7-testcase-gen/ai-catalog.js")).loadAiCatalog(slug);
+        console.log(`[step7/ai-catalog] generated ${catResult.totalCases} cases → ${catResult.catalogPath}`);
+      } else if (!catResult.ok) {
+        console.warn(`[step7/ai-catalog] failed: ${catResult.reason}`);
+      }
+      if (aiCatalog) {
         // Export MD + CSV for QA review (deterministic, no AI).
         try {
           const { buildGameSpec } = await import("../step7-testcase-gen/build-game-spec.js");
@@ -328,16 +349,16 @@ export async function coldStart(opts: PipelineOptions): Promise<PipelineResult> 
             spinApiUrl: top?.url ?? null,
             paytable: await paytableStore.load(slug).catch(() => null),
           });
-          const mdPath = await saveCatalogMarkdown(slug, cat.catalog, specForExport);
-          const csvPath = await saveCatalogCsv(slug, cat.catalog, specForExport);
+          const mdPath = await saveCatalogMarkdown(slug, aiCatalog, specForExport);
+          const csvPath = await saveCatalogCsv(slug, aiCatalog, specForExport);
           console.log(`[step7/exports] md → ${mdPath}, csv → ${csvPath}`);
         } catch (err) {
           console.warn(
             `[step7/exports] non-fatal: ${err instanceof Error ? err.message : String(err)}`,
           );
         }
-      } else {
-        console.log(`[step7/ai-catalog] skipped: ${cat.reason}`);
+      } else if (!catResult.ok) {
+        console.log(`[step7/ai-catalog] skipped: ${catResult.reason}`);
       }
     }
 
@@ -346,29 +367,30 @@ export async function coldStart(opts: PipelineOptions): Promise<PipelineResult> 
     // already show their steps. The actions cache was just cleared on re-gen,
     // so this translates fresh. case-runner reuses these (cache-hit) later.
     // Gated via QA_TRANSLATE_CASES=0 (skip for catalog-only inspection).
+    // Session-2 refactor: route through phaseTranslateCases. Single
+    // implementation across cold-start + dashboard. Overrides skip disk
+    // reads since cold-start has provider/features/uiMap in memory.
     if (
       aiCatalog &&
       aiCatalog.cases.length > 0 &&
       process.env.QA_TRANSLATE_CASES !== "0"
     ) {
       try {
-        const { translateAllCases } = await import("../step7-testcase-gen/case-action-translator.js");
-        const { buildGameSpec } = await import("../step7-testcase-gen/build-game-spec.js");
-        const { paytable: paytableStore } = await import("../registry/paytable.js");
-        const specForTranslate = buildGameSpec({
-          gameSlug: slug,
-          provider: await providerCache.load(slug),
-          uiMap,
-          features,
-          parsedSpins: decoded,
-          rounds,
-          spinApiUrl: top?.url ?? null,
-          paytable: await paytableStore.load(slug).catch(() => null),
-        });
+        const { phaseTranslateCases } = await import("../phases/phase-translate-cases.js");
         console.log(`[step7b2/translate] translating ${aiCatalog.cases.length} cases → action lists...`);
-        const cache = await translateAllCases(slug, aiCatalog.cases, uiMap, specForTranslate);
-        const withActions = Object.values(cache.cases).filter((c) => (c.actions?.length ?? 0) > 0).length;
-        console.log(`[step7b2/translate] ✔ ${withActions}/${aiCatalog.cases.length} cases have action lists`);
+        const translateRes = await phaseTranslateCases({
+          gameSlug: slug,
+          catalog: aiCatalog,
+          uiMap,
+          provider: await providerCache.load(slug),
+          features,
+          spinApiUrl: top?.url ?? null,
+        });
+        if (translateRes.ok) {
+          console.log(`[step7b2/translate] ✔ ${translateRes.totalCases}/${aiCatalog.cases.length} cases translated (${translateRes.durationMs}ms)`);
+        } else {
+          console.warn(`[step7b2/translate] non-fatal: ${translateRes.reason}`);
+        }
       } catch (err) {
         console.warn(`[step7b2/translate] non-fatal: ${err instanceof Error ? err.message : String(err)}`);
       }

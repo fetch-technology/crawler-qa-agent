@@ -140,6 +140,16 @@
       <button id="btnProbePending" disabled style="background: #7c5cff; font-size: 11px;" title="Auto-verify pending elements by clicking each + observing the expected signal (network/popup). Replaces most QA Pick work.">Probe Pending</button>
       <button id="btnAutoOnboard" disabled style="background: #16a34a; font-size: 11px;" title="One-click: deep-discover the UI graph + auto-probe + calibrate the payout model. Can take 30 minutes to over an hour per game depending on UI complexity + AI latency.">Auto-Onboard</button>
     </div>
+    <!-- Per-phase Auto-Onboard progress panel. Populated live via /status
+         polling while autoOnboardInProgress=true; persists after run so QA
+         can review timings + skip reasons. Hidden until phases[] non-empty. -->
+    <div id="onboardPhasePanel" style="display: none; margin: 0 0 10px 0; padding: 8px 10px; background: #0d1117; border: 1px solid #2a3140; border-radius: 4px; font-size: 11px;">
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+        <strong style="color: #c8d0d8;">Auto-Onboard Progress</strong>
+        <span id="onboardPhaseSummary" style="color: #8b939c;"></span>
+      </div>
+      <ul id="onboardPhaseList" style="margin: 0; padding: 0; list-style: none; line-height: 1.6;"></ul>
+    </div>
     <div id="elementsContainer">
       <p class="empty">No active session.</p>
     </div>
@@ -314,14 +324,96 @@
     }
 
     let onboardPollTimer = null;
+    // Render Auto-Onboard's per-phase progress as a checklist. Reads
+    // status.autoOnboardPhases[] from /status polling. Each phase shows:
+    //   - icon (⏳/✓/✗/⊝) based on lifecycle state
+    //   - human label
+    //   - duration (if completed) or "running…" (if active)
+    //   - note (right-aligned, dim) — e.g. "+12 elements", "ffmpeg missing"
+    // Panel hides when phases[] is empty (no Auto-Onboard has run on this
+    // session yet — keep dashboard uncluttered for first-time use).
+    const PHASE_LABELS = {
+      "deep-discover": "Deep Discover",
+      "verify-registry": "Verify Registry",
+      "ocr-auto-detect": "OCR Auto-Detect",
+      "deep-extract": "Deep Extract (paytable/rules)",
+      "calibrate-payout": "Calibrate Payout Model",
+      "generate-catalog": "Generate Test Catalog",
+      "translate-cases": "Translate Cases → Actions",
+      "run-cases": "Run All Cases",
+    };
+    function renderOnboardPhases(phases, currentName, isOnboarding) {
+      const panel = document.getElementById("onboardPhasePanel");
+      const list = document.getElementById("onboardPhaseList");
+      const summary = document.getElementById("onboardPhaseSummary");
+      if (!panel || !list || !summary) return;
+      if (!Array.isArray(phases) || phases.length === 0) {
+        panel.style.display = "none";
+        return;
+      }
+      panel.style.display = "block";
+      const okCount = phases.filter((p) => p.status === "ok").length;
+      const skipCount = phases.filter((p) => p.status === "skip").length;
+      const failCount = phases.filter((p) => p.status === "fail").length;
+      const runningCount = phases.filter((p) => p.status === "running").length;
+      summary.textContent = isOnboarding
+        ? `${okCount + skipCount}/${phases.length} done · ${runningCount} running${failCount > 0 ? ` · ${failCount} fail` : ""}`
+        : `${okCount} ok · ${skipCount} skip · ${failCount} fail`;
+      const fmtDur = (ms) => {
+        if (typeof ms !== "number" || !isFinite(ms) || ms <= 0) return "";
+        if (ms < 1000) return `${ms}ms`;
+        if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+        return `${Math.floor(ms / 60_000)}m ${Math.floor((ms % 60_000) / 1000)}s`;
+      };
+      const icon = (p) => {
+        if (p.status === "running") return '<span style="color:#facc15;">⏳</span>';
+        if (p.status === "ok")      return '<span style="color:#86efac;">✓</span>';
+        if (p.status === "fail")    return '<span style="color:#f0a39e;">✗</span>';
+        if (p.status === "skip")    return '<span style="color:#8b939c;">⊝</span>';
+        return '<span style="color:#5e6772;">○</span>';
+      };
+      const elapsedRunning = (p) => {
+        if (p.status !== "running" || !p.startedAt) return "running…";
+        const ms = Date.now() - new Date(p.startedAt).getTime();
+        return ms > 0 ? `${fmtDur(ms)}…` : "running…";
+      };
+      list.innerHTML = phases.map((p) => {
+        const label = PHASE_LABELS[p.name] ?? p.name;
+        const dur = p.status === "running" ? elapsedRunning(p) : fmtDur(p.durationMs);
+        const noteHtml = p.note
+          ? `<span style="color:#5e6772; font-size:10px; margin-left:8px;">${escapeHtml(p.note)}</span>`
+          : "";
+        const isCurrent = p.name === currentName;
+        const bgColor = isCurrent ? "background: #1a1f2a;" : "";
+        return `<li style="display:flex; align-items:center; padding:2px 4px; ${bgColor} border-radius:3px;">
+          <span style="width: 18px; display: inline-block;">${icon(p)}</span>
+          <span style="color: ${p.status === "running" ? "#facc15" : "#c8d0d8"}; flex: 1;">${escapeHtml(label)}</span>
+          <span style="color: #8b939c; font-size: 10px; font-family: ui-monospace, monospace;">${dur}</span>
+          ${noteHtml}
+        </li>`;
+      }).join("");
+    }
+
+    // Two timers: server-poll (5s) refreshes /status → updates phase
+    // lifecycle (pending→running→ok/fail). Local-tick (1s) just re-renders
+    // the running phase's elapsed counter so QA sees live "23s..." count
+    // up without spamming the server with 1s polls.
+    let onboardLocalTickTimer = null;
     function startOnboardPolling() {
       if (onboardPollTimer) return;
-      onboardPollTimer = setInterval(() => { refresh().catch(() => {}); }, 10000);
+      onboardPollTimer = setInterval(() => { refresh().catch(() => {}); }, 5000);
+      onboardLocalTickTimer = setInterval(() => {
+        if (!currentStatus) return;
+        renderOnboardPhases(
+          currentStatus.autoOnboardPhases ?? [],
+          currentStatus.autoOnboardCurrentPhase ?? null,
+          !!currentStatus.autoOnboardInProgress,
+        );
+      }, 1000);
     }
     function stopOnboardPolling() {
-      if (!onboardPollTimer) return;
-      clearInterval(onboardPollTimer);
-      onboardPollTimer = null;
+      if (onboardPollTimer) { clearInterval(onboardPollTimer); onboardPollTimer = null; }
+      if (onboardLocalTickTimer) { clearInterval(onboardLocalTickTimer); onboardLocalTickTimer = null; }
     }
 
     function renderStatus(status) {
@@ -343,6 +435,7 @@
         stopOnboardPolling();
         if (prevOnboarding) toast("Auto-Onboard finished");
       }
+      renderOnboardPhases(status.autoOnboardPhases ?? [], status.autoOnboardCurrentPhase ?? null, onboarding);
       $("#btnStart").disabled = active;
       $("#btnOcrRefreshShot").disabled = !active;
       $("#btnOcrAutoDetect").disabled = !active;
@@ -711,34 +804,83 @@
         }).join("")}</tbody></table>`;
     }
 
-    // Stage 1: Generate test cases (AI catalog + translations only — no execution, no spins)
+    // Generate test cases — in-process AI catalog generation with polling
+    // fallback for proxy 504.
+    //
+    // Two-phase strategy mirrors runCaseBackend (Session-2 of previewCase
+    // robustness work). Catalog gen takes 30-90s — often longer than frp
+    // HTTP vhost default 60s timeout, so direct POST sometimes returns
+    // 504 even though the server keeps running. Fallback poll /status
+    // for the generateCatalogInProgress flag → detect completion → reload
+    // case list.
     window.doGenerateCases = async (gameSlug) => {
-      const url = document.getElementById(`url-${gameSlug}`).value.trim();
-      if (!url) return toast("URL empty", true);
+      const startIso = new Date().toISOString();
+      const startMs = Date.now();
+      toast(`Generate Cases starting for ${gameSlug}… (~30-90s)`);
+      let body = null;
       try {
-        const body = await api("/api/qa/cold", {
+        body = await api("/api/qa/manual/generate-catalog", {
           method: "POST",
-          body: { url, mode: "api", stopAfterCatalog: true },
+          body: { gameSlug },
         });
-        toast(`Generate Cases started · task=${body.id} · ~3-5 min`);
-        subscribeTaskLog(body.id, {
-          label: `Generate Cases · ${gameSlug} · task=${body.id.slice(-6)}`,
-          // Catalog re-gen redefines case assertions → backend already cleared
-          // the persisted result.json + history. Drop the browser localStorage
-          // cache too so the dashboard shows "not run yet" instead of stale
-          // pass/fail. Reload the list if it's the one on screen.
-          onDone: (code) => {
-            if (code !== 0) return;
-            try { localStorage.removeItem(caseResultsKey(gameSlug)); } catch {}
-            if (window.__lastCasesSlug === gameSlug) {
-              window.__caseResults = {};
-              loadCasesForSlug(gameSlug, { scrollToTop: false });
-            }
-            toast(`Generate done · stale results cleared for ${gameSlug}`);
-          },
-        });
-        showPipelinePane(true);
-      } catch (err) { toast(err.message, true); }
+      } catch (err) {
+        appendLog(`[generate-cases] HTTP failed (likely proxy timeout): ${err.message}. Polling /status for completion…`);
+      }
+
+      // Polling fallback when direct POST didn't return cleanly.
+      if (!body || !body.ok) {
+        const POLL_MS = 3000;
+        const MAX_POLL_MS = 30 * 60 * 1000; // 30 min cap
+        const pollDeadline = Date.now() + MAX_POLL_MS;
+        let lastLogMs = 0;
+        let finishedDetected = false;
+        while (Date.now() < pollDeadline) {
+          await new Promise((r) => setTimeout(r, POLL_MS));
+          let status = null;
+          try { status = await api("/api/qa/manual/status"); } catch { /* transient */ }
+          if (!status) continue;
+          // Completion: lastFinishedAt > startIso AND no longer in-progress.
+          const finished = !status.generateCatalogInProgress
+            && status.generateCatalogLastFinishedAt
+            && status.generateCatalogLastFinishedAt > startIso;
+          if (finished) {
+            appendLog(`[generate-cases] ${gameSlug} finished server-side (polling detected)`);
+            finishedDetected = true;
+            break;
+          }
+          if (Date.now() - lastLogMs > 30000) {
+            const elapsedS = ((Date.now() - startMs) / 1000).toFixed(0);
+            appendLog(`[generate-cases] ${gameSlug} polling… ${elapsedS}s elapsed${status.generateCatalogInProgress ? " (server still running)" : ""}`);
+            lastLogMs = Date.now();
+          }
+        }
+        if (!finishedDetected) {
+          toast(`Generate Cases: polling timed out after 30 min`, true);
+          return;
+        }
+        // Catalog written to disk — reload case list to see new cases.
+        try { localStorage.removeItem(caseResultsKey(gameSlug)); } catch {}
+        if (window.__lastCasesSlug === gameSlug) {
+          window.__caseResults = {};
+          loadCasesForSlug(gameSlug, { scrollToTop: false });
+        }
+        toast(`✓ Generate Cases done for ${gameSlug} (via polling — HTTP timed out but server finished)`);
+        return;
+      }
+
+      // Direct POST succeeded — use response data for richer toast.
+      const cat = body.catalog ?? {};
+      const tr = body.translate ?? {};
+      toast(
+        `✓ Generated ${cat.totalCases ?? "?"} cases`
+        + ` (rounds=${cat.roundsLoaded ?? 0}, aux=${cat.hadAuxSources ? "yes" : "no"})`
+        + (tr && tr.ok ? ` · translated ${tr.totalCases ?? 0}` : "")
+      );
+      try { localStorage.removeItem(caseResultsKey(gameSlug)); } catch {}
+      if (window.__lastCasesSlug === gameSlug) {
+        window.__caseResults = {};
+        loadCasesForSlug(gameSlug, { scrollToTop: false });
+      }
     };
 
     // Stats only: massive spin + RTP/volatility, skip case execution

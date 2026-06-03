@@ -1,0 +1,56 @@
+{
+  "stateId": "menuButton",
+  "capturedAt": "2026-06-02T18:03:06.266Z",
+  "source": "explore-graph",
+  "elementCount": 8,
+  "elements": [
+    {
+      "key": "menuButton__closeButton",
+      "x": 1038,
+      "y": 107,
+      "confidence": 0.98
+    },
+    {
+      "key": "menuButton__historyButton",
+      "x": 463,
+      "y": 290,
+      "confidence": 0.95
+    },
+    {
+      "key": "menuButton__betMinusButton",
+      "x": 348,
+      "y": 403,
+      "confidence": 0.95
+    },
+    {
+      "key": "menuButton__betPlusButton",
+      "x": 575,
+      "y": 403,
+      "confidence": 0.95
+    },
+    {
+      "key": "menuButton__quickSpinToggle",
+      "x": 923,
+      "y": 195,
+      "confidence": 0.95
+    },
+    {
+      "key": "menuButton__batterySaverToggle",
+      "x": 923,
+      "y": 270,
+      "confidence": 0.95
+    },
+    {
+      "key": "menuButton__ambientMusicToggle",
+      "x": 923,
+      "y": 345,
+      "confidence": 0.95
+    },
+    {
+      "key": "menuButton__soundFxToggle",
+      "x": 923,
+      "y": 421,
+      "confidence": 0.95
+    }
+  ]
+}

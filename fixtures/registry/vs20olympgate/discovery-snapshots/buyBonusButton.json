@@ -1,0 +1,20 @@
+{
+  "stateId": "buyBonusButton",
+  "capturedAt": "2026-06-02T18:02:30.126Z",
+  "source": "explore-graph",
+  "elementCount": 2,
+  "elements": [
+    {
+      "key": "buyBonusButton__cancelButton",
+      "x": 545,
+      "y": 437,
+      "confidence": 0.98
+    },
+    {
+      "key": "buyBonusButton__confirmButton",
+      "x": 720,
+      "y": 437,
+      "confidence": 0.98
+    }
+  ]
+}
