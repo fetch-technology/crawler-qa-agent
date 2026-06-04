@@ -583,6 +583,52 @@
     }
 
     let onboardPollTimer = null;
+    const REQUIRED_ONBOARD_OCR_KEYS = ["balanceArea", "betArea"];
+    const REQUIRED_ONBOARD_OCR_LABELS = {
+      balanceArea: "Balance widget",
+      betArea: "Bet widget",
+    };
+    const LEVEL1_EXPECTED_KEYS = [
+      "spinButton",
+      "betPlus",
+      "betMinus",
+      "menuButton",
+      "paytableButton",
+      "autoButton",
+      "buyBonusButton",
+      "historyButton",
+    ];
+    const LEVEL1_LABELS = {
+      spinButton: "Spin",
+      betPlus: "Bet +",
+      betMinus: "Bet -",
+      menuButton: "Menu",
+      paytableButton: "Paytable",
+      autoButton: "Auto",
+      buyBonusButton: "Buy Bonus",
+      historyButton: "History",
+    };
+    const level1PickerPromptedSlugs = new Set();
+    let level1PickerRunning = false;
+    let ocrRequiredForOnboard = {
+      ready: false,
+      missing: [...REQUIRED_ONBOARD_OCR_KEYS],
+    };
+
+    function hasValidOcrRegion(region) {
+      return !!region
+        && Number.isFinite(region.x)
+        && Number.isFinite(region.y)
+        && Number.isFinite(region.width)
+        && Number.isFinite(region.height)
+        && region.width > 0
+        && region.height > 0;
+    }
+
+    function getMissingRequiredOnboardOcrKeys(regions) {
+      const src = regions || {};
+      return REQUIRED_ONBOARD_OCR_KEYS.filter((key) => !hasValidOcrRegion(src[key]));
+    }
     // Render Game Spec panel — displays captured values + lets QA edit
     // betMin/betMax/defaultBet/betLadder. Edits write through to
     // /api/qa/manual/game-spec (PUT) which saves game-spec-override.json
@@ -802,7 +848,11 @@
       const pauseRequested = !!status.autoOnboardPauseRequested;
       const btnAuto = $("#btnAutoOnboard");
       const btnPause = $("#btnPauseOnboard");
-      btnAuto.disabled = !active || onboarding;
+      const missingRequired = ocrRequiredForOnboard.missing || [];
+      const ocrReadyForOnboard = missingRequired.length === 0;
+      const missingLevel1Qa = getLevel1NeedsQaPick(status);
+      const level1ReadyForOnboard = missingLevel1Qa.length === 0;
+      btnAuto.disabled = !active || onboarding || !ocrReadyForOnboard || !level1ReadyForOnboard;
       if (onboarding) {
         btnAuto.textContent = "Onboarding…";
       } else if (resumeAvail) {
@@ -814,6 +864,13 @@
       } else {
         btnAuto.textContent = "Auto-Onboard";
         btnAuto.style.background = "#16a34a";
+        btnAuto.title = "One-click: deep-discover the UI graph + auto-probe + calibrate the payout model. Requires OCR Balance widget + Bet widget defined first.";
+      }
+      if (!onboarding && active && !ocrReadyForOnboard) {
+        const labels = missingRequired.map((k) => REQUIRED_ONBOARD_OCR_LABELS[k] || k).join(", ");
+        btnAuto.title = `Auto-Onboard locked: draw required OCR regions first (${labels}).`;
+      } else if (!onboarding && active && !level1ReadyForOnboard) {
+        btnAuto.title = `Auto-Onboard locked: level-1 keys must be QA-verified first (${missingLevel1Qa.join(", ")}). Start-session picker can guide this.`;
       }
       // Pause button visible only while onboarding. Disable + label switch
       // once pause is requested so QA doesn't double-click.
@@ -846,6 +903,7 @@
       $("#btnOcrAutoDetect").disabled = !active;
 
       if (!active) {
+        level1PickerPromptedSlugs.clear();
         sessionInfo.textContent = "Not started.";
         elementsContainer.innerHTML = `<p class="empty">No active session.</p>`;
         $("#discoveryGaps").innerHTML = "";
@@ -853,6 +911,37 @@
         $("#ocrDrawHint").textContent = "(no session)";
         return;
       }
+
+      // Safety-net auto trigger: if level-1 QA picker was missed during Start
+      // (overlay race, page reload, resumed session), open it from status flow.
+      // One auto-open per slug per page session unless level-1 becomes fully QA-verified.
+      const level1Pending = getLevel1NeedsQaPick(status);
+      const missingRequiredOcr = ocrRequiredForOnboard.missing || [];
+      const needsWizard = level1Pending.length > 0 || missingRequiredOcr.length > 0;
+      if (status.gameSlug && !needsWizard) {
+        level1PickerPromptedSlugs.delete(status.gameSlug);
+      }
+      if (
+        status.gameSlug
+        && needsWizard
+        && !level1PickerRunning
+        && !level1PickerPromptedSlugs.has(status.gameSlug)
+      ) {
+        level1PickerPromptedSlugs.add(status.gameSlug);
+        setTimeout(async () => {
+          if (level1PickerRunning) return;
+          level1PickerRunning = true;
+          try {
+            toast("Opening Level-1 QA picker…");
+            await maybeRunLevel1QaPicker(status);
+          } catch (err) {
+            console.warn("level-1 picker auto-open failed:", err);
+          } finally {
+            level1PickerRunning = false;
+          }
+        }, 0);
+      }
+
       // Lazy-load OCR regions for the active game
       renderOcrRegions().catch(() => {});
       sessionInfo.innerHTML = `Active · slug=<code>${status.gameSlug}</code> · started ${status.startedAt}`;
@@ -3679,6 +3768,455 @@
       }
     }
 
+    function getMainExpectedPickKeys(status) {
+      const expected = Array.isArray(status?.expectedElements) ? status.expectedElements : [];
+      const dynamicTopLevel = expected.filter((k) => typeof k === "string" && k.length > 0 && !k.includes("__"));
+      const merged = [...LEVEL1_EXPECTED_KEYS, ...dynamicTopLevel];
+      return Array.from(new Set(merged));
+    }
+
+    function getLevel1NeedsQaPick(status) {
+      const registry = status?.registry || {};
+      const skipped = new Set(Array.isArray(status?.skippedMainKeys) ? status.skippedMainKeys : []);
+      return getMainExpectedPickKeys(status).filter((key) => !skipped.has(key) && registry[key]?.verifiedBy !== "QA");
+    }
+
+    async function maybeRunLevel1QaPicker(status) {
+      if (!status?.active) return;
+      const mainPickKeys = getMainExpectedPickKeys(status);
+      const pendingElements = getLevel1NeedsQaPick(status);
+      let missingOcr = [];
+      let ocrRegions = {};
+      try {
+        const o = await api("/api/qa/manual/ocr-regions");
+        ocrRegions = o?.regions || {};
+        missingOcr = getMissingRequiredOnboardOcrKeys(ocrRegions);
+      } catch {
+        // Non-fatal: keep element picker usable even if OCR API is transiently down.
+      }
+      const allMainSteps = mainPickKeys.map((key) => ({ kind: "element", key }));
+      const allOcrSteps = REQUIRED_ONBOARD_OCR_KEYS.map((key) => ({ kind: "ocr", key }));
+      const allSteps = [...allMainSteps, ...allOcrSteps];
+      const queue = [
+        ...pendingElements.map((key) => ({ kind: "element", key })),
+        ...missingOcr.map((key) => ({ kind: "ocr", key })),
+      ];
+      if (queue.length === 0) return;
+
+      const existing = document.getElementById("level1QaPickerModal");
+      if (existing) existing.remove();
+
+      let index = 0;
+      const skipped = [];
+      let saving = false;
+      let drawFirstPoint = null;
+      let drawHoverPoint = null;
+      const localPickedPoints = {};
+      const localOcrRegions = { ...ocrRegions };
+      const localSkippedMain = new Set(Array.isArray(status?.skippedMainKeys) ? status.skippedMainKeys : []);
+
+      for (const key of mainPickKeys) {
+        const el = status?.registry?.[key];
+        if (!el) continue;
+        if (!Number.isFinite(el.x) || !Number.isFinite(el.y)) continue;
+        localPickedPoints[key] = {
+          x: Math.round(el.x),
+          y: Math.round(el.y),
+          by: localSkippedMain.has(key) ? "skip" : (el.verifiedBy || "pending"),
+        };
+      }
+
+      await new Promise((resolve) => {
+        const modal = document.createElement("div");
+        modal.id = "level1QaPickerModal";
+        modal.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.86);z-index:10000;display:flex;align-items:center;justify-content:center;padding:18px;";
+        modal.innerHTML = `
+          <div style="width:min(1220px,98vw);height:min(860px,96vh);background:#111723;border:1px solid #273142;border-radius:8px;display:flex;flex-direction:column;overflow:hidden;">
+            <div style="padding:10px 12px;border-bottom:1px solid #273142;display:flex;justify-content:space-between;gap:12px;align-items:center;">
+              <div>
+                <div style="font-size:14px;color:#dbe5f0;font-weight:700;">Main-Screen QA + OCR Setup</div>
+                <div id="lvl1QaSummary" style="font-size:11px;color:#93a2b7;margin-top:3px;"></div>
+              </div>
+              <div style="display:flex;gap:8px;align-items:center;">
+                <button id="lvl1QaRefreshShot" class="gray" style="font-size:11px;padding:4px 8px;">Refresh screenshot</button>
+                <button id="lvl1QaClose" class="gray" style="font-size:11px;padding:4px 8px;">Close</button>
+              </div>
+            </div>
+            <div style="padding:10px 12px;border-bottom:1px solid #273142;color:#cdd9e6;font-size:12px;display:flex;justify-content:space-between;align-items:center;gap:12px;">
+              <div id="lvl1QaCurrent"></div>
+              <div style="display:flex;gap:8px;">
+                <button id="lvl1QaSkip" style="background:#4b5563;color:#fff;font-size:11px;padding:4px 10px;">Skip this step</button>
+                <button id="lvl1QaDone" style="background:#16a34a;color:#fff;font-size:11px;padding:4px 10px;display:none;">Done</button>
+              </div>
+            </div>
+            <div style="flex:1;min-height:0;display:flex;background:#070b11;">
+              <div style="flex:1;min-width:0;display:flex;align-items:center;justify-content:center;">
+                <div id="lvl1QaImgWrap" style="position:relative;display:inline-block;line-height:0;">
+                  <img id="lvl1QaImg" alt="main screenshot" style="max-width:100%;max-height:100%;object-fit:contain;cursor:crosshair;display:block;" />
+                  <canvas id="lvl1QaOverlay" style="position:absolute;inset:0;pointer-events:none;"></canvas>
+                </div>
+              </div>
+              <div style="width:340px;border-left:1px solid #273142;background:#0f1520;display:flex;flex-direction:column;">
+                <div style="padding:8px 10px;border-bottom:1px solid #273142;color:#c8d4e2;font-size:12px;font-weight:600;">Picked/Drawn Review</div>
+                <div id="lvl1QaReviewList" style="padding:8px 10px;overflow:auto;flex:1 1 auto;"></div>
+              </div>
+            </div>
+            <div id="lvl1QaHint" style="padding:8px 12px;border-top:1px solid #273142;color:#90a0b5;font-size:11px;">
+              Follow the step instructions below. Element steps are single-click; OCR steps are two-click bbox draw.
+            </div>
+          </div>`;
+        document.body.appendChild(modal);
+
+        const img = modal.querySelector("#lvl1QaImg");
+        const overlay = modal.querySelector("#lvl1QaOverlay");
+        const summary = modal.querySelector("#lvl1QaSummary");
+        const current = modal.querySelector("#lvl1QaCurrent");
+        const hint = modal.querySelector("#lvl1QaHint");
+        const btnSkip = modal.querySelector("#lvl1QaSkip");
+        const btnDone = modal.querySelector("#lvl1QaDone");
+        const btnRefresh = modal.querySelector("#lvl1QaRefreshShot");
+        const btnClose = modal.querySelector("#lvl1QaClose");
+        const reviewList = modal.querySelector("#lvl1QaReviewList");
+
+        const close = () => {
+          modal.remove();
+          resolve();
+        };
+
+        const refreshShot = () => {
+          drawFirstPoint = null;
+          drawHoverPoint = null;
+          img.src = `/api/qa/manual/screenshot?t=${Date.now()}`;
+        };
+
+        const getNaturalCoordFromEvent = (ev) => {
+          if (!img.naturalWidth || !img.naturalHeight || !img.clientWidth || !img.clientHeight) return null;
+          const rect = img.getBoundingClientRect();
+          const dispX = ev.clientX - rect.left;
+          const dispY = ev.clientY - rect.top;
+          const scaleX = img.naturalWidth / img.clientWidth;
+          const scaleY = img.naturalHeight / img.clientHeight;
+          return {
+            x: Math.round(dispX * scaleX),
+            y: Math.round(dispY * scaleY),
+          };
+        };
+
+        const toDisplayCoord = (pt) => {
+          if (!img.naturalWidth || !img.naturalHeight || !img.clientWidth || !img.clientHeight) return null;
+          return {
+            x: (pt.x / img.naturalWidth) * img.clientWidth,
+            y: (pt.y / img.naturalHeight) * img.clientHeight,
+          };
+        };
+
+        const redrawOverlay = () => {
+          if (!overlay || !img.clientWidth || !img.clientHeight) return;
+          overlay.width = Math.max(1, Math.floor(img.clientWidth));
+          overlay.height = Math.max(1, Math.floor(img.clientHeight));
+          const ctx = overlay.getContext("2d");
+          if (!ctx) return;
+          ctx.clearRect(0, 0, overlay.width, overlay.height);
+
+          // Persisted + locally updated main points.
+          for (const key of mainPickKeys) {
+            const p = localPickedPoints[key];
+            if (!p) continue;
+            const dp = toDisplayCoord({ x: p.x, y: p.y });
+            if (!dp) continue;
+            ctx.fillStyle = p.by === "QA" ? "#22c55e" : (p.by === "skip" ? "#ef4444" : "#7dd3fc");
+            ctx.beginPath();
+            ctx.arc(dp.x, dp.y, 5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = "rgba(0,0,0,0.6)";
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(dp.x, dp.y, 7, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.fillStyle = "#dbeafe";
+            ctx.font = "11px ui-monospace, SFMono-Regular, Menlo, monospace";
+            ctx.fillText(key, dp.x + 9, dp.y - 8);
+          }
+
+          // Persisted + locally updated OCR regions.
+          for (const key of REQUIRED_ONBOARD_OCR_KEYS) {
+            const r = localOcrRegions[key];
+            if (!r || !Number.isFinite(r.x) || !Number.isFinite(r.y) || !Number.isFinite(r.width) || !Number.isFinite(r.height)) continue;
+            if (r.width <= 0 || r.height <= 0) continue;
+            const p1 = toDisplayCoord({ x: r.x, y: r.y });
+            const p2 = toDisplayCoord({ x: r.x + r.width, y: r.y + r.height });
+            if (!p1 || !p2) continue;
+            const x = Math.min(p1.x, p2.x);
+            const y = Math.min(p1.y, p2.y);
+            const w = Math.abs(p2.x - p1.x);
+            const h = Math.abs(p2.y - p1.y);
+            ctx.strokeStyle = key === "balanceArea" ? "#22c55e" : "#3b82f6";
+            ctx.lineWidth = 2;
+            ctx.setLineDash([6, 3]);
+            ctx.strokeRect(x, y, w, h);
+            ctx.setLineDash([]);
+            ctx.fillStyle = key === "balanceArea" ? "rgba(34,197,94,0.10)" : "rgba(59,130,246,0.10)";
+            ctx.fillRect(x, y, w, h);
+            ctx.fillStyle = "#dbeafe";
+            ctx.font = "11px ui-monospace, SFMono-Regular, Menlo, monospace";
+            ctx.fillText(key, x + 4, y + 13);
+          }
+
+          const step = queue[index];
+          if (!step || step.kind !== "ocr") return;
+
+          if (drawFirstPoint) {
+            const p1 = toDisplayCoord(drawFirstPoint);
+            if (p1) {
+              ctx.fillStyle = "#22d3ee";
+              ctx.beginPath();
+              ctx.arc(p1.x, p1.y, 5, 0, Math.PI * 2);
+              ctx.fill();
+            }
+          }
+
+          if (drawFirstPoint && drawHoverPoint) {
+            const p1 = toDisplayCoord(drawFirstPoint);
+            const p2 = toDisplayCoord(drawHoverPoint);
+            if (p1 && p2) {
+              const x = Math.min(p1.x, p2.x);
+              const y = Math.min(p1.y, p2.y);
+              const w = Math.abs(p2.x - p1.x);
+              const h = Math.abs(p2.y - p1.y);
+              ctx.strokeStyle = "#22d3ee";
+              ctx.lineWidth = 2;
+              ctx.setLineDash([]);
+              ctx.strokeRect(x, y, w, h);
+              ctx.fillStyle = "rgba(34,211,238,0.12)";
+              ctx.fillRect(x, y, w, h);
+            }
+          }
+        };
+
+        const openEditStep = (kind, key) => {
+          const foundIndex = queue.findIndex((s) => s.kind === kind && s.key === key);
+          if (foundIndex !== -1) {
+            index = foundIndex;
+          } else {
+            queue.push({ kind, key });
+            index = queue.length - 1;
+          }
+          drawFirstPoint = null;
+          drawHoverPoint = null;
+          renderStep();
+          refreshShot();
+        };
+
+        const renderReviewList = () => {
+          const mainRows = mainPickKeys.map((key) => {
+            const p = localPickedPoints[key];
+            const label = LEVEL1_LABELS[key] || key;
+            const state = localSkippedMain.has(key)
+              ? `<span style="color:#fca5a5;">skipped</span>`
+              : p
+              ? `<span style="color:${p.by === "QA" ? "#86efac" : "#93c5fd"};">(${p.x}, ${p.y}) · ${p.by}</span>`
+              : `<span style="color:#fca5a5;">missing</span>`;
+            return `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:4px 0;border-bottom:1px dashed #1f2937;">
+              <div style="min-width:0;">
+                <div style="color:#dbe5f0;font-size:11px;"><strong>${label}</strong> <code>${key}</code></div>
+                <div style="font-size:10px;">${state}</div>
+              </div>
+              <button data-kind="element" data-key="${key}" style="background:#1f2937;color:#cde3ff;font-size:10px;padding:2px 8px;border:1px solid #334155;border-radius:4px;">Re-pick</button>
+            </div>`;
+          }).join("");
+
+          const ocrRows = REQUIRED_ONBOARD_OCR_KEYS.map((key) => {
+            const r = localOcrRegions[key];
+            const label = REQUIRED_ONBOARD_OCR_LABELS[key] || key;
+            const state = r && Number.isFinite(r.x) && Number.isFinite(r.y) && Number.isFinite(r.width) && Number.isFinite(r.height) && r.width > 0 && r.height > 0
+              ? `<span style="color:#93c5fd;">{x:${r.x}, y:${r.y}, w:${r.width}, h:${r.height}}</span>`
+              : `<span style="color:#fca5a5;">missing</span>`;
+            return `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:4px 0;border-bottom:1px dashed #1f2937;">
+              <div style="min-width:0;">
+                <div style="color:#dbe5f0;font-size:11px;"><strong>${label}</strong> <code>${key}</code></div>
+                <div style="font-size:10px;">${state}</div>
+              </div>
+              <button data-kind="ocr" data-key="${key}" style="background:#1f2937;color:#cde3ff;font-size:10px;padding:2px 8px;border:1px solid #334155;border-radius:4px;">Redraw</button>
+            </div>`;
+          }).join("");
+
+          reviewList.innerHTML = `
+            <div style="margin-bottom:8px;color:#93a2b7;font-size:10px;">Main elements</div>
+            ${mainRows}
+            <div style="margin:10px 0 8px 0;color:#93a2b7;font-size:10px;">Required OCR regions</div>
+            ${ocrRows}
+          `;
+          reviewList.querySelectorAll("button[data-kind]").forEach((btn) => {
+            btn.onclick = () => {
+              const kind = btn.getAttribute("data-kind");
+              const key = btn.getAttribute("data-key");
+              if (!kind || !key) return;
+              openEditStep(kind, key);
+            };
+          });
+        };
+
+        const renderStep = () => {
+          const total = queue.length + skipped.length;
+          const doneCount = index + skipped.length;
+          summary.textContent = `${doneCount}/${total} handled · skipped ${skipped.length}`;
+          const step = queue[index] || null;
+          if (!step) {
+            current.innerHTML = `<span style="color:#86efac;font-weight:600;">Completed.</span> ${skipped.length > 0 ? `Skipped: <code>${skipped.join(", ")}</code>` : "All required main steps were completed."}`;
+            btnSkip.style.display = "none";
+            btnDone.style.display = "inline-block";
+            hint.textContent = "You can continue to Auto-Onboard now.";
+            renderReviewList();
+            redrawOverlay();
+            return;
+          }
+          drawFirstPoint = null;
+          drawHoverPoint = null;
+          if (step.kind === "element") {
+            const label = LEVEL1_LABELS[step.key] || step.key;
+            current.innerHTML = `Pick <strong style="color:#7dd3fc;">${label}</strong> <code>${step.key}</code> (${index + 1}/${queue.length})`;
+            hint.textContent = "Click on the screenshot to save coord as QA-verified.";
+          } else {
+            const label = REQUIRED_ONBOARD_OCR_LABELS[step.key] || step.key;
+            current.innerHTML = `Draw OCR bbox for <strong style="color:#22d3ee;">${label}</strong> <code>${step.key}</code> (${index + 1}/${queue.length})`;
+            hint.textContent = "Step 1/2: click TOP-LEFT corner of the widget.";
+          }
+          btnSkip.style.display = "inline-block";
+          btnDone.style.display = "none";
+          renderReviewList();
+          redrawOverlay();
+        };
+
+        const advance = async () => {
+          index += 1;
+          renderStep();
+          refreshShot();
+          if (index >= queue.length) {
+            const latest = await api("/api/qa/manual/status");
+            renderStatus(latest);
+          }
+        };
+
+        btnRefresh.onclick = refreshShot;
+        btnClose.onclick = close;
+        btnDone.onclick = close;
+        btnSkip.onclick = async () => {
+          if (saving) return;
+          const step = queue[index];
+          if (!step) return;
+          if (step.kind === "element") {
+            try {
+              await api("/api/qa/manual/skip-main", { method: "POST", body: { uiKey: step.key, skipped: true } });
+              localSkippedMain.add(step.key);
+              if (localPickedPoints[step.key]) {
+                localPickedPoints[step.key] = { ...localPickedPoints[step.key], by: "skip" };
+              }
+            } catch (err) {
+              toast(`Skip failed for ${step.key}: ${err.message}`, true);
+              return;
+            }
+          }
+          skipped.push(step.kind === "element" ? step.key : `${step.key}(ocr)`);
+          renderReviewList();
+          redrawOverlay();
+          await advance();
+        };
+
+        img.onmousemove = (ev) => {
+          const step = queue[index];
+          if (!step || step.kind !== "ocr" || !drawFirstPoint) return;
+          const p = getNaturalCoordFromEvent(ev);
+          if (!p) return;
+          drawHoverPoint = p;
+          redrawOverlay();
+        };
+        img.onmouseleave = () => {
+          drawHoverPoint = null;
+          redrawOverlay();
+        };
+        img.onload = () => {
+          redrawOverlay();
+        };
+
+        img.onclick = async (e) => {
+          if (saving) return;
+          const step = queue[index];
+          if (!step) return;
+          const p = getNaturalCoordFromEvent(e);
+          if (!p) return;
+          const x = p.x;
+          const y = p.y;
+          if (step.kind === "ocr") {
+            if (!drawFirstPoint) {
+              drawFirstPoint = { x, y };
+              drawHoverPoint = null;
+              hint.textContent = `Step 2/2: click BOTTOM-RIGHT corner (point 1 at ${x}, ${y}).`;
+              redrawOverlay();
+              return;
+            }
+            const left = Math.min(drawFirstPoint.x, x);
+            const top = Math.min(drawFirstPoint.y, y);
+            const width = Math.abs(x - drawFirstPoint.x);
+            const height = Math.abs(y - drawFirstPoint.y);
+            if (width < 6 || height < 6) {
+              hint.textContent = "BBox too small. Re-click TOP-LEFT then BOTTOM-RIGHT.";
+              drawFirstPoint = null;
+              drawHoverPoint = null;
+              redrawOverlay();
+              return;
+            }
+            saving = true;
+            hint.textContent = `Saving ${step.key} bbox (${left},${top},${width},${height})…`;
+            try {
+              await api("/api/qa/manual/ocr-regions", {
+                method: "POST",
+                body: { key: step.key, x: left, y: top, width, height },
+              });
+              localOcrRegions[step.key] = { x: left, y: top, width, height };
+              await advance();
+            } catch (err) {
+              toast(`OCR save failed for ${step.key}: ${err.message}`, true);
+              hint.textContent = "Step 1/2: click TOP-LEFT corner of the widget.";
+              drawFirstPoint = null;
+              drawHoverPoint = null;
+              redrawOverlay();
+            } finally {
+              saving = false;
+            }
+            return;
+          }
+          saving = true;
+          hint.textContent = `Saving ${step.key} at (${x}, ${y})…`;
+          try {
+            await api("/api/qa/manual/update", { method: "POST", body: { uiKey: step.key, x, y } });
+            localSkippedMain.delete(step.key);
+            localPickedPoints[step.key] = { x, y, by: "QA" };
+            await advance();
+          } catch (err) {
+            toast(`Pick failed for ${step.key}: ${err.message}`, true);
+            hint.textContent = "Click on the screenshot to save coord as QA-verified.";
+          } finally {
+            saving = false;
+          }
+        };
+
+        refreshShot();
+        renderStep();
+        renderReviewList();
+      });
+
+      const latest = await api("/api/qa/manual/status");
+      renderStatus(latest);
+      await renderOcrRegions().catch(() => {});
+      const remaining = getLevel1NeedsQaPick(latest);
+      const missingAfterOcr = ocrRequiredForOnboard.missing || [];
+      if (remaining.length === 0 && missingAfterOcr.length === 0) {
+        toast("Main-screen QA + required OCR setup complete.");
+      } else {
+        toast(`Wizard finished: ${remaining.length} main key(s) and ${missingAfterOcr.length} OCR region(s) still missing`, true);
+      }
+    }
+
     $("#btnStart").onclick = async () => {
       const url = $("#url").value.trim();
       if (!url) return toast("URL required", true);
@@ -3694,6 +4232,17 @@
         await refreshGames();
         await autoLoadCasesForActive(s);
         toast("Session started · " + s.gameSlug);
+        // Important: hide loading overlay BEFORE opening the auto picker,
+        // otherwise the modal appears underneath and QA sees nothing.
+        hideLoading();
+        if (!level1PickerRunning) {
+          level1PickerRunning = true;
+          try {
+            await maybeRunLevel1QaPicker(s);
+          } finally {
+            level1PickerRunning = false;
+          }
+        }
       } catch (err) {
         toast(err.message, true);
         $("#btnStart").disabled = false;
@@ -4142,6 +4691,11 @@
       const r = await api("/api/qa/manual/ocr-regions");
       ocrCurrentRegions = r.regions ?? {};
       ocrProposals = r.proposals ?? {};
+      const missingRequired = getMissingRequiredOnboardOcrKeys(ocrCurrentRegions);
+      ocrRequiredForOnboard = {
+        ready: missingRequired.length === 0,
+        missing: missingRequired,
+      };
       const rows = OCR_REGION_KEYS.map((cfg) => {
         const existing = ocrCurrentRegions[cfg.key];
         const proposal = !existing ? ocrProposals[cfg.key] : null;
@@ -4184,13 +4738,21 @@
         </tr>`;
       }).join("");
       const pendingCount = Object.keys(ocrProposals).filter((k) => !ocrCurrentRegions[k]).length;
+      const requiredBanner = missingRequired.length > 0
+        ? `<div style="background:#3a2020;border:1px solid #ef4444;color:#fecaca;padding:6px 10px;border-radius:4px;font-size:12px;margin-bottom:8px;">🔒 Auto-Onboard is locked. Required OCR regions missing: <strong>${missingRequired.map((k) => REQUIRED_ONBOARD_OCR_LABELS[k] || k).join(", ")}</strong>. Draw these first.</div>`
+        : `<div style="background:#1f3329;border:1px solid #22c55e;color:#bbf7d0;padding:6px 10px;border-radius:4px;font-size:12px;margin-bottom:8px;">✅ Required OCR ready for Auto-Onboard: Balance widget + Bet widget.</div>`;
       const banner = pendingCount > 0
         ? `<div style="background:#3a2a1f;border:1px solid #f59e0b;color:#fbbf24;padding:6px 10px;border-radius:4px;font-size:12px;margin-bottom:8px;">⚠ ${pendingCount} region${pendingCount === 1 ? "" : "s"} pending review from last AI auto-detect run — click Accept or Reject below.</div>`
         : "";
-      $("#ocrRegionsTable").innerHTML = `${banner}<table style="width:100%;font-size:12px;border-collapse:collapse;">
+      $("#ocrRegionsTable").innerHTML = `${requiredBanner}${banner}<table style="width:100%;font-size:12px;border-collapse:collapse;">
         <thead><tr style="background:#161a22;"><th style="text-align:left;padding:6px 8px;">Region</th><th style="text-align:left;padding:6px 8px;">Current bbox</th><th style="text-align:left;padding:6px 8px;width:340px;">Action</th></tr></thead>
         <tbody>${rows}</tbody></table>`;
       drawAllRegionsOnOverlay();
+      const btnAuto = $("#btnAutoOnboard");
+      if (btnAuto && currentStatus?.active && !currentStatus.autoOnboardInProgress) {
+        const missingLevel1Qa = getLevel1NeedsQaPick(currentStatus);
+        btnAuto.disabled = missingRequired.length > 0 || missingLevel1Qa.length > 0;
+      }
     }
 
     /** Reject a pending proposal — calls DELETE /ocr-regions/proposed. */

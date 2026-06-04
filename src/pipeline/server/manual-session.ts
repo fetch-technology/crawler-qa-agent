@@ -54,6 +54,17 @@ import { resolveSubStateHints, SUB_STATE_HINTS_DEFAULTS, interpolateSliderStops,
 import { readFile, writeFile } from "node:fs/promises";
 import type { UiRegistry, UiElement } from "../registry/types.js";
 
+const LEVEL1_EXPECTED_KEYS = [
+  "spinButton",
+  "betPlus",
+  "betMinus",
+  "menuButton",
+  "paytableButton",
+  "autoButton",
+  "buyBonusButton",
+  "historyButton",
+] as const;
+
 export type SessionStatus = {
   active: boolean;
   gameSlug: string | null;
@@ -61,6 +72,7 @@ export type SessionStatus = {
   startedAt: string | null;
   registry: UiRegistry | null;
   verifyState: Record<string, "pending" | "confirmed" | "rejected">;
+  skippedMainKeys: string[];
   subStateSuggestions: SubStateSuggestion[];
   /** P4 — main-state element keys discovery targets (defaults + per-game).
    *  Dashboard diffs this against registry keys to show a "missing" checklist. */
@@ -343,6 +355,7 @@ export class ManualSessionManager {
   private startedAt: string | null = null;
   private registry: UiRegistry | null = null;
   private verifyState: Record<string, "pending" | "confirmed" | "rejected"> = {};
+  private skippedMainKeys = new Set<string>();
   /** 2026-06-01: mutex for expensive long-running ops (autoOnboard,
    *  deepDiscover). Node's single-threaded event loop happily queues
    *  multiple concurrent HTTP requests against the same route; without this
@@ -465,6 +478,7 @@ export class ManualSessionManager {
     const crawled = await crawl(this.session.page, { gameUrl: url });
     this.gameSlug = crawled.gameSlug;
     this.expectedElementKeys = (await resolveExpectedUiElements(this.gameSlug)).map((e) => e.key);
+    this.skippedMainKeys = await this.loadSkippedMainKeys(this.gameSlug);
     await initMeta(this.gameSlug, url);
     await providerCache.save(this.gameSlug, {
       provider: crawled.provider,
@@ -535,6 +549,7 @@ export class ManualSessionManager {
       startedAt: this.startedAt,
       registry: this.registry,
       verifyState: { ...this.verifyState },
+      skippedMainKeys: Array.from(this.skippedMainKeys),
       subStateSuggestions: computeSuggestions(this.registry),
       expectedElements: [...this.expectedElementKeys],
       discoveryAutoAdded: [...this.discoveryAutoAdded],
@@ -687,7 +702,30 @@ export class ManualSessionManager {
     };
     this.registry[uiKey] = updated;
     this.verifyState[uiKey] = "confirmed";
+    if (this.skippedMainKeys.delete(uiKey)) {
+      await this.saveSkippedMainKeys(this.gameSlug);
+    }
     await uiRegistry.save(this.gameSlug, this.registry);
+  }
+
+  async setMainKeySkipped(uiKey: string, skipped: boolean): Promise<{ ok: boolean; reason?: string }> {
+    if (!this.session || !this.gameSlug) return { ok: false, reason: "no active session" };
+    if (skipped) {
+      this.skippedMainKeys.add(uiKey);
+      if (this.registry?.[uiKey]) {
+        this.registry[uiKey]!.status = "rejected";
+        this.registry[uiKey]!.verifiedBy = null;
+      }
+      this.verifyState[uiKey] = "rejected";
+    } else {
+      this.skippedMainKeys.delete(uiKey);
+      if (this.verifyState[uiKey] === "rejected") {
+        this.verifyState[uiKey] = this.registry?.[uiKey]?.status === "verified" ? "confirmed" : "pending";
+      }
+    }
+    await this.saveSkippedMainKeys(this.gameSlug);
+    if (this.registry) await uiRegistry.save(this.gameSlug, this.registry);
+    return { ok: true };
   }
 
   /** Add a brand-new element (not in current registry). Rejects if key exists. */
@@ -1373,8 +1411,7 @@ export class ManualSessionManager {
     // coord drift (~10-50px on canvas slots), which is handled DOWNSTREAM by
     // the probe step + a crop-verify fallback when probe fails (Option B
     // 2026-05-30). Verified entries (QA/probe) are preserved.
-    const CANONICAL_MAIN = ["spinButton", "betPlus", "betMinus", "menuButton", "paytableButton", "autoButton", "buyBonusButton", "historyButton"];
-    const missingCanonical = CANONICAL_MAIN.filter((k) => {
+    const missingCanonical = LEVEL1_EXPECTED_KEYS.filter((k) => {
       const el = this.registry[k];
       if (!el) return true;
       return el.verifiedBy !== "QA" && el.verifiedBy !== "probe";
@@ -1427,7 +1464,7 @@ export class ManualSessionManager {
         // Hybrid policy: batch is the default path (cheap, usually correct);
         // per-element kicks in ONLY when the cluster heuristic trips. Cost
         // stays low on healthy games; recovery is automatic on broken ones.
-        const cluster = detectCanonicalCluster(this.registry, CANONICAL_MAIN);
+        const cluster = detectCanonicalCluster(this.registry, LEVEL1_EXPECTED_KEYS);
         if (cluster.detected && this.session.cdpEndpoint) {
           console.warn(
             `[manual/deep-discover] batch seed produced suspicious cluster: ` +
@@ -1746,6 +1783,33 @@ export class ManualSessionManager {
     return { ok: true };
   }
 
+  private skippedMainKeysFilePath(slug: string): string {
+    return path.join(dirForGame(slug), "qa-main-skip.json");
+  }
+
+  private async loadSkippedMainKeys(slug: string): Promise<Set<string>> {
+    try {
+      const raw = await readFile(this.skippedMainKeysFilePath(slug), "utf8");
+      const parsed = JSON.parse(raw) as { keys?: string[] };
+      const keys = Array.isArray(parsed?.keys) ? parsed.keys.filter((k) => typeof k === "string" && k.length > 0) : [];
+      return new Set(keys);
+    } catch {
+      return new Set<string>();
+    }
+  }
+
+  private async saveSkippedMainKeys(slug: string): Promise<void> {
+    try {
+      await writeFile(
+        this.skippedMainKeysFilePath(slug),
+        JSON.stringify({ keys: Array.from(this.skippedMainKeys), updatedAt: new Date().toISOString() }, null, 2),
+        "utf8",
+      );
+    } catch (err) {
+      console.warn(`[manual/skip-main] persist failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   /** Path to the on-disk Auto-Onboard state file. Returns null when no
    *  active session (slug needed for path resolution). */
   private onboardStateFilePath(): string | null {
@@ -1884,6 +1948,43 @@ export class ManualSessionManager {
   }> {
     if (!this.session || !this.registry || !this.gameSlug) {
       return { ok: false, reason: "no active session" };
+    }
+    // Hard precondition: Auto-Onboard depends on reliable OCR evidence for
+    // bet/balance; require QA to define these regions before any run.
+    const ocrState = await this.loadOcrRegions();
+    if (!ocrState.ok) {
+      return { ok: false, reason: ocrState.reason ?? "failed to load OCR regions" };
+    }
+    const requiredKeys = ["balanceArea", "betArea"] as const;
+    const missingRequired = requiredKeys.filter((key) => {
+      const region = ocrState.regions?.[key];
+      if (!region) return true;
+      return !Number.isFinite(region.x)
+        || !Number.isFinite(region.y)
+        || !Number.isFinite(region.width)
+        || !Number.isFinite(region.height)
+        || region.width <= 0
+        || region.height <= 0;
+    });
+    if (missingRequired.length > 0) {
+      return {
+        ok: false,
+        reason: `missing required OCR regions for Auto-Onboard: ${missingRequired.join(", ")}. Draw Balance widget + Bet widget in OCR Regions first.`,
+      };
+    }
+    const expectedTopLevel = this.expectedElementKeys.filter((k) => typeof k === "string" && k.length > 0 && !k.includes("__"));
+    const requiredMainKeys = Array.from(new Set<string>([...LEVEL1_EXPECTED_KEYS, ...expectedTopLevel]));
+    const missingLevel1Qa = requiredMainKeys.filter((key) => {
+      if (this.skippedMainKeys.has(key)) return false;
+      const el = this.registry?.[key];
+      if (!el) return true;
+      return el.verifiedBy !== "QA";
+    });
+    if (missingLevel1Qa.length > 0) {
+      return {
+        ok: false,
+        reason: `missing QA-verified level-1 elements: ${missingLevel1Qa.join(", ")}. Use Start-session level-1 picker popup to pick or skip each key first.`,
+      };
     }
     // Mutex: reject if another autoOnboard is already running on this
     // session (handles queued duplicate HTTP requests that survived a
@@ -3359,6 +3460,7 @@ export class ManualSessionManager {
     this.registry = reg;
     this.discoveryAutoAdded = [];
     this.expectedElementKeys = (await resolveExpectedUiElements(gameSlug)).map((e) => e.key);
+    this.skippedMainKeys = await this.loadSkippedMainKeys(gameSlug);
     this.lastBalance = null;
     this.attachBalanceTracker();
     // Restore verify state from persisted status field

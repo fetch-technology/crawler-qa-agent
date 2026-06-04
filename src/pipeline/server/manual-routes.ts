@@ -181,6 +181,18 @@ export async function handleManualRoute(
       return sendJson(res, 200, resolveSession(req, body as any, url).status()), true;
     }
 
+    // POST /api/qa/manual/skip-main { uiKey, skipped? } — mark a main-screen
+    // expected key as intentionally absent so pre-onboard gating won't block.
+    if (url === "/api/qa/manual/skip-main" && method === "POST") {
+      const body = await asJsonBody<{ uiKey?: string; skipped?: boolean }>(req);
+      if (!body.uiKey) {
+        return sendJson(res, 400, { error: "uiKey required" }), true;
+      }
+      const sess = resolveSession(req, body as any, url);
+      const r = await sess.setMainKeySkipped(body.uiKey, body.skipped !== false);
+      return sendJson(res, r.ok ? 200 : 400, { ...r, status: sess.status() }), true;
+    }
+
     // POST /api/qa/manual/add { uiKey, x, y }
     if (url === "/api/qa/manual/add" && method === "POST") {
       const body = await asJsonBody<{ uiKey?: string; x?: number; y?: number }>(req);
