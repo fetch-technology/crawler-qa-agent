@@ -359,6 +359,58 @@ export type DetectResult = {
 };
 
 /**
+ * Interstitial detector historically treated any OCR hit containing
+ * "free spins" as dismissable popup content. That is too broad: buy-feature
+ * dialogs and paytable/rules pages also contain "free spins" but should not
+ * be handled by the generic ESC+corner dismiss loop.
+ *
+ * Keep strong interstitial phrases ("press anywhere", "to continue",
+ * "congratulations", "you won", etc.) while dropping the ambiguous lone
+ * "free spins" match when there is no blocking affordance and OCR text looks
+ * like substate content.
+ */
+function suppressAmbiguousFreeSpinsMatches(text: string, matches: string[]): string[] {
+  if (!matches.some((m) => m.toLowerCase().includes("free spin"))) return matches;
+  const lower = text.toLowerCase();
+  const hasBlockingAffordance = BLOCKING_AFFORDANCE_PHRASES.some((p) => lower.includes(p));
+  if (hasBlockingAffordance) return matches;
+  const hasStrongInterstitialSignal =
+    lower.includes("congratulations") ||
+    lower.includes("you have won") ||
+    lower.includes("you won") ||
+    lower.includes("you've won") ||
+    lower.includes("big win") ||
+    lower.includes("huge win") ||
+    lower.includes("mega win") ||
+    lower.includes("max win") ||
+    lower.includes("bonus complete");
+  if (hasStrongInterstitialSignal) return matches;
+  const hasSubstateContent = POPUP_CONTENT_DISCRIMINATORS.some((k) => lower.includes(k));
+  if (!hasSubstateContent) return matches;
+  return matches.filter((m) => !m.toLowerCase().includes("free spin"));
+}
+
+function explainFreeSpinsSuppression(text: string, before: string[], after: string[]): string | null {
+  const hadFreeSpins = before.some((m) => m.toLowerCase().includes("free spin"));
+  const hasFreeSpinsAfter = after.some((m) => m.toLowerCase().includes("free spin"));
+  if (!hadFreeSpins || hasFreeSpinsAfter) return null;
+  const lower = text.toLowerCase();
+  const hasBlockingAffordance = BLOCKING_AFFORDANCE_PHRASES.some((p) => lower.includes(p));
+  const hasStrongInterstitialSignal =
+    lower.includes("congratulations") ||
+    lower.includes("you have won") ||
+    lower.includes("you won") ||
+    lower.includes("you've won") ||
+    lower.includes("big win") ||
+    lower.includes("huge win") ||
+    lower.includes("mega win") ||
+    lower.includes("max win") ||
+    lower.includes("bonus complete");
+  const hasSubstateContent = POPUP_CONTENT_DISCRIMINATORS.some((k) => lower.includes(k));
+  return `suppressed ambiguous free-spins interstitial hit (blockingAffordance=${hasBlockingAffordance}, strongInterstitial=${hasStrongInterstitialSignal}, substateContent=${hasSubstateContent})`;
+}
+
+/**
  * Run OCR on current page screenshot. Returns detected text + which popup
  * keywords matched (case-insensitive).
  */
@@ -368,7 +420,15 @@ export async function detectPopup(page: Page): Promise<DetectResult> {
   const w = await getWorker();
   const result = await w.recognize(buf);
   const text = (result.data.text ?? "").toLowerCase();
-  const matched = suppressResultBannerMatches(text, POPUP_KEYWORDS.filter((k) => text.includes(k)));
+  const rawMatches = POPUP_KEYWORDS.filter((k) => text.includes(k));
+  const bannerFiltered = suppressResultBannerMatches(text, rawMatches);
+  const matched = suppressAmbiguousFreeSpinsMatches(text, bannerFiltered);
+  const suppressionReason = explainFreeSpinsSuppression(text, bannerFiltered, matched);
+  if (suppressionReason) {
+    const before = bannerFiltered.join(",");
+    const after = matched.join(",");
+    console.log(`[ocr/popup-detect] ${suppressionReason}; before=[${before}] after=[${after}]`);
+  }
   return {
     hasPopup: matched.length > 0,
     detectedText: text.trim().slice(0, 400),
