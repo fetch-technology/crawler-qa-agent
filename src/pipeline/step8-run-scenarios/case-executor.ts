@@ -2237,6 +2237,17 @@ async function executeAction(
       try {
         // Click parent trigger to open the selector popup.
         await ctx.page.mouse.click(chipMatch.parent.x, chipMatch.parent.y);
+        // Edge fallback: when parent is betMinus at min (or betPlus at max),
+        // that button is disabled so the popup won't open. Click sibling too;
+        // at most one of the pair is disabled, so one click always opens.
+        if (chipMatch.parentKey === "betMinus" || chipMatch.parentKey === "betPlus") {
+          const siblingKey = chipMatch.parentKey === "betMinus" ? "betPlus" : "betMinus";
+          const sibling = ctx.uiMap[siblingKey];
+          if (sibling) {
+            await ctx.page.waitForTimeout(120);
+            await ctx.page.mouse.click(sibling.x, sibling.y);
+          }
+        }
         await ctx.page.waitForTimeout(800); // popup render
         // Click the exact chip.
         await ctx.page.mouse.click(chipMatch.chip.x, chipMatch.chip.y);

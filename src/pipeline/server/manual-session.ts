@@ -4967,6 +4967,10 @@ export async function deleteGame(gameSlug: string): Promise<{ ok: boolean; remov
   // 3. Per-slug folders elsewhere.
   await rmPath(path.join("fixtures", "specs", gameSlug));
   await rmPath(path.join("fixtures", "scenarios", gameSlug));
+  // Visual case-action replay recordings (one folder per case under
+  // this slug). Cleaned together so re-adding the same slug doesn't
+  // inherit stale baseline screenshots that would fail pixel-diff.
+  await rmPath(path.join("fixtures", "case-actions", gameSlug));
   // 4. Timestamped statistical debug dumps: `<slug>-<ISO>-debug`.
   try {
     const statDir = path.join("fixtures", "statistical");
