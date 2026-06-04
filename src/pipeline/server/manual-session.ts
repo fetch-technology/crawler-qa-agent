@@ -657,6 +657,8 @@ export class ManualSessionManager {
     el.status = "verified";
     el.verifiedAt = new Date().toISOString();
     this.verifyState[uiKey] = "confirmed";
+    this.skippedMainKeys.delete(uiKey);
+    await this.saveSkippedMainKeys(this.gameSlug);
     await uiRegistry.save(this.gameSlug, this.registry);
   }
 
@@ -668,17 +670,20 @@ export class ManualSessionManager {
    */
   async confirmChildren(parentKey: string): Promise<{ ok: boolean; count: number; reason?: string }> {
     if (!this.session || !this.gameSlug || !this.registry) return { ok: false, count: 0, reason: "no active session" };
+    const registry = this.registry;
     const prefix = `${parentKey}__`;
-    const childKeys = Object.keys(this.registry).filter((k) => k.startsWith(prefix) && this.registry[k]);
+    const childKeys = Object.keys(registry).filter((k) => k.startsWith(prefix) && registry[k]);
     if (childKeys.length === 0) return { ok: false, count: 0, reason: `no children under ${parentKey}` };
     const now = new Date().toISOString();
     for (const k of childKeys) {
-      const el = this.registry[k]!;
+      const el = registry[k]!;
       el.verifiedBy = "QA";
       el.status = "verified";
       el.verifiedAt = now;
       this.verifyState[k] = "confirmed";
+      this.skippedMainKeys.delete(k);
     }
+    await this.saveSkippedMainKeys(this.gameSlug);
     await uiRegistry.save(this.gameSlug, this.registry);
     console.log(`[manual] bulk verified ${childKeys.length} children of ${parentKey}`);
     return { ok: true, count: childKeys.length };

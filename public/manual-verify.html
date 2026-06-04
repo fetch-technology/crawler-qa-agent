@@ -3843,7 +3843,11 @@
               </div>
             </div>
             <div style="padding:10px 12px;border-bottom:1px solid #273142;color:#cdd9e6;font-size:12px;display:flex;justify-content:space-between;align-items:center;gap:12px;">
-              <div id="lvl1QaCurrent"></div>
+              <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+                <button id="lvl1QaPrev" class="gray" style="font-size:11px;padding:3px 8px;">&lt;</button>
+                <div id="lvl1QaCurrent" style="min-width:0;"></div>
+                <button id="lvl1QaNext" class="gray" style="font-size:11px;padding:3px 8px;">&gt;</button>
+              </div>
               <div style="display:flex;gap:8px;">
                 <button id="lvl1QaSkip" style="background:#4b5563;color:#fff;font-size:11px;padding:4px 10px;">Skip this step</button>
                 <button id="lvl1QaDone" style="background:#16a34a;color:#fff;font-size:11px;padding:4px 10px;display:none;">Done</button>
@@ -3876,6 +3880,8 @@
         const btnDone = modal.querySelector("#lvl1QaDone");
         const btnRefresh = modal.querySelector("#lvl1QaRefreshShot");
         const btnClose = modal.querySelector("#lvl1QaClose");
+        const btnPrev = modal.querySelector("#lvl1QaPrev");
+        const btnNext = modal.querySelector("#lvl1QaNext");
         const reviewList = modal.querySelector("#lvl1QaReviewList");
 
         const close = () => {
@@ -4065,6 +4071,8 @@
             current.innerHTML = `<span style="color:#86efac;font-weight:600;">Completed.</span> ${skipped.length > 0 ? `Skipped: <code>${skipped.join(", ")}</code>` : "All required main steps were completed."}`;
             btnSkip.style.display = "none";
             btnDone.style.display = "inline-block";
+            if (btnPrev) btnPrev.disabled = queue.length === 0;
+            if (btnNext) btnNext.disabled = true;
             hint.textContent = "You can continue to Auto-Onboard now.";
             renderReviewList();
             redrawOverlay();
@@ -4083,6 +4091,8 @@
           }
           btnSkip.style.display = "inline-block";
           btnDone.style.display = "none";
+          if (btnPrev) btnPrev.disabled = index <= 0;
+          if (btnNext) btnNext.disabled = index >= queue.length - 1;
           renderReviewList();
           redrawOverlay();
         };
@@ -4100,6 +4110,22 @@
         btnRefresh.onclick = refreshShot;
         btnClose.onclick = close;
         btnDone.onclick = close;
+        if (btnPrev) {
+          btnPrev.onclick = () => {
+            if (saving || index <= 0) return;
+            index -= 1;
+            renderStep();
+            refreshShot();
+          };
+        }
+        if (btnNext) {
+          btnNext.onclick = () => {
+            if (saving || index >= queue.length - 1) return;
+            index += 1;
+            renderStep();
+            refreshShot();
+          };
+        }
         btnSkip.onclick = async () => {
           if (saving) return;
           const step = queue[index];
