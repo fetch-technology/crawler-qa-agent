@@ -20,6 +20,7 @@ import type { UiGraph, UiGraphState } from "../registry/ui-graph-store.js";
 import { classifyState, nextStateId, STATE_SAME_THRESHOLD } from "./state-hash.js";
 import { isSafeToClickForDiscovery, explainSafety } from "./safe-click.js";
 import { navigateBackTo } from "./navigate-back.js";
+import { detectAnyPopup, dismissPopupsLoop } from "../utils/ocr-popup.js";
 
 export type ExplorerOptions = {
   maxDepth?: number;        // default 3
@@ -117,6 +118,46 @@ export function findPathFromMain(
   return null;
 }
 
+function isAutoplayRiskKey(key: string): boolean {
+  const leaf = key.split("__").pop() ?? key;
+  return /^(start.*autoplay.*button|startbutton|autoplaybutton|autospinbutton)$/i.test(leaf);
+}
+
+async function tryStopAutoplayIfCounterVisible(
+  page: Page,
+  frameStateId: string,
+  clickedKey: string,
+  initialRegistry: UiRegistry,
+): Promise<boolean> {
+  const spin = initialRegistry["spinButton"];
+  if (!spin) return false;
+  let popupScan: Awaited<ReturnType<typeof detectAnyPopup>>;
+  try {
+    popupScan = await detectAnyPopup(page);
+  } catch {
+    return false;
+  }
+  const text = popupScan.detectedText || "";
+  const hasCounter =
+    /(auto\s*spin|autoplay)[^\n]{0,24}(left|remaining)\s*\d+/i.test(text)
+    || /\b\d+\s*(auto\s*spins?|spins?)\s*(left|remaining)\b/i.test(text)
+    || /stop\s*autoplay|stop\s*auto\s*play/i.test(text);
+  if (!hasCounter) return false;
+
+  console.warn(
+    `[explorer/autoplay-guard] ${frameStateId}/${clickedKey}: detected active autoplay text `
+    + `("Auto spin left"/"stop autoplay") — clicking spinButton@(${spin.x},${spin.y}) to stop`,
+  );
+  try {
+    await page.mouse.click(spin.x, spin.y);
+  } catch {
+    return false;
+  }
+  await waitUntilStable(page, { maxIterations: 4, changeThreshold: 0.01, consecutiveStable: 2 }).catch(() => undefined);
+  await dismissPopupsLoop(page, { maxAttempts: 2 }).catch(() => undefined);
+  return true;
+}
+
 const SYSTEM_PROMPT =
   "You are a slot-game UI locator. Look at the screenshot and return JSON listing every clickable button/control you can see with pixel coordinates. Return ONLY JSON, no prose.";
 
@@ -157,6 +198,7 @@ export async function exploreUiGraph(
   const knownStates: KnownState[] = [];
   const transitions: Array<{ from: string; via: string; to: string }> = [];
   let aiCallsUsed = 0;
+  let framesProcessed = 0;
 
   // Build initial state "main" from the supplied registry (already discovered).
   const mainPng = await snapshot(page);
@@ -194,11 +236,20 @@ export async function exploreUiGraph(
   while (frontier.length > 0) {
     const frame = frontier.shift()!;
     if (visited.has(frame.stateId)) continue;
+    framesProcessed++;
+    console.log(
+      `[explorer/progress] frame ${framesProcessed}: state=${frame.stateId} depth=${frame.depth} `
+      + `aiCalls=${aiCallsUsed}/${o.maxAiCalls} knownStates=${knownStates.length}/${o.maxStates} frontierLeft=${frontier.length}`,
+    );
     if (knownStates.length > o.maxStates) {
       warnings.push(`max-states (${o.maxStates}) reached; stopping exploration`);
       break;
     }
     if (aiCallsUsed >= o.maxAiCalls) {
+      console.warn(
+        `[explorer/progress] stop: max-ai-calls reached (${aiCallsUsed}/${o.maxAiCalls}) `
+        + `at state=${frame.stateId} depth=${frame.depth} frontierLeft=${frontier.length}`,
+      );
       warnings.push(`max-ai-calls (${o.maxAiCalls}) reached; stopping`);
       break;
     }
@@ -252,6 +303,14 @@ export async function exploreUiGraph(
 
     // Iterate all elements in this state — try opening each.
     const elementKeys = Array.from(state.elements.keys());
+    const pendingEdgesInState = elementKeys.filter((k) => {
+      if (!isSafeToClickForDiscovery(k)) return false;
+      return !transitions.find((t) => t.from === frame.stateId && t.via === k);
+    }).length;
+    console.log(
+      `[explorer/progress] state=${frame.stateId} pendingClickableEdges=${pendingEdgesInState} `
+      + `aiCallsRemaining=${Math.max(0, o.maxAiCalls - aiCallsUsed)}`,
+    );
     for (const elKey of elementKeys) {
       if (!isSafeToClickForDiscovery(elKey)) {
         // skip — won't click destructive elements
@@ -321,6 +380,12 @@ export async function exploreUiGraph(
             changeThreshold: 0.01,
             consecutiveStable: 2,
           });
+          if (isAutoplayRiskKey(elKey)) {
+            const stopped = await tryStopAutoplayIfCounterVisible(page, frame.stateId, elKey, initialRegistry);
+            if (stopped) {
+              await page.waitForTimeout(300);
+            }
+          }
           // Give the context's "page" event a beat to fire — new-page event
           // is async after click. If a tab opened, abort offset retry (don't
           // open a SECOND tab on the next offset).
@@ -425,12 +490,22 @@ export async function exploreUiGraph(
 
       // NEW state — needs AI discovery.
       if (aiCallsUsed >= o.maxAiCalls) {
+        console.warn(
+          `[explorer/progress] stop-inner: max-ai-calls reached (${aiCallsUsed}/${o.maxAiCalls}) `
+          + `while processing ${frame.stateId}/${elKey}`,
+        );
         warnings.push(`hit max-ai-calls while at ${frame.stateId}/${elKey} → unrecorded new state`);
         await navigateBackTo(page, state.baseline);
         continue;
       }
 
       aiCallsUsed++;
+      const aiCallNo = aiCallsUsed;
+      const aiStart = Date.now();
+      console.log(
+        `[explorer/ai] call ${aiCallNo}/${o.maxAiCalls} START: waiting AI response `
+        + `for edge ${frame.stateId}/${elKey} depth=${frame.depth} frontierLeft=${frontier.length}`,
+      );
       // Tell AI explicitly which main controls live in the dimmed background
       // so it doesn't re-detect them as popup content. Falls back to default
       // prompt when no main entries (shouldn't happen during normal explore,
@@ -449,7 +524,13 @@ export async function exploreUiGraph(
       // case-executor would need to handle clicking in the new tab (out of
       // scope for v1; we just REGISTER the structure here).
       const discoverPage = externalPageSlot[0] ?? page;
-      const newStateData = await aiDiscoverState(discoverPage, debugDir, aiCallsUsed, popupPrompt);
+      const newStateData = await aiDiscoverState(discoverPage, debugDir, aiCallNo, popupPrompt);
+      const aiMs = Date.now() - aiStart;
+      console.log(
+        `[explorer/ai] call ${aiCallNo}/${o.maxAiCalls} DONE in ${aiMs}ms: `
+        + `elements=${newStateData.elements.length} `
+        + `remainingCalls=${Math.max(0, o.maxAiCalls - aiCallNo)}`,
+      );
       // Label sanity: AI sometimes returns the existing state's label (e.g.
       // "main") for a freshly-discovered popup — observed 2026-05-31 when AI
       // saw a popup with subtle background and defaulted to "main" + 0

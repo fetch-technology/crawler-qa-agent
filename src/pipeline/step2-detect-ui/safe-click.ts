@@ -17,7 +17,7 @@
 // state, never reveal new UI worth discovering on click.
 const CRITICAL_BLACKLIST_PATTERNS: RegExp[] = [
   /^spinButton$/i,
-  /start.*[Bb]utton$/i,           // autoplay startButton
+  /^(?!.*(autoplay|auto\s*play|autospin)).*start.*[Bb]utton$/i, // block generic start, allow autoplay start (guarded in explorer)
   /[Gg]amble[Bb]utton$/i,
   /double.*[Bb]utton$/i,          // gamble double button
   /confirm.*[Bb]utton$/i,         // buyBonus__confirmButton commits the buy
@@ -67,6 +67,9 @@ const WHITELIST_PATTERNS: RegExp[] = [
   /[Vv]olumeButton$/i,
   /[Mm]uteButton$/i,
   // Autoplay options (do NOT commit — only configure)
+  /start.*autoplay.*[Bb]utton$/i, // allow discover/probe of autoplay start; runtime guard stops active autoplay fast
+  /^autoplay[Bb]utton$/i,
+  /^auto[Ss]pin[Bb]utton$/i,
   /lossLimitButton$/i,
   /singleWinLimitButton$/i,
   /winExceedsLimitButton$/i,

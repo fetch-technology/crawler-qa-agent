@@ -4323,7 +4323,7 @@ CHECK_CODE RULES
     // the elements we depend on are present + verified, fail fast with
     // a clear reason if not. QA sees this directly in the phase note
     // instead of guessing.
-    const required = ["spinButton", "betMinus"] as const;
+    const required = ["spinButton"] as const;
     const missing: string[] = [];
     const unverified: string[] = [];
     for (const k of required) {
@@ -4339,6 +4339,23 @@ CHECK_CODE RULES
     }
     if (unverified.length > 0) {
       console.warn(`[calibrate-payout] ${this.gameSlug}: required elements unverified (${unverified.join(", ")}) — proceeding anyway, but coords may be wrong`);
+    }
+    const betMinus = this.registry["betMinus"];
+    const betPlus = this.registry["betPlus"];
+
+    // Pre-flight main-state guard. Calibration assumes we're on the base game
+    // screen before firing the first set_bet/spin actions. If a popup/overlay
+    // is still open from prior phases, spin clicks can be ignored and we end
+    // up with "no spin response captured" even though coords are correct.
+    const mainPre = await this.waitForMainScreen({ maxWaitMs: 20_000 });
+    if (!mainPre.onMain) {
+      const rec = await this.forceRecoverToMain({ maxWaitMs: 90_000 });
+      if (!rec.onMain) {
+        return {
+          ok: false,
+          reason: `calibration preflight failed: game not on main screen (${rec.reason ?? mainPre.reason ?? "unknown"}). Close popup/overlay and retry Auto-Onboard.`,
+        };
+      }
     }
     // Bet ladder check — set_bet_to_min uses betControls.minBetClicks
     // (default 20) which usually reaches min without needing gameSpec.
@@ -4380,15 +4397,20 @@ CHECK_CODE RULES
     const ladder = this.gameSpec?.betLadder ?? [];
     const higherIdx = ladder.length > 1 ? Math.min(Math.floor(ladder.length / 2) || 1, ladder.length - 1) : -1;
     const higherBet = higherIdx > 0 ? ladder[higherIdx]! : null;
-    const actions: import("../step7-testcase-gen/case-action-translator.js").CaseAction[] = [
-      { kind: "set_bet_to_min" },
-      { kind: "wait_ms", ms: 800 },
-    ];
+    const actions: import("../step7-testcase-gen/case-action-translator.js").CaseAction[] = [];
+    if (betMinus) {
+      actions.push({ kind: "set_bet_to_min" });
+      actions.push({ kind: "wait_ms", ms: 800 });
+    } else {
+      console.warn(`[calibrate-payout] ${this.gameSlug}: betMinus not in registry — skipping set_bet_to_min and using current bet for level-1 spins`);
+    }
     for (let i = 0; i < K; i++) { actions.push({ kind: "spin" }); actions.push({ kind: "wait_ms", ms: 2500 }); }
-    if (higherBet != null) {
+    if (higherBet != null && betMinus && betPlus) {
       actions.push({ kind: "set_bet_to_value", value: higherBet, reason: "calibration: second coin level" });
       actions.push({ kind: "wait_ms", ms: 800 });
       for (let i = 0; i < K; i++) { actions.push({ kind: "spin" }); actions.push({ kind: "wait_ms", ms: 2500 }); }
+    } else if (higherBet != null) {
+      console.warn(`[calibrate-payout] ${this.gameSlug}: second-level calibration skipped (needs both betMinus + betPlus in registry)`);
     }
 
     let caseResult: Awaited<ReturnType<typeof executeCase>> | null = null;
