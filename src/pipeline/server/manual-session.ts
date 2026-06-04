@@ -3474,6 +3474,357 @@ export class ManualSessionManager {
    * uiKey at translate time, but QA has since added that element via Discover).
    * Updates test-cases.actions.json on disk and returns new translation.
    */
+  /** Add a new test case to the catalog. Add-only flow paired with
+   *  deleteCase — no in-place edit. Validates id uniqueness; sets
+   *  reasonable defaults for omitted optional fields (severity=minor,
+   *  spin_count=1, custom_assertions=[]). Catalog persisted to
+   *  test-cases.json. After save the dashboard will need to translate
+   *  the case (auto on next "Generate Cases" run or per-case "Re-translate"). */
+  async addCase(
+    payload: Partial<import("../../ai/test-catalog.js").TestCase> & {
+      id: string;
+      name: string;
+      category: import("../../ai/test-catalog.js").TestCaseCategory;
+    },
+    slugOverride?: string,
+  ): Promise<{ ok: boolean; reason?: string; caseId?: string }> {
+    const slug = slugOverride ?? this.gameSlug;
+    if (!slug) return { ok: false, reason: "gameSlug required" };
+    if (!payload.id?.trim()) return { ok: false, reason: "id required" };
+    if (!payload.name?.trim()) return { ok: false, reason: "name required" };
+    if (!payload.category) return { ok: false, reason: "category required" };
+    const { loadRawCatalog, saveCatalog } = await import("../step7-testcase-gen/ai-catalog.js");
+    const catalog = await loadRawCatalog(slug);
+    if (!catalog) return { ok: false, reason: "test-cases.json not found — generate catalog first or run Auto-Onboard" };
+    if (catalog.cases.some((c) => c.id === payload.id)) {
+      return { ok: false, reason: `case id "${payload.id}" already exists — pick a different id or delete the existing one first` };
+    }
+    // Build a complete TestCase with sane defaults for unset fields.
+    // The TestCase type requires a non-empty `description` and
+    // `setup_instructions`; the catalog generator's downstream consumers
+    // (action translator, executor) tolerate empty strings but fill
+    // smarter defaults later.
+    const newCase: import("../../ai/test-catalog.js").TestCase = {
+      id: payload.id.trim(),
+      name: payload.name.trim(),
+      description: (payload.description ?? "").trim(),
+      category: payload.category,
+      severity: payload.severity ?? "minor",
+      setup_instructions: (payload.setup_instructions ?? "").trim(),
+      spin_count: typeof payload.spin_count === "number" ? payload.spin_count : 1,
+      custom_assertions: payload.custom_assertions ?? [],
+      ...(payload.expected_bet !== undefined ? { expected_bet: payload.expected_bet } : {}),
+      ...(payload.expected_feature !== undefined ? { expected_feature: payload.expected_feature } : {}),
+      ...(payload.allowed_interruptions !== undefined ? { allowed_interruptions: payload.allowed_interruptions } : {}),
+      ...(payload.on_feature_triggered !== undefined ? { on_feature_triggered: payload.on_feature_triggered } : {}),
+    };
+    catalog.cases.push(newCase);
+    await saveCatalog(slug, catalog);
+    console.log(`[manual/case] ${slug}: ADDED case "${payload.id}" (category=${payload.category}, ${newCase.custom_assertions?.length ?? 0} assertions)`);
+    return { ok: true, caseId: newCase.id };
+  }
+
+  /** Remove a test case from the catalog + clear its cached translated
+   *  actions + persisted run results. Destructive but recoverable via
+   *  git (test-cases.json is committed); cached actions/results just
+   *  regenerate on next translate / run. */
+  async deleteCase(caseId: string, slugOverride?: string): Promise<{ ok: boolean; reason?: string }> {
+    const slug = slugOverride ?? this.gameSlug;
+    if (!slug) return { ok: false, reason: "gameSlug required" };
+    const { loadRawCatalog, saveCatalog } = await import("../step7-testcase-gen/ai-catalog.js");
+    const catalog = await loadRawCatalog(slug);
+    if (!catalog) return { ok: false, reason: "test-cases.json not found" };
+    const before = catalog.cases.length;
+    catalog.cases = catalog.cases.filter((c) => c.id !== caseId);
+    if (catalog.cases.length === before) {
+      return { ok: false, reason: `case "${caseId}" not in catalog` };
+    }
+    await saveCatalog(slug, catalog);
+    // Also drop the translated-actions cache entry for this case so a
+    // future Add of the same id doesn't inherit stale actions.
+    try {
+      const { loadCache: loadActionsCacheFn, saveCache: saveActionsCacheFn } = await import("../step7-testcase-gen/case-action-translator.js");
+      const cache = await loadActionsCacheFn(slug);
+      if (cache && cache.cases[caseId]) {
+        delete cache.cases[caseId];
+        await saveActionsCacheFn(slug, cache);
+      }
+    } catch { /* non-fatal */ }
+    console.log(`[manual/case] ${slug}: DELETED case "${caseId}"`);
+    return { ok: true };
+  }
+
+  /** Generate a full test case via Claude given QA's natural-language
+   *  intent. Returns the proposed case (NOT saved) so the dashboard can
+   *  preview before commit via addCase. Prompt includes registry uiKey
+   *  summary + game spec + category enum so the AI references real
+   *  controls and picks a valid category. */
+  async generateCaseWithAi(args: {
+    intent: string;
+    slugOverride?: string;
+  }): Promise<{
+    ok: boolean;
+    reason?: string;
+    case?: import("../../ai/test-catalog.js").TestCase;
+  }> {
+    const slug = args.slugOverride ?? this.gameSlug;
+    if (!slug) return { ok: false, reason: "gameSlug required" };
+    if (!args.intent?.trim()) return { ok: false, reason: "intent required (describe the test case in plain language)" };
+    const { loadRawCatalog } = await import("../step7-testcase-gen/ai-catalog.js");
+    const catalog = await loadRawCatalog(slug);
+    if (!catalog) return { ok: false, reason: "test-cases.json not found — generate base catalog first" };
+
+    // Use current in-memory registry if active session for THIS slug,
+    // else load from disk. Falls back gracefully when registry missing.
+    const reg = (this.gameSlug === slug && this.registry)
+      ? this.registry
+      : (await uiRegistry.load(slug)) ?? {};
+    const uiKeys = Object.keys(reg);
+    const existingIds = catalog.cases.map((c) => c.id);
+    const gs = this.gameSpec;
+    const specBlock = gs
+      ? `betLadder: [${gs.betLadder.join(", ")}]\ndefaultBet: ${gs.defaultBet}\nbetMin: ${gs.betMin}  betMax: ${gs.betMax}`
+      : "(game spec unavailable — assume standard slot semantics)";
+
+    const { askClaude, extractJsonFromText } = await import("../../ai/claude.js");
+    const prompt = `Generate ONE complete TestCase for a slot-game QA suite.
+
+QA INTENT (plain language):
+"""
+${args.intent.trim()}
+"""
+
+EXISTING CASE IDs (avoid duplicates): [${existingIds.join(", ")}]
+
+REGISTRY UI KEYS (only these are clickable):
+${uiKeys.length ? uiKeys.join(", ") : "(no registry — assume spinButton, betPlus, betMinus exist)"}
+
+GAME SPEC:
+${specBlock}
+
+ALLOWED CATEGORIES: base_game | bet_variation | bet_level | bet_boundary | autoplay | buy_feature | special_bet | turbo_spin | free_spins | respin | history | options | max_win_cap | ui_consistency | rules_consistency | payout_correctness | wild_substitution | performance | meta | other
+
+ALLOWED SEVERITY: critical | major | minor
+
+SPIN OBJECT SCHEMA (for custom_assertions):
+- id: string | betAmount: number | winAmount: number | startingBalance: number|null
+- endingBalance: number | isFreeSpin: boolean | freeSpinsRemaining: number|null
+- state: string | status: string
+
+OUTPUT REQUIREMENTS (strict JSON only — no markdown fences):
+{
+  "id": "<kebab-case unique id>",
+  "name": "<one-line display name>",
+  "description": "<one-paragraph what this test verifies and why>",
+  "category": "<one of the allowed categories above>",
+  "severity": "<critical|major|minor>",
+  "setup_instructions": "<plain-language steps before spin; e.g. 'Set bet to max via betPlus clicks, then click ANTE BET toggle once'>",
+  "spin_count": <integer, usually 1-100>,
+  "custom_assertions": [
+    {
+      "id": "<kebab-case>",
+      "description": "<one-line English>",
+      "check_code": "<single JS expression, === not ==, truthy on PASS>"
+    }
+  ]
+}
+
+RULES
+- setup_instructions reference uiKeys from the REGISTRY block when possible.
+- check_code is one JS expression (no statements/no return) — wrap multi-step logic in an IIFE.
+- For free-spin assertions: filter via collector.spins.filter(s => s.isFreeSpin === true) FIRST.
+- spin_count = 0 is valid for pure UI/setup tests; >0 for behavior tests.
+- Pick the MOST SPECIFIC category — don't default to "other" unless nothing fits.`;
+
+    let raw: string;
+    try {
+      raw = await askClaude({
+        content: prompt,
+        system: "You generate slot-game test cases. Output strict JSON only.",
+        label: `case-gen/qa-driven`,
+        maxTurns: 1,
+      });
+    } catch (err) {
+      return { ok: false, reason: `AI generation failed: ${err instanceof Error ? err.message : String(err)}` };
+    }
+    const parsed = extractJsonFromText<Partial<import("../../ai/test-catalog.js").TestCase>>(raw);
+    if (!parsed || !parsed.id || !parsed.name || !parsed.category) {
+      return { ok: false, reason: `AI returned unparseable / incomplete output: ${raw.slice(0, 200)}` };
+    }
+    return {
+      ok: true,
+      case: {
+        id: parsed.id.trim(),
+        name: parsed.name.trim(),
+        description: parsed.description?.trim() ?? "",
+        category: parsed.category,
+        severity: parsed.severity ?? "minor",
+        setup_instructions: parsed.setup_instructions?.trim() ?? "",
+        spin_count: typeof parsed.spin_count === "number" ? parsed.spin_count : 1,
+        custom_assertions: parsed.custom_assertions ?? [],
+        ...(parsed.expected_bet !== undefined ? { expected_bet: parsed.expected_bet } : {}),
+        ...(parsed.expected_feature !== undefined ? { expected_feature: parsed.expected_feature } : {}),
+      },
+    };
+  }
+
+  /** Append a new custom assertion to a case. QA-driven add-only flow —
+   *  the design choice is "add new + delete bad" instead of inline edit
+   *  to avoid accidental breakage of working assertions. Returns the
+   *  fresh catalog payload so the caller can refresh UI.
+   *
+   *  Validates:
+   *    - case exists in catalog
+   *    - assertion.id is non-empty + unique within the case
+   *    - check_code is non-empty (parsing as JS is the runner's job;
+   *      we trust QA / AI to have produced valid code) */
+  async addCaseAssertion(
+    caseId: string,
+    assertion: { id: string; description: string; check_code: string },
+    slugOverride?: string,
+  ): Promise<{ ok: boolean; reason?: string; assertions?: NonNullable<import("../../ai/test-catalog.js").TestCase["custom_assertions"]> }> {
+    const slug = slugOverride ?? this.gameSlug;
+    if (!slug) return { ok: false, reason: "gameSlug required" };
+    if (!assertion.id?.trim()) return { ok: false, reason: "assertion.id required" };
+    if (!assertion.check_code?.trim()) return { ok: false, reason: "assertion.check_code required" };
+    const { loadRawCatalog, saveCatalog } = await import("../step7-testcase-gen/ai-catalog.js");
+    const catalog = await loadRawCatalog(slug);
+    if (!catalog) return { ok: false, reason: "test-cases.json not found — generate catalog first" };
+    const tc = catalog.cases.find((c) => c.id === caseId);
+    if (!tc) return { ok: false, reason: `case ${caseId} not in catalog` };
+    const existing = tc.custom_assertions ?? [];
+    if (existing.some((a) => a.id === assertion.id)) {
+      return { ok: false, reason: `assertion id "${assertion.id}" already exists on this case — delete it first or use a different id` };
+    }
+    const next = [...existing, {
+      id: assertion.id.trim(),
+      description: (assertion.description ?? "").trim(),
+      check_code: assertion.check_code.trim(),
+    }];
+    tc.custom_assertions = next;
+    await saveCatalog(slug, catalog);
+    console.log(`[manual/assertion] ${slug}/${caseId}: ADDED assertion "${assertion.id}" (now ${next.length} total)`);
+    return { ok: true, assertions: next };
+  }
+
+  /** Remove a custom assertion from a case by id. Returns the resulting
+   *  list so caller can refresh UI. */
+  async deleteCaseAssertion(
+    caseId: string,
+    assertionId: string,
+    slugOverride?: string,
+  ): Promise<{ ok: boolean; reason?: string; assertions?: NonNullable<import("../../ai/test-catalog.js").TestCase["custom_assertions"]> }> {
+    const slug = slugOverride ?? this.gameSlug;
+    if (!slug) return { ok: false, reason: "gameSlug required" };
+    const { loadRawCatalog, saveCatalog } = await import("../step7-testcase-gen/ai-catalog.js");
+    const catalog = await loadRawCatalog(slug);
+    if (!catalog) return { ok: false, reason: "test-cases.json not found" };
+    const tc = catalog.cases.find((c) => c.id === caseId);
+    if (!tc) return { ok: false, reason: `case ${caseId} not in catalog` };
+    const existing = tc.custom_assertions ?? [];
+    const next = existing.filter((a) => a.id !== assertionId);
+    if (next.length === existing.length) {
+      return { ok: false, reason: `assertion "${assertionId}" not found on case ${caseId}` };
+    }
+    tc.custom_assertions = next;
+    await saveCatalog(slug, catalog);
+    console.log(`[manual/assertion] ${slug}/${caseId}: DELETED assertion "${assertionId}" (now ${next.length} total)`);
+    return { ok: true, assertions: next };
+  }
+
+  /** Generate a new assertion via Claude given QA's natural-language
+   *  intent. Returns the proposed assertion WITHOUT saving — caller
+   *  decides whether to call addCaseAssertion next. Builds a minimal
+   *  prompt with the spin-object schema + case context so the AI
+   *  produces a syntactically valid check_code referencing real fields. */
+  async generateAssertionWithAi(args: {
+    caseId: string;
+    intent: string;
+    slugOverride?: string;
+  }): Promise<{
+    ok: boolean;
+    reason?: string;
+    assertion?: { id: string; description: string; check_code: string };
+  }> {
+    const slug = args.slugOverride ?? this.gameSlug;
+    if (!slug) return { ok: false, reason: "gameSlug required" };
+    if (!args.intent?.trim()) return { ok: false, reason: "intent required (describe the assertion in plain language)" };
+    const { loadRawCatalog } = await import("../step7-testcase-gen/ai-catalog.js");
+    const catalog = await loadRawCatalog(slug);
+    if (!catalog) return { ok: false, reason: "test-cases.json not found" };
+    const tc = catalog.cases.find((c) => c.id === args.caseId);
+    if (!tc) return { ok: false, reason: `case ${args.caseId} not in catalog` };
+
+    const { askClaude, extractJsonFromText } = await import("../../ai/claude.js");
+    const existingIds = (tc.custom_assertions ?? []).map((a) => a.id);
+    const prompt = `Generate ONE custom assertion for a slot-game test case.
+
+CASE CONTEXT
+- id: ${tc.id}
+- name: ${tc.name}
+- category: ${tc.category}
+- description: ${tc.description ?? "(none)"}
+- setup_instructions: ${tc.setup_instructions ?? "(none)"}
+- spin_count: ${tc.spin_count}
+- existing assertion ids (avoid duplicates): [${existingIds.join(", ")}]
+
+QA INTENT (what the assertion must check, in plain language):
+"""
+${args.intent.trim()}
+"""
+
+SPIN OBJECT SCHEMA — each entry in collector.spins has these fields:
+- id: string (round id)
+- betAmount: number (player wager, 0 for free spins)
+- winAmount: number (total payout, ≥ 0)
+- startingBalance: number | null
+- endingBalance: number
+- isFreeSpin: boolean
+- freeSpinsRemaining: number | null
+- state: string ("NORMAL" | "FREE_SPIN" | "BONUS" | ...)
+- status: string ("RESOLVED" | "PENDING" | ...)
+- timestamp: number (ms epoch)
+
+Also available in scope: \`warnings\` (string[]).
+
+OUTPUT REQUIREMENTS (strict JSON, no markdown fences):
+{
+  "id": "<kebab-case slug, unique within case>",
+  "description": "<one-line English description>",
+  "check_code": "<single JS expression that evaluates truthy when assertion PASSES>"
+}
+
+CHECK_CODE RULES
+- Single expression (no statements, no \`return\`, no semicolons). For multi-step logic use IIFE: (() => { ... return X })()
+- Use === not == ; handle null/undefined explicitly.
+- For FS-specific assertions, filter first: collector.spins.filter(s => s.isFreeSpin === true).every(s => ...)
+- Reference only fields listed in the schema above. Don't invent fields.`;
+
+    let raw: string;
+    try {
+      raw = await askClaude({
+        content: prompt,
+        system: "You generate custom assertions for slot-game test cases. Output strict JSON only.",
+        label: `assertion-gen/${args.caseId.slice(0, 30)}`,
+        maxTurns: 1,
+      });
+    } catch (err) {
+      return { ok: false, reason: `AI generation failed: ${err instanceof Error ? err.message : String(err)}` };
+    }
+    const parsed = extractJsonFromText<{ id?: string; description?: string; check_code?: string }>(raw);
+    if (!parsed || !parsed.id || !parsed.check_code) {
+      return { ok: false, reason: `AI returned unparseable output: ${raw.slice(0, 200)}` };
+    }
+    return {
+      ok: true,
+      assertion: {
+        id: parsed.id.trim(),
+        description: (parsed.description ?? "").trim(),
+        check_code: parsed.check_code.trim(),
+      },
+    };
+  }
+
   async retranslateCase(caseId: string, slugOverride?: string): Promise<{ ok: boolean; actions?: unknown[]; skipReason?: string; reason?: string; aiCalled?: boolean }> {
     const slug = slugOverride ?? this.gameSlug;
     if (!slug) return { ok: false, reason: "gameSlug required (no active session or override)" };

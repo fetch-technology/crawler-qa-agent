@@ -247,6 +247,101 @@ export async function handleManualRoute(
       return sendJson(res, r.ok ? 200 : 400, r), true;
     }
 
+    // POST /api/qa/manual/case { case, gameSlug? }
+    // Add a whole new test case to the catalog. Counterpart to the
+    // assertion-add endpoint but at the case level. Validates id
+    // uniqueness; fills sane defaults for omitted optional fields.
+    if (url === "/api/qa/manual/case" && method === "POST") {
+      const body = await asJsonBody<{ gameSlug?: string; case?: Partial<import("../../ai/test-catalog.js").TestCase> }>(req);
+      if (!body.case?.id || !body.case?.name || !body.case?.category) {
+        return sendJson(res, 400, { error: "case.id + case.name + case.category required" }), true;
+      }
+      const r = await resolveSession(req, body as any, url).addCase(
+        body.case as Parameters<typeof ManualSessionManager.prototype.addCase>[0],
+        body.gameSlug,
+      );
+      return sendJson(res, r.ok ? 200 : 400, r), true;
+    }
+
+    // DELETE /api/qa/manual/case?caseId=...&game=...
+    // Remove case from catalog + drop cached translated actions. Persisted
+    // run results stay (audit trail) but new runs will fail because the
+    // case won't be in catalog anymore — dashboard hides those rows.
+    if (url.startsWith("/api/qa/manual/case") && method === "DELETE" && !url.includes("case-assertion")) {
+      const u = new URL(url, "http://localhost");
+      const caseId = u.searchParams.get("caseId");
+      const game = u.searchParams.get("game") ?? undefined;
+      if (!caseId) return sendJson(res, 400, { error: "caseId query param required" }), true;
+      const r = await resolveSession(req, null, url).deleteCase(caseId, game);
+      return sendJson(res, r.ok ? 200 : 400, r), true;
+    }
+
+    // POST /api/qa/manual/case/generate { intent, gameSlug? }
+    // AI-generate a full TestCase from QA's plain-language intent.
+    // Returns the proposed case WITHOUT saving; UI previews then commits
+    // via POST /case.
+    if (url === "/api/qa/manual/case/generate" && method === "POST") {
+      const body = await asJsonBody<{ intent?: string; gameSlug?: string }>(req);
+      if (!body.intent?.trim()) return sendJson(res, 400, { error: "intent required" }), true;
+      const r = await resolveSession(req, body as any, url).generateCaseWithAi({
+        intent: body.intent,
+        slugOverride: body.gameSlug,
+      });
+      return sendJson(res, r.ok ? 200 : 400, r), true;
+    }
+
+    // POST /api/qa/manual/case-assertion { caseId, assertion, gameSlug? }
+    // Append a NEW custom assertion to a case. Add-only flow — QA design
+    // says no in-place edit, only add + delete, so a bad assertion is
+    // replaced via delete + add (clean audit trail in git history of
+    // test-cases.json).
+    if (url === "/api/qa/manual/case-assertion" && method === "POST") {
+      const body = await asJsonBody<{ caseId?: string; gameSlug?: string; assertion?: { id?: string; description?: string; check_code?: string } }>(req);
+      if (!body.caseId) return sendJson(res, 400, { error: "caseId required" }), true;
+      if (!body.assertion?.id || !body.assertion?.check_code) {
+        return sendJson(res, 400, { error: "assertion.id + assertion.check_code required" }), true;
+      }
+      const r = await resolveSession(req, body as any, url).addCaseAssertion(
+        body.caseId,
+        {
+          id: body.assertion.id,
+          description: body.assertion.description ?? "",
+          check_code: body.assertion.check_code,
+        },
+        body.gameSlug,
+      );
+      return sendJson(res, r.ok ? 200 : 400, r), true;
+    }
+
+    // DELETE /api/qa/manual/case-assertion?caseId=...&assertionId=...&game=...
+    if (url.startsWith("/api/qa/manual/case-assertion") && method === "DELETE") {
+      const u = new URL(url, "http://localhost");
+      const caseId = u.searchParams.get("caseId");
+      const assertionId = u.searchParams.get("assertionId");
+      const game = u.searchParams.get("game") ?? undefined;
+      if (!caseId || !assertionId) {
+        return sendJson(res, 400, { error: "caseId + assertionId query params required" }), true;
+      }
+      const r = await resolveSession(req, null, url).deleteCaseAssertion(caseId, assertionId, game);
+      return sendJson(res, r.ok ? 200 : 400, r), true;
+    }
+
+    // POST /api/qa/manual/case-assertion/generate { caseId, intent, gameSlug? }
+    // AI-generate a new assertion from QA's plain-language intent. Does
+    // NOT save — returns proposed { id, description, check_code } so
+    // the dashboard can preview before commit via POST /case-assertion.
+    if (url === "/api/qa/manual/case-assertion/generate" && method === "POST") {
+      const body = await asJsonBody<{ caseId?: string; intent?: string; gameSlug?: string }>(req);
+      if (!body.caseId) return sendJson(res, 400, { error: "caseId required" }), true;
+      if (!body.intent?.trim()) return sendJson(res, 400, { error: "intent required (plain-language description)" }), true;
+      const r = await resolveSession(req, body as any, url).generateAssertionWithAi({
+        caseId: body.caseId,
+        intent: body.intent,
+        slugOverride: body.gameSlug,
+      });
+      return sendJson(res, r.ok ? 200 : 400, r), true;
+    }
+
     // POST /api/qa/manual/retranslate-case { caseId, gameSlug? } — re-run AI translator for one case
     if (url === "/api/qa/manual/retranslate-case" && method === "POST") {
       const body = await asJsonBody<{ caseId?: string; gameSlug?: string }>(req);

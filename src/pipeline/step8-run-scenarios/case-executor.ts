@@ -2013,6 +2013,82 @@ export async function waitUntilNoSpinResponse(
   return { exitReason: "timeout", elapsedMs: opts.now() - start, spinsCapturedDuringWait: captured, lastGapMs: finalGap };
 }
 
+/** Find a bet-selector CHIP in the registry whose value matches `target`
+ *  within tolerance. Chips are namespaced `<parent>__bet-<value>` where
+ *  parent opens the bet selector popup (typically `bet_settings`,
+ *  `betPlus`, or `betMinus`). Returns chip + parent + optional close
+ *  button so set_bet_to_value can drive the full open→click→close flow.
+ *
+ *  Parent priority (when multiple parents have chips matching target):
+ *    1. bet_settings  — dedicated selector, cleanest UX
+ *    2. betPlus
+ *    3. betMinus
+ *    4. any other prefix
+ *
+ *  Returns null when no chip matches OR the parent key isn't in registry
+ *  (corrupt registry — caller should fall back to ladder strategy). */
+function findBetChip(
+  registry: import("../registry/types.js").UiRegistry,
+  target: number,
+  tolerance: number,
+): {
+  parentKey: string;
+  parent: import("../registry/types.js").UiElement;
+  chipKey: string;
+  chip: import("../registry/types.js").UiElement;
+  closeKey?: string;
+  closeButton?: import("../registry/types.js").UiElement;
+} | null {
+  // Collect all chips: key shape `<prefix>__bet-<number>` where number
+  // is a valid float. Ignore deeper nesting (e.g. tab-inside-popup chips).
+  const chipPattern = /^(.+)__bet-(\d+(?:\.\d+)?)$/;
+  const candidates: Array<{ parentKey: string; chipKey: string; value: number; parent?: import("../registry/types.js").UiElement; chip: import("../registry/types.js").UiElement }> = [];
+  for (const [key, el] of Object.entries(registry)) {
+    if (!el) continue;
+    const m = key.match(chipPattern);
+    if (!m) continue;
+    const parentKey = m[1]!;
+    const value = Number(m[2]);
+    if (!Number.isFinite(value)) continue;
+    if (Math.abs(value - target) > tolerance) continue;
+    candidates.push({
+      parentKey,
+      chipKey: key,
+      value,
+      parent: registry[parentKey],
+      chip: el,
+    });
+  }
+  if (candidates.length === 0) return null;
+  // Prefer parents with `bet_settings` over `betPlus` / `betMinus` /
+  // others. Ties broken by chip-value proximity (smaller diff first).
+  const PARENT_PRIORITY: Record<string, number> = {
+    bet_settings: 1,
+    betPlus: 2,
+    betMinus: 3,
+  };
+  candidates.sort((a, b) => {
+    const pa = PARENT_PRIORITY[a.parentKey] ?? 99;
+    const pb = PARENT_PRIORITY[b.parentKey] ?? 99;
+    if (pa !== pb) return pa - pb;
+    return Math.abs(a.value - target) - Math.abs(b.value - target);
+  });
+  const best = candidates.find((c) => c.parent);
+  if (!best || !best.parent) return null;
+  // Find a closeButton in the same namespace if present. Standard
+  // convention discovered by graph-explorer: `<parent>__closeButton`.
+  const closeKey = `${best.parentKey}__closeButton`;
+  const closeButton = registry[closeKey];
+  return {
+    parentKey: best.parentKey,
+    parent: best.parent,
+    chipKey: best.chipKey,
+    chip: best.chip,
+    closeKey: closeButton ? closeKey : undefined,
+    closeButton: closeButton ?? undefined,
+  };
+}
+
 async function executeAction(
   action: CaseAction,
   ctx: CaseExecutorContext,
@@ -2141,6 +2217,59 @@ async function executeAction(
 
     if (!minus || !plus) throw new Error("set_bet_to_value: betMinus + betPlus required in ui-registry");
 
+    // ─── Strategy 1: direct chip click (popup-style games) ────────────
+    // Many PP slots open a bet selector popup when clicking betPlus/Minus
+    // (or a dedicated bet_settings button). The popup contains chips like
+    // `<parent>__bet-2.80` — clicking ONE chip sets bet exactly. Much
+    // more reliable than ladder + OCR for popup games:
+    //   - no ladder traversal (1 click + close vs 30 clicks)
+    //   - exact target value (no "stuck at ladder gap" guessing)
+    //   - no OCR dependency
+    //
+    // Detection: scan registry for `<prefix>__bet-<n>` chip keys matching
+    // target value within tolerance. Prefer dedicated `bet_settings`
+    // parent over `betPlus`/`betMinus` when multiple match (some games
+    // expose chips under all 3). Returns null when no chip found OR
+    // chip's parent key isn't in registry — fall through to Strategy 2.
+    const chipMatch = findBetChip(ctx.uiMap, target, tolerance);
+    if (chipMatch) {
+      console.log(`[case-action] set_bet_to_value ${target} — direct chip click via ${chipMatch.parentKey} → ${chipMatch.chipKey}`);
+      try {
+        // Click parent trigger to open the selector popup.
+        await ctx.page.mouse.click(chipMatch.parent.x, chipMatch.parent.y);
+        await ctx.page.waitForTimeout(800); // popup render
+        // Click the exact chip.
+        await ctx.page.mouse.click(chipMatch.chip.x, chipMatch.chip.y);
+        await ctx.page.waitForTimeout(400);
+        // Dismiss popup. Prefer registered closeButton in same namespace
+        // (cleaner UX); fall back to Escape (works on PP popups). NOTE
+        // for vs20olympgate-style games where closeButton revertS the
+        // candidate: chip click on PP usually commits IMMEDIATELY, so
+        // close just dismisses the dialog, not the value. If a specific
+        // game inverts this (close = cancel), QA must rely on Strategy 2.
+        if (chipMatch.closeButton) {
+          await ctx.page.mouse.click(chipMatch.closeButton.x, chipMatch.closeButton.y);
+        } else {
+          await ctx.page.keyboard.press("Escape");
+        }
+        await ctx.page.waitForTimeout(500);
+        console.log(`[case-action] set_bet_to_value ${target} — chip click done (parent=${chipMatch.parentKey}, close=${chipMatch.closeButton ? "via " + chipMatch.closeKey : "via Escape"})`);
+        return;
+      } catch (err) {
+        console.warn(`[case-action] set_bet_to_value ${target}: chip click path threw (${err instanceof Error ? err.message : String(err)}) — falling through to OCR ladder`);
+        // Best-effort: try to dismiss any half-open popup before falling
+        // through, so OCR-based ladder loop doesn't operate inside an
+        // open popup.
+        try { await ctx.page.keyboard.press("Escape"); await ctx.page.waitForTimeout(400); } catch { /* ignore */ }
+      }
+    } else {
+      console.log(`[case-action] set_bet_to_value ${target} — no matching chip in registry; using OCR ladder strategy`);
+    }
+
+    // ─── Strategy 2: OCR-verified ladder loop ─────────────────────────
+    // Direct-adjust games (no popup, betPlus/betMinus just nudges value)
+    // OR popup games where target value isn't in the chip set fall here.
+    // Reads bet OCR after each +/- click; stops when value matches target.
     // Need OCR betArea to verify; else fallback to set_bet_to_min behavior.
     if (!ctx.gameSlug) {
       console.warn(`[case-action] set_bet_to_value ${target}: no gameSlug — clicking betMinus 20× as fallback`);

@@ -75,6 +75,36 @@ export async function loadAiCatalog(slug: string): Promise<TestCaseCatalog | nul
   }
 }
 
+/** Load the RAW on-disk catalog without the built-in cases injected.
+ *  Used when QA edits the catalog (add/remove assertions) — we must not
+ *  persist the built-in cases (they're synthesized at load time +
+ *  duplicated entries would compound on every save). */
+export async function loadRawCatalog(slug: string): Promise<TestCaseCatalog | null> {
+  const { readFile } = await import("node:fs/promises");
+  const path = await import("node:path");
+  const { dirForGame } = await import("../registry/paths.js");
+  const file = path.join(dirForGame(slug), CATALOG_FILE);
+  try {
+    const raw = await readFile(file, "utf8");
+    return JSON.parse(raw) as TestCaseCatalog;
+  } catch {
+    return null;
+  }
+}
+
+/** Persist a catalog back to disk. Used by QA editing flows (add/delete
+ *  assertion). Caller MUST pass the raw catalog (loadRawCatalog) — saving
+ *  a load() result would bake in synthetic built-in cases. */
+export async function saveCatalog(slug: string, catalog: TestCaseCatalog): Promise<string> {
+  const path = await import("node:path");
+  const { dirForGame } = await import("../registry/paths.js");
+  const dir = dirForGame(slug);
+  await mkdir(dir, { recursive: true });
+  const filePath = path.join(dir, CATALOG_FILE);
+  await writeFile(filePath, JSON.stringify(catalog, null, 2) + "\n", "utf8");
+  return filePath;
+}
+
 export async function generateAiCatalog(input: AiCatalogInput): Promise<AiCatalogOutput> {
   // Parse all captured spin responses into NormalizedSpinResult[] so we can derive
   // bet_mechanics + sample_spin_response_shape.

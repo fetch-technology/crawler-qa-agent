@@ -221,12 +221,34 @@ export function extractPinnedBetAmount(
   for (const a of customAssertions) {
     const code = a.check_code;
     if (!code) continue;
+    // Skip free-spin invariant assertions. Free-spin rounds have bet=0
+    // (server doesn't debit the wallet on FS), so the catalog often writes
+    // `.filter(s => s.isFreeSpin).every(s => s.betAmount === 0)` to verify
+    // that invariant. That's a CHECK on FS rounds, NOT a setup hint for
+    // the player-controllable bet. Without this guard, the regex below
+    // greedily matched `betAmount === 0` and translator injected
+    // `set_bet_to_value{value:0}` (no game has 0 as a settable bet),
+    // breaking every FS-watcher case. Detect via FS-filter keyword anywhere
+    // in the assertion code.
+    if (/isFreeSpin|free[\s_]?spin/i.test(code)) continue;
     // Pattern 1: <id>.betAmount === 7.00 / <id>.betAmount == 7
     const eqMatch = code.match(/\b[A-Za-z_$][\w$]*\.betAmount\s*===?\s*(\d+(?:\.\d+)?)/);
-    if (eqMatch) return Number(eqMatch[1]);
+    if (eqMatch) {
+      const v = Number(eqMatch[1]);
+      // Defensive: any assertion that pinned bet=0 outside of FS context
+      // is still invalid. Slot bet ladders never include 0 — minimum is
+      // betMin (typically 0.20). Treat 0 as "no useful pin" and let the
+      // translator fall back to set_bet_to_min.
+      if (v > 0) return v;
+      continue;
+    }
     // Pattern 2: Math.abs(<id>.betAmount - 7.00) <= 0.01
     const absMatch = code.match(/Math\.abs\(\s*\b[A-Za-z_$][\w$]*\.betAmount\s*-\s*(\d+(?:\.\d+)?)/);
-    if (absMatch) return Number(absMatch[1]);
+    if (absMatch) {
+      const v = Number(absMatch[1]);
+      if (v > 0) return v;
+      continue;
+    }
   }
   return null;
 }
