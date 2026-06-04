@@ -1,5 +1,7 @@
 import { query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import type Anthropic from "@anthropic-ai/sdk";
+import { getCurrentClaudeToken, getCurrentQaHash } from "../server/request-context.js";
+import { logUsage } from "../server/usage-log.js";
 
 const USAGE_EXHAUSTED_PATTERNS = [
   /you'?re out of extra usage/i,
@@ -7,6 +9,65 @@ const USAGE_EXHAUSTED_PATTERNS = [
   /rate limit/i,
   /quota exceeded/i,
 ];
+
+/** Thrown by askClaude when neither a per-request token (X-Claude-Token
+ *  header) nor the master env-var fallback is configured. HTTP route
+ *  handlers catch this and return 401 with a clear "set your token"
+ *  message so the dashboard can prompt the QA to paste theirs. */
+export class MissingClaudeTokenError extends Error {
+  constructor() {
+    super("No Claude token available — set your token in the dashboard (sent as X-Claude-Token header) or configure CLAUDE_CODE_OAUTH_TOKEN / ANTHROPIC_API_KEY in .env");
+    this.name = "MissingClaudeTokenError";
+  }
+}
+
+/** Validate a Claude token's format without calling the API. PP/Anthropic
+ *  OAuth tokens start with `sk-ant-oat01-` and API keys start with
+ *  `sk-ant-api03-`. We accept both. Cheap pre-check used by the dashboard
+ *  to reject obviously-malformed input without burning an API call. */
+export function isValidClaudeTokenFormat(token: string): boolean {
+  return /^sk-ant-(oat\d+|api\d+)-[A-Za-z0-9_-]{32,}$/.test(token.trim());
+}
+
+/** Resolve the Claude token to use for the NEXT API call. Per-request
+ *  context (set by HTTP middleware from X-Claude-Token) takes priority;
+ *  master env var is the fallback for CLI mode + backward compat.
+ *  Returns null when neither is available. */
+function resolveClaudeToken(): string | null {
+  const ctxToken = getCurrentClaudeToken();
+  if (ctxToken) return ctxToken;
+  return process.env.CLAUDE_CODE_OAUTH_TOKEN ?? process.env.ANTHROPIC_API_KEY ?? null;
+}
+
+/** Build the env object passed to the agent SDK's spawn so we can inject
+ *  the per-QA token WITHOUT mutating the shared process.env (which would
+ *  race across concurrent requests). Copies process.env then overrides
+ *  CLAUDE_CODE_OAUTH_TOKEN with the resolved token. */
+function buildClaudeEnv(token: string): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (typeof v === "string") env[k] = v;
+  }
+  env.CLAUDE_CODE_OAUTH_TOKEN = token;
+  // If master used ANTHROPIC_API_KEY, the agent SDK uses CLAUDE_CODE_OAUTH_TOKEN
+  // preferentially — clearing ANTHROPIC_API_KEY avoids ambiguity.
+  delete env.ANTHROPIC_API_KEY;
+  return env;
+}
+
+/** Replace any sk-ant-* token in a string with a masked form so it can be
+ *  safely logged. Preserves the token's prefix + last 4 chars for triage
+ *  ("which token failed?") without leaking the secret. Used in stderr
+ *  capture + error.message scrubbing before console.log / disk writes.
+ *
+ * Example:  "auth failed: sk-ant-oat01-WKtc...AAAA" → "auth failed: sk-ant-oat01-***AAAA" */
+export function scrubClaudeToken(text: string): string {
+  return text.replace(/sk-ant-(oat\d+|api\d+)-[A-Za-z0-9_-]{16,}/g, (m) => {
+    const tail = m.slice(-4);
+    const head = m.split("-").slice(0, 3).join("-"); // e.g. "sk-ant-oat01"
+    return `${head}-***${tail}`;
+  });
+}
 
 function isUsageExhaustedMessage(text: string): boolean {
   return USAGE_EXHAUSTED_PATTERNS.some((p) => p.test(text));
@@ -56,8 +117,9 @@ export async function askClaude(args: {
   /** Optional per-call timeout override (ms). */
   timeoutMs?: number;
 }): Promise<string> {
-  if (!process.env.CLAUDE_CODE_OAUTH_TOKEN && !process.env.ANTHROPIC_API_KEY) {
-    throw new Error("Thiếu CLAUDE_CODE_OAUTH_TOKEN (hoặc ANTHROPIC_API_KEY) trong .env");
+  const token = resolveClaudeToken();
+  if (!token) {
+    throw new MissingClaudeTokenError();
   }
 
   const sizing = approximateTokens(args.content, args.system);
@@ -65,6 +127,11 @@ export async function askClaude(args: {
   console.log(
     `[${label}] sending prompt: ${sizing.promptChars} chars (+${sizing.systemChars} system) ≈ ${sizing.estTokens} tokens`,
   );
+  // Capture qaHash + call start once so both success + failure paths log
+  // under the same identity / timing. "master" when no QA token in context.
+  const qaHash = getCurrentQaHash() ?? "master";
+  const callStartedAt = new Date().toISOString();
+  const startMs = performance.now();
 
   // Buffer stderr from the spawned Claude Code child process so we can surface
   // the actual cause if the child dies (rate_limit, max_tokens, auth, etc).
@@ -83,9 +150,13 @@ export async function askClaude(args: {
       systemPrompt: args.system,
       includePartialMessages: false,
       debug: debugMode,
+      // Per-call env so per-QA tokens don't race via shared process.env.
+      // SDK spawns a subprocess with this env; parent process.env stays
+      // untouched. Master fallback when context didn't carry a token.
+      env: buildClaudeEnv(token),
       stderr: (chunk: string) => {
         stderrBuf.push(chunk);
-        if (debugMode) process.stderr.write(`[${label}/stderr] ${chunk}`);
+        if (debugMode) process.stderr.write(`[${label}/stderr] ${scrubClaudeToken(chunk)}`);
       },
     },
   });
@@ -115,15 +186,38 @@ export async function askClaude(args: {
   }
 
   if (timedOut && !caught) {
+    // Log the failed call before throwing — QAs should see timeouts in
+    // their usage panel so they can spot if a particular phase is OOM /
+    // looping. Fire-and-forget; logUsage swallows its own errors.
+    void logUsage({
+      at: callStartedAt,
+      qaHash,
+      label,
+      estInputTokens: sizing.estTokens,
+      estOutputTokens: Math.round(text.length / 3.5),
+      outputChars: text.length,
+      durationMs: Math.round(performance.now() - startMs),
+      ok: false,
+    });
     throw new Error(
       `[${label}] Claude request timeout after ${timeoutMs}ms. Set QA_CLAUDE_TIMEOUT_MS or pass askClaude({ timeoutMs }) to adjust.`,
     );
   }
 
   if (caught) {
-    const stderrText = stderrBuf.join("").trim();
+    void logUsage({
+      at: callStartedAt,
+      qaHash,
+      label,
+      estInputTokens: sizing.estTokens,
+      estOutputTokens: Math.round(text.length / 3.5),
+      outputChars: text.length,
+      durationMs: Math.round(performance.now() - startMs),
+      ok: false,
+    });
+    const stderrText = scrubClaudeToken(stderrBuf.join("").trim());
     const tail = stderrText.length > 2000 ? "…" + stderrText.slice(-2000) : stderrText;
-    const baseMsg = (caught as Error).message ?? String(caught);
+    const baseMsg = scrubClaudeToken((caught as Error).message ?? String(caught));
     if (isUsageExhaustedMessage(baseMsg) || isUsageExhaustedMessage(stderrText)) {
       throw new Error(
         `[${label}] Claude usage exhausted. Refill quota/token or switch model before rerun.`,
@@ -139,15 +233,36 @@ export async function askClaude(args: {
 
   // No throw but empty response — also dump stderr for diagnosis.
   if (!text.trim() && stderrBuf.length > 0) {
-    const stderrText = stderrBuf.join("").trim();
+    const stderrText = scrubClaudeToken(stderrBuf.join("").trim());
     console.warn(`[${label}] empty response. stderr tail:\n${stderrText.slice(-1000)}`);
   }
 
   if (isUsageExhaustedMessage(text)) {
+    void logUsage({
+      at: callStartedAt,
+      qaHash,
+      label,
+      estInputTokens: sizing.estTokens,
+      estOutputTokens: Math.round(text.length / 3.5),
+      outputChars: text.length,
+      durationMs: Math.round(performance.now() - startMs),
+      ok: false,
+    });
     throw new Error(
       `[${label}] Claude usage exhausted. Refill quota/token or switch model before rerun.`,
     );
   }
+
+  void logUsage({
+    at: callStartedAt,
+    qaHash,
+    label,
+    estInputTokens: sizing.estTokens,
+    estOutputTokens: Math.round(text.length / 3.5),
+    outputChars: text.length,
+    durationMs: Math.round(performance.now() - startMs),
+    ok: true,
+  });
 
   return text;
 }

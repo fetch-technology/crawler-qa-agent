@@ -125,6 +125,12 @@ export function inferProbeKind(uiKey: string): ProbeKind | null {
     case "historyButton": return "historyButton";
     case "buyBonusButton": return "buyBonusButton";
     case "autoButton": return "autoButton";
+    // anteButton uses genericToggle path: click → verify pixel change →
+    // click again to restore. Probe leaves ante state unchanged (so my
+    // normalize step downstream can enforce OFF cleanly). Treated as a
+    // toggle despite the "Button" suffix because that's how every PP
+    // slot exposes it.
+    case "anteButton": return "genericToggle";
   }
   // Generic patterns for top-level auto-added extras (sound_toggle,
   // special_bets_toggle, ambient_toggle, …). These have no dedicated probe
@@ -288,15 +294,24 @@ export async function probeElement(
           };
 
           // Capture both: bet-readout OCR (for numeric compare) +
-          // full-screen buffer (for popup-detection pixel-diff fallback).
+          // full-screen buffer (for popup-detection pixel-diff fallback) +
+          // bet-readout REGION buffer (for OCR-free digit-flip detection
+          // in direct-adjust games that don't open a popup).
           let beforeBet: number | null = null;
           let beforeFullBuf: Buffer | null = null;
+          let beforeRegionBuf: Buffer | null = null;
           try {
             const ocr = await ocrRegion(page, region);
             beforeBet = parseNumericFromOcr(ocr.text);
           } catch {}
           try {
             beforeFullBuf = await page.screenshot({ type: "png" });
+          } catch {}
+          try {
+            beforeRegionBuf = await page.screenshot({
+              type: "png",
+              clip: { x: region.x, y: region.y, width: region.w, height: region.h },
+            });
           } catch {}
 
           const resp = page.waitForResponse(
@@ -342,6 +357,28 @@ export async function probeElement(
               } catch {}
             }
 
+            // (C2) Region pixel diff — bet readout area pixels changed
+            // WITHOUT any popup opening. Catches direct-adjust games (no
+            // popup, no saveSettings.do, OCR fails to parse digits) where
+            // clicking bet button just flips digits in-place. A typical
+            // digit flip (e.g. $0.40 → $0.20) changes ~3-10% of the
+            // 220×60 region. 3% threshold safely above ambient noise
+            // (<1%) and below real digit change (≥5%).
+            // Gate on !popupDetected so popup cases route through (B)/(D).
+            let regionPixDiff = 0;
+            if (!signal && beforeRegionBuf && !popupDetected) {
+              try {
+                const afterRegionBuf = await page.screenshot({
+                  type: "png",
+                  clip: { x: region.x, y: region.y, width: region.w, height: region.h },
+                });
+                regionPixDiff = await bufferPixelDiff(beforeRegionBuf, afterRegionBuf);
+                if (regionPixDiff > 0.03) {
+                  signal = `betReadoutPixDiff:${(regionPixDiff * 100).toFixed(1)}%`;
+                }
+              } catch {}
+            }
+
             // (D) Substantial full-screen pixel diff WITH bet-ladder
             // evidence in the popup text. Tightened 2026-06-03 after
             // false-positive observation: clicking menuButton (or any
@@ -376,7 +413,8 @@ export async function probeElement(
             console.log(
               `[probe/bet] ${kind} offset ${i} (click=${x},${y}): ` +
               `signal=${signal ?? "none"} popup=${popupDetected ? (popupHit ?? "no-kw") : "no"} ` +
-              `bet=${beforeBet}->${afterBet} fullPixDiff=${(pixDiff * 100).toFixed(1)}% ladderHits=${ladderHits}`,
+              `bet=${beforeBet}->${afterBet} regionPixDiff=${(regionPixDiff * 100).toFixed(1)}% ` +
+              `fullPixDiff=${(pixDiff * 100).toFixed(1)}% ladderHits=${ladderHits}`,
             );
           }
           break;

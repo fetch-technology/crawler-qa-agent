@@ -41,6 +41,15 @@ export type UiElement = {
    *  descendant clicks on namespaced children (`parentKey__child`) target
    *  the same tab until it's closed. */
   externalPage?: boolean;
+  /** PNG baseline crop of the element in its known-OFF state — captured
+   *  by ante-normalize after enforcing ante OFF during Discover. Used by
+   *  runtime ensure_ante_off lambda (Tier 2 pixel diff) and by discover-
+   *  time pre-snapshot guards to detect accidental drift. Stored as a
+   *  relative path (e.g. "ante-baseline.png" under the game's fixtures
+   *  dir); empty/undefined when not captured. Currently only meaningful
+   *  for anteButton — defining at element level for future flexibility
+   *  (e.g. doubleChance toggle could reuse). */
+  offBaseline?: string;
 };
 
 export type UiRegistry = {

@@ -571,6 +571,58 @@ export async function handleManualRoute(
       return sendJson(res, r.ok ? 200 : 400, r), true;
     }
 
+    // GET /api/qa/manual/usage?days=7
+    // Aggregate AI usage for the current QA (identified by qaHash from
+    // the X-Claude-Token header → request context). Returns null hash
+    // and zero counts when no token in context — dashboard renders a
+    // "set your token first" hint instead of a meaningless table.
+    if (url.startsWith("/api/qa/manual/usage") && method === "GET") {
+      const { getCurrentQaHash } = await import("../../server/request-context.js");
+      const { aggregateUsage } = await import("../../server/usage-log.js");
+      const qaHash = getCurrentQaHash();
+      // Parse `days` from query (default 1 = today only, max 30 to keep
+      // worst-case scan O(small) — JSONL parse for 30 days × ~100 rows = trivial).
+      let days = 1;
+      try {
+        const u = new URL(url, "http://localhost");
+        const raw = Number(u.searchParams.get("days") ?? "1");
+        if (Number.isFinite(raw)) days = Math.min(30, Math.max(1, Math.floor(raw)));
+      } catch { /* ignore */ }
+      if (!qaHash) {
+        return sendJson(res, 200, { qaHash: null, days, summary: null, hint: "Set your Claude token in the dashboard to see your usage." }), true;
+      }
+      const summary = await aggregateUsage(qaHash, days);
+      return sendJson(res, 200, { qaHash, days, summary }), true;
+    }
+
+    // POST /api/qa/manual/game-error/clear — acknowledge + clear the
+    // recorded game-engine error banner. QA calls this after reloading
+    // the game URL so the dashboard banner goes away + Resume button
+    // re-enables. Returns updated session status.
+    if (url === "/api/qa/manual/game-error/clear" && method === "POST") {
+      const sess = resolveSession(req, null, url);
+      sess.clearGameError();
+      return sendJson(res, 200, { ok: true, status: sess.status() }), true;
+    }
+
+    // POST /api/qa/manual/validate-token { token }
+    // Stateless format check for Claude tokens. Returns { ok, format }.
+    // No API ping — keep cheap so dashboard can verify on every modal
+    // save without burning AI cost. Pairs with isValidClaudeTokenFormat
+    // in src/ai/claude.ts (same regex). Doesn't touch session state or
+    // persist anything; client decides whether to store.
+    if (url === "/api/qa/manual/validate-token" && method === "POST") {
+      const body = await asJsonBody<{ token?: string }>(req);
+      const token = typeof body?.token === "string" ? body.token.trim() : "";
+      const { isValidClaudeTokenFormat } = await import("../../ai/claude.js");
+      const ok = isValidClaudeTokenFormat(token);
+      return sendJson(res, 200, {
+        ok,
+        format: ok ? "valid" : "invalid",
+        reason: ok ? undefined : "Token must match sk-ant-(oat|api)##-... pattern with ≥32-char suffix",
+      }), true;
+    }
+
     // POST /api/qa/manual/auto-onboard/pause — request a cooperative
     // pause. Server marks the flag + responds immediately; the running
     // autoOnboard checks between phases and exits cleanly after the
@@ -769,6 +821,22 @@ export async function handleManualRoute(
         body.key as typeof allowedKeys[number],
         { x: body.x, y: body.y, width: body.width, height: body.height },
       );
+      return sendJson(res, r.ok ? 200 : 400, r), true;
+    }
+
+    // DELETE /api/qa/manual/ocr-regions/proposed?key=balanceArea
+    // Reject a pending proposal — removes it from ocr-regions.proposed.json
+    // without saving it. Used by the dashboard's "Reject" button on
+    // pending review rows. Distinct from the DELETE-ocr-regions endpoint
+    // below which removes a SAVED region.
+    if (url.startsWith("/api/qa/manual/ocr-regions/proposed") && method === "DELETE") {
+      const u = new URL(url, "http://localhost");
+      const key = u.searchParams.get("key");
+      const allowedKeys = ["balanceArea", "betArea", "winArea", "freeSpinCounter"] as const;
+      if (!key || !(allowedKeys as readonly string[]).includes(key)) {
+        return sendJson(res, 400, { error: `key must be one of ${allowedKeys.join("|")}` }), true;
+      }
+      const r = await resolveSession(req, null, url).rejectOcrProposal(key as typeof allowedKeys[number]);
       return sendJson(res, r.ok ? 200 : 400, r), true;
     }
 

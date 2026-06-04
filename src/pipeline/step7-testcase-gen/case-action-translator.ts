@@ -36,7 +36,13 @@ export type CaseAction =
       quietMs?: number;
       maxMs?: number;
       reason?: string;
-    };
+    }
+  // Force ante toggle OFF before the case proceeds. Idempotent — uses
+  // pixel-diff vs offBaseline captured during Discover. Auto-prepended
+  // to every case by the translator when the registry has anteButton
+  // with offBaseline set. No-op when game has no ante feature. Failing
+  // this lambda fails the whole case (default bet semantics broken).
+  | { kind: "ensure_ante_off"; reason?: string };
 
 export type TranslatedCase = {
   caseId: string;
@@ -379,6 +385,7 @@ export async function translateCase(input: {
       ? { kind: "set_bet_to_value", value: pinnedBet, reason: `assertion pins betAmount=${pinnedBet}` }
       : { kind: "set_bet_to_min" };
     const actions: CaseAction[] = [
+      ...maybeAntePreamble(input.uiMap),
       betAnchor,
       { kind: "wait_ms", ms: 800 },
     ];
@@ -496,7 +503,27 @@ export async function translateCase(input: {
     }
   }
 
+  // Auto-prepend ensure_ante_off when game has ante. Idempotent — when
+  // registry lacks anteButton this is a no-op step at runtime. Inserted
+  // AFTER the spin-policy/bet-anchor safety nets so the bet anchor still
+  // runs second (semantic order: ante off → bet level → spin). Skip if
+  // case already has one (e.g. AI emitted it explicitly).
+  const preamble = maybeAntePreamble(input.uiMap);
+  if (preamble.length > 0 && !parsed.actions.some((a) => a.kind === "ensure_ante_off")) {
+    parsed.actions.unshift(...preamble);
+  }
+
   return { caseId: input.caseId, actions: parsed.actions, aiCalled: true };
+}
+
+/** Returns `[{kind:"ensure_ante_off"}]` when the registry has an
+ *  anteButton; otherwise empty. Inserted as the first action of every
+ *  translated case so bet-level assertions hold (ante ON inflates the
+ *  bet by ~25%). Cheap no-op at runtime when the game doesn't have
+ *  ante — the case-executor early-returns on missing anteButton. */
+function maybeAntePreamble(uiMap: UiRegistry): CaseAction[] {
+  if (!uiMap || !uiMap.anteButton) return [];
+  return [{ kind: "ensure_ante_off", reason: "force ante OFF — bet assertions assume base wager" }];
 }
 
 /**

@@ -2077,6 +2077,26 @@ async function executeAction(
     await ctx.page.mouse.click(sb.x, sb.y);
     return;
   }
+  if (action.kind === "ensure_ante_off") {
+    // Idempotent ante-OFF enforcement. No-op when registry has no
+    // anteButton (game without ante feature). Uses pixel-diff vs
+    // baseline captured during Discover; clicks once + re-verifies
+    // when drifted. Failure throws so the case fails fast — bet
+    // semantics are wrong if ante slipped ON.
+    if (!ctx.gameSlug || !ctx.uiMap.anteButton) {
+      console.log(`[case-action] ensure_ante_off — SKIP (no anteButton in registry)`);
+      return;
+    }
+    console.log(`[case-action] ensure_ante_off — preamble check (case=${ctx.gameSlug})`);
+    const { ensureAnteOff } = await import("../step2-detect-ui/ante-normalize.js");
+    const r = await ensureAnteOff(ctx.page, ctx.gameSlug, ctx.uiMap);
+    if (!r.ok) {
+      console.log(`[case-action] ensure_ante_off — ❌ FAIL: ${r.reason ?? "unknown"}`);
+      throw new Error(`ensure_ante_off failed: ${r.reason ?? "unknown"} — bet semantics will be wrong; aborting case`);
+    }
+    console.log(`[case-action] ensure_ante_off — ✅ ${r.wasOff ? "already OFF" : `toggled ${r.toggledCount}× back to OFF`}`);
+    return;
+  }
   if (action.kind === "set_bet_to_min") {
     const minus = ctx.uiMap.betMinus;
     if (!minus) throw new Error("betMinus not in registry");
@@ -2726,6 +2746,7 @@ function describeActionTarget(action: CaseAction): string | undefined {
     case "wait_ms": return `${action.ms}ms`;
     case "spin": return undefined;
     case "set_bet_to_value": return `${action.value}`;
+    case "ensure_ante_off": return "anteButton";
     case "wait_until_state": return action.state;
     case "wait_until_network_idle": return action.idleMs ? `idle≥${action.idleMs}ms` : undefined;
     case "wait_until_pixel_stable": return action.consecutiveStable ? `stable=${action.consecutiveStable}` : undefined;

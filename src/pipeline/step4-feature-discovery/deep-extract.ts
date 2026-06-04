@@ -25,6 +25,27 @@ import { dirForGame } from "../registry/paths.js";
 import type { Paytable, UiRegistry } from "../registry/types.js";
 import { paytable as paytableStore } from "../registry/paytable.js";
 import { detectAnyPopup } from "../utils/ocr-popup.js";
+import { PNG } from "pngjs";
+
+/** Lightweight pixel-diff used to detect "did scrolling actually move
+ *  popup content?". Returns 0..1 fraction of pixels differing by ≥30
+ *  combined RGB delta. Identical dims required. */
+function quickPngDiff(a: Buffer, b: Buffer): number {
+  const pa = PNG.sync.read(a);
+  const pb = PNG.sync.read(b);
+  if (pa.width !== pb.width || pa.height !== pb.height) return 1;
+  const total = pa.width * pa.height;
+  if (total === 0) return 0;
+  let diff = 0;
+  for (let p = 0; p < total; p++) {
+    const i = p * 4;
+    const dr = Math.abs(pa.data[i]! - pb.data[i]!);
+    const dg = Math.abs(pa.data[i + 1]! - pb.data[i + 1]!);
+    const db = Math.abs(pa.data[i + 2]! - pb.data[i + 2]!);
+    if (dr + dg + db > 30) diff++;
+  }
+  return diff / total;
+}
 
 export type DeepExtractResult = {
   paytableMd: string | null;
@@ -289,22 +310,49 @@ async function extractPaytablePaginated(
     prevSymbolCount = symCount;
 
     const pg = parsed?.pagination;
-    if (!pg?.hasNextPage) break; // AI sees no/greyed next arrow → last page
+    const aiNext = pg?.nextButton;
+    const clickAt = (pg?.hasNextPage)
+      ? (registryNext
+        ?? (aiNext && typeof aiNext.x === "number" && typeof aiNext.y === "number" ? aiNext : null))
+      : null;
 
-    // Click coord: QA-verified registry button preferred; AI coord as fallback.
-    const aiNext = pg.nextButton;
-    const clickAt = registryNext
-      ?? (aiNext && typeof aiNext.x === "number" && typeof aiNext.y === "number" ? aiNext : null);
-    if (!clickAt) break; // nowhere reliable to click
-
-    const src = registryNext ? "registry" : "ai-vision";
-    console.log(`[deep-extract/paytable] page ${p + 1}${pg.pageLabel ? ` (${pg.pageLabel})` : ""} → next via ${src} @ (${clickAt.x},${clickAt.y})`);
-    try {
-      await page.mouse.click(clickAt.x, clickAt.y);
-      await page.waitForTimeout(1200); // page transition
-    } catch (err) {
-      console.warn(`[deep-extract/paytable] next-page click failed: ${err instanceof Error ? err.message : String(err)}`);
-      break;
+    if (clickAt) {
+      // Button-based pagination: click next + wait for transition.
+      const src = registryNext ? "registry" : "ai-vision";
+      console.log(`[deep-extract/paytable] page ${p + 1}${pg!.pageLabel ? ` (${pg!.pageLabel})` : ""} → next via ${src} @ (${clickAt.x},${clickAt.y})`);
+      try {
+        await page.mouse.click(clickAt.x, clickAt.y);
+        await page.waitForTimeout(1200);
+      } catch (err) {
+        console.warn(`[deep-extract/paytable] next-page click failed: ${err instanceof Error ? err.message : String(err)}`);
+        break;
+      }
+    } else {
+      // No next button → try scroll-based pagination. Some games render
+      // a single tall paytable popup that user wheels through (no
+      // button). Mouse-wheel at popup center; if content shifts > 3%
+      // pixels, treat as a new "page" and re-extract. Stop on first
+      // scroll that produces no change (= reached bottom OR no scroll
+      // support).
+      const vp = page.viewportSize() ?? { width: 1280, height: 720 };
+      try {
+        await page.mouse.move(Math.round(vp.width / 2), Math.round(vp.height / 2));
+        // Scroll roughly one viewport-third. Larger than typical bet
+        // readout change but small enough to leave overlap → AI sees
+        // continuation context, not just a fresh page.
+        await page.mouse.wheel(0, Math.round(vp.height * 0.45));
+        await page.waitForTimeout(800);
+        const after = await page.screenshot({ type: "png", fullPage: false });
+        const scrollDiff = quickPngDiff(buf, after);
+        if (scrollDiff < 0.03) {
+          console.log(`[deep-extract/paytable] page ${p + 1} → no next button + scroll diff=${(scrollDiff * 100).toFixed(1)}% → end of content`);
+          break;
+        }
+        console.log(`[deep-extract/paytable] page ${p + 1} → scrolled (diff=${(scrollDiff * 100).toFixed(1)}%), continuing extraction`);
+      } catch (err) {
+        console.warn(`[deep-extract/paytable] scroll attempt failed: ${err instanceof Error ? err.message : String(err)}`);
+        break;
+      }
     }
   }
 

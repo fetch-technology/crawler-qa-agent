@@ -4,6 +4,7 @@ import { join, extname, normalize } from "node:path";
 import { config as loadEnv } from "dotenv";
 import { handleQaRoute } from "../pipeline/server/qa-routes.js";
 import { handleManualRoute } from "../pipeline/server/manual-routes.js";
+import { requestContext } from "./request-context.js";
 
 loadEnv();
 
@@ -78,6 +79,46 @@ const server = createServer(async (req, res) => {
   const url = req.url ?? "/";
   const method = req.method ?? "GET";
 
+  // Per-request Claude token context. Reads X-Claude-Token header (sent
+  // by dashboard JS from QA's localStorage). All async work inside this
+  // handler — including AI calls in nested phase fns — sees the same
+  // token via getCurrentClaudeToken(). When the header is absent (CLI,
+  // testing, or QA hasn't set token yet), getCurrentClaudeToken returns
+  // null and askClaude falls back to process.env CLAUDE_CODE_OAUTH_TOKEN.
+  const rawHeader = req.headers["x-claude-token"];
+  const claudeToken = (typeof rawHeader === "string" && rawHeader.trim())
+    ? rawHeader.trim()
+    : null;
+  // Hash the token (first 8 chars of sha256) for usage attribution. Don't
+  // log the raw token anywhere. Phase 5 surfaces this in usage logs.
+  let qaHash: string | null = null;
+  if (claudeToken) {
+    const { createHash } = await import("node:crypto");
+    qaHash = createHash("sha256").update(claudeToken).digest("hex").slice(0, 8);
+  }
+  await requestContext.run({ claudeToken, qaHash }, async () => {
+    try {
+      await routeRequest(req, res, url, method);
+    } catch (err) {
+      // Centralize token-error handling. MissingClaudeTokenError thrown
+      // by askClaude when neither header nor master env has a token →
+      // surface as 401 so the dashboard's api() helper detects it +
+      // re-prompts QA to paste their token. Other errors fall through
+      // to generic 500. Response written here only if route hasn't
+      // already responded.
+      const msg = err instanceof Error ? err.message : String(err);
+      const isTokenError = /No Claude token available|MissingClaudeTokenError/i.test(msg);
+      if (!res.headersSent) {
+        res.writeHead(isTokenError ? 401 : 500, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: msg }));
+      } else {
+        console.error(`[server] unhandled error after headers sent: ${msg}`);
+      }
+    }
+  });
+});
+
+async function routeRequest(req: import("node:http").IncomingMessage, res: ServerResponse, url: string, method: string): Promise<void> {
   // --- Pipeline routes (/api/qa/*) — cold/warm start + task streaming + runs ---
   if (await handleQaRoute(req, res, url, method)) return;
 
@@ -115,7 +156,7 @@ const server = createServer(async (req, res) => {
 
   res.writeHead(404, { "content-type": "text/plain" });
   res.end("not found");
-});
+}
 
 server.listen(PORT, () => {
   console.log(`\n  crawler-qa-agent dashboard`);

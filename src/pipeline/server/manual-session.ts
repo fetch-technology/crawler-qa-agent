@@ -48,6 +48,7 @@ import { pragmaticProvider } from "../../adapters/providers/pragmatic.js";
 import { dirForGame } from "../registry/paths.js";
 import { diffVsBaseline, regionAround } from "../utils/pixel-diff/index.js";
 import { dismissPopupsLoop, detectAnyPopup, detectDarkOverlay, isFreeSpinChainActive, SUBSTATE_POPUP_KEYWORDS } from "../utils/ocr-popup.js";
+import { normalizeAnteOff, verifyAnteOff, ensureAnteOff } from "../step2-detect-ui/ante-normalize.js";
 import { resolvePopupKeywords } from "../registry/popup-keywords.js";
 import { resolveSubStateHints, SUB_STATE_HINTS_DEFAULTS, interpolateSliderStops, type SubStateHint } from "../registry/sub-state-hints.js";
 import { readFile, writeFile } from "node:fs/promises";
@@ -146,6 +147,17 @@ export type SessionStatus = {
    *  QA chose to pin. Shown on dashboard so QA sees which values are
    *  manual vs auto-captured. */
   gameSpecOverride: import("../registry/game-spec-override.js").GameSpecOverride | null;
+  /** Last detected game-engine error (e.g. PP "Internal server error.
+   *  The game will be restarted." modal). Cleared when QA acknowledges
+   *  via the dashboard banner. Null when no error active. Surfaces in
+   *  a session-level banner so QA knows to refresh the game URL +
+   *  resume — automation can't recover on its own. */
+  gameError: {
+    site: string;
+    matchedKeywords: string[];
+    detectedText: string;
+    detectedAt: string;
+  } | null;
 };
 
 export type SubStateSuggestion = {
@@ -340,6 +352,12 @@ export class ManualSessionManager {
    *  autoOnboard 5 times in a row, last 4 overwriting the first's results.
    *  Set when work begins, cleared in finally. Re-entries return 409. */
   private autoOnboardInProgress = false;
+  /** Latest detected game-engine error popup (PP "Internal server
+   *  error. The game will be restarted." style). Set by automation
+   *  flows that call throwIfGameError. Cleared when QA acknowledges
+   *  via /api/qa/manual/game-error/clear. Surfaced in session status
+   *  so dashboard can render a halt banner. */
+  private gameError: NonNullable<SessionStatus["gameError"]> | null = null;
   /** Per-phase progress tracker — see SessionStatus.autoOnboardPhases doc.
    *  Lives across Auto-Onboard runs (replaced each run via initAutoOnboardPhases).
    *  Read-only from outside via status(). */
@@ -534,7 +552,39 @@ export class ManualSessionManager {
       generateCatalogLastFinishedAt: this.generateCatalogLastFinishedAt,
       gameSpec: this.gameSpec ? { ...this.gameSpec } : null,
       gameSpecOverride: this.gameSpecOverrideCached ? { ...this.gameSpecOverrideCached } : null,
+      gameError: this.gameError ? { ...this.gameError } : null,
     };
+  }
+
+  /** Run a game-error scan + record + throw if hit. Wrappers around
+   *  throwIfGameError that also persists the detection into this.gameError
+   *  so the dashboard banner can render it after the run halts. Caller
+   *  should call this at safe pre-action checkpoints (between phases,
+   *  before each spin, after popup recovery). Returns silently when
+   *  no error detected. */
+  async detectAndRecordGameError(site: string): Promise<void> {
+    if (!this.session) return;
+    const { detectGameError, GameErrorDetectedError } = await import("../utils/game-error-detect.js");
+    const r = await detectGameError(this.session.page);
+    if (r.hasError) {
+      this.gameError = {
+        site,
+        matchedKeywords: [...r.matchedKeywords],
+        detectedText: r.detectedText,
+        detectedAt: new Date().toISOString(),
+      };
+      console.error(`[manual/game-error] ⛔ detected at ${site}: ${r.matchedKeywords.join(", ")} — halting flow. QA must reload game URL.`);
+      throw new GameErrorDetectedError(r, site);
+    }
+  }
+
+  /** Acknowledge + clear the recorded game error. Used after QA reloads
+   *  the game URL — banner goes away, automation can resume. */
+  clearGameError(): void {
+    if (this.gameError) {
+      console.log(`[manual/game-error] cleared — was: ${this.gameError.matchedKeywords.join(", ")}`);
+    }
+    this.gameError = null;
   }
 
   /** Wrap an operation with the generate-catalog mutex + status tracking
@@ -1291,6 +1341,11 @@ export class ManualSessionManager {
     }
     const pre = await this.waitForMainScreen({ maxWaitMs: 30_000 });
     if (!pre.onMain) return { ok: false, reason: `not on main before deep-discover (${pre.reason ?? "unknown"})` };
+    // Halt-on-error pre-check. Game-engine errors (PP "Internal server
+    // error. The game will be restarted." modal) block all clicks +
+    // would silently waste 10-30 minutes of Discover effort. Detect
+    // once here; throw early so caller surfaces the banner to QA.
+    await this.detectAndRecordGameError("deepDiscover/start");
 
     // Re-detect policy (2026-05-29): Deep Discover treats unverified entries as
     // stale candidates from prior AI runs and CLEARS them before re-detecting.
@@ -1446,7 +1501,12 @@ export class ManualSessionManager {
     // canonical coords HERE — via the standard probe flow with agent
     // fallback — costs ~$3-8 extra but is the difference between a fully
     // populated registry and an empty one.
-    const PRE_EXPLORE_CANONICAL = ["spinButton", "betPlus", "betMinus", "menuButton", "paytableButton", "autoButton", "buyBonusButton", "historyButton"];
+    // anteButton included here so probe refines its coord (via
+    // genericToggle path — click → verify pixel diff → restore) BEFORE
+    // normalizeAnteOff runs. Without this, normalize uses raw AI-vision
+    // coord (~5-30px drift typical) which can miss the toggle and bail
+    // Discover. Probe's offset-retry pattern lands much more reliably.
+    const PRE_EXPLORE_CANONICAL = ["spinButton", "betPlus", "betMinus", "menuButton", "paytableButton", "autoButton", "buyBonusButton", "historyButton", "anteButton"];
     const preProbeKeys = PRE_EXPLORE_CANONICAL.filter((k) => {
       const el = this.registry[k];
       if (!el) return false;
@@ -1456,6 +1516,55 @@ export class ManualSessionManager {
       console.log(`[manual/deep-discover] ${this.gameSlug}: pre-explorer probe refining ${preProbeKeys.length} canonical: [${preProbeKeys.join(",")}]`);
       const preProbe = await this.probePendingElements({ onlyKeys: preProbeKeys });
       console.log(`[manual/deep-discover] pre-explorer probe done: verified=${preProbe.verified} failed=${preProbe.failed} skipped=${preProbe.skipped}`);
+    }
+
+    // Ante normalize — runs BEFORE the graph explorer opens any popup.
+    // If the registry has anteButton, force it OFF + capture a baseline
+    // PNG. This guarantees popups like bet_settings get discovered with
+    // BASE bet values (not ante-inflated). Without this, a Discover run
+    // that happens to start with ante ON would permanently bake wrong
+    // chip values into the registry. Skipped silently when no
+    // anteButton (games without the feature). Failure here ABORTS
+    // discover — better than poisoning the registry.
+    // ante-normalize phase tracking. Status surfaces in autoOnboardPhases
+    // so QA sees a discrete row in the dashboard progress panel. When
+    // running outside autoOnboard (e.g. manual /deep-discover endpoint),
+    // startPhase silently no-ops (phase array may not be initialized) —
+    // safe.
+    if (this.registry["anteButton"]) {
+      console.log(`[manual/deep-discover] ${this.gameSlug}: ▶ PHASE — Ante Normalize (anteButton present, will enforce OFF before exploration)`);
+      // Pre-flight: pre-explorer probe may have left a popup open (e.g.
+      // betPlus/betMinus probe opened the bet-selector popup as its last
+      // action and probePendingElements only re-asserts main BEFORE each
+      // probe, not after the final one). normalizeAnteOff clicks
+      // anteButton, which can be blocked / hijacked by an open popup.
+      // Reach main first.
+      await this.waitForMainScreen({ maxWaitMs: 15_000 }).catch(() => undefined);
+      this.startPhase("ante-normalize");
+      const norm = await normalizeAnteOff(this.session.page, this.gameSlug, this.registry);
+      if (!norm.ok) {
+        this.endPhase("ante-normalize", "fail", norm.reason?.slice(0, 80));
+        return {
+          ok: false,
+          reason: `ante normalize failed (tier=${norm.detectionTier}): ${norm.reason ?? "unknown"}. Discover aborted to avoid contaminating registry with ante-inflated bet values.`,
+          safetyReport,
+        };
+      }
+      // Persist baseline path into registry entry so runtime ensure_ante_off
+      // + discover-time guards can find it later.
+      if (norm.baselinePath && this.registry["anteButton"]) {
+        this.registry["anteButton"]!.offBaseline = path.relative(dirForGame(this.gameSlug), norm.baselinePath);
+        await uiRegistry.save(this.gameSlug, this.registry);
+      }
+      this.endPhase(
+        "ante-normalize",
+        "ok",
+        `${norm.initialState === "off" ? "already OFF" : `flipped ${norm.initialState}→off`} · tier=${norm.detectionTier} · ${norm.toggledCount} toggle${norm.toggledCount === 1 ? "" : "s"}`,
+      );
+      console.log(`[manual/deep-discover] ${this.gameSlug}: ✅ PHASE Ante Normalize COMPLETE — initial=${norm.initialState} toggled=${norm.toggledCount} tier=${norm.detectionTier}`);
+    } else {
+      this.endPhase("ante-normalize", "skip", "no anteButton in registry (game has no ante feature)");
+      console.log(`[manual/deep-discover] ${this.gameSlug}: ⊘ PHASE Ante Normalize SKIPPED — no anteButton in registry (game has no ante feature)`);
     }
 
     console.log(`[manual/deep-discover] ${this.gameSlug}: starting recursive UI graph exploration (depth<=${opts.maxDepth ?? 3}, aiCalls<=${opts.maxAiCalls ?? 25}, states<=${opts.maxStates ?? 15}, clickable=${safetyReport.clickable.join(",")})…`);
@@ -1564,6 +1673,28 @@ export class ManualSessionManager {
     const synthWarnings = await this.synthesizeSliderStopsForAllHints();
     if (synthWarnings.length > 0) {
       (result.warnings ?? (result.warnings = [])).push(...synthWarnings);
+    }
+
+    // Post-explore ante drift check. anteButton is already in the
+    // production safe-click blacklist, so the explorer shouldn't have
+    // toggled it. But: AGGRESSIVE mode ignores blacklist, AND coord
+    // errors near ante can still hit it. If we drifted, surface a loud
+    // warning + try a single recovery click — but DON'T overwrite
+    // already-discovered sub-state captures (too late, damage is done).
+    // QA sees the warning and decides whether to re-run Discover.
+    if (this.registry["anteButton"] && this.registry["anteButton"]!.offBaseline) {
+      console.log(`[manual/deep-discover] ${this.gameSlug}: ▶ PHASE — Post-Explore Ante Drift Check`);
+      const drift = await verifyAnteOff(this.session.page, this.gameSlug, this.registry);
+      if (!drift.isOff && drift.baselineFound) {
+        const warn = `ante DRIFTED during exploration (ratio=${drift.ratio?.toFixed(3) ?? "?"}) — popups captured AFTER the drift event may have ante-inflated values. Recommend: clear unverified entries and re-run Discover.`;
+        console.warn(`[manual/deep-discover] ${this.gameSlug}: ⚠ ${warn}`);
+        (result.warnings ?? (result.warnings = [])).push(warn);
+        // Best-effort recovery so subsequent operations (probe, etc) run
+        // with ante OFF again.
+        await ensureAnteOff(this.session.page, this.gameSlug, this.registry).catch(() => undefined);
+      } else {
+        console.log(`[manual/deep-discover] ${this.gameSlug}: ✅ ante still OFF after exploration (ratio=${drift.ratio?.toFixed(3) ?? "?"})`);
+      }
     }
 
     // Auto-probe all pending probeable elements (P1 chain). With the new
@@ -1685,6 +1816,11 @@ export class ManualSessionManager {
   private initAutoOnboardPhases(): void {
     const names = [
       "deep-discover",
+      // Ante normalize tracked separately so QA sees it in the progress
+      // panel. Runs INSIDE deepDiscover (between main-state seed and
+      // sub-state exploration), so its "running" window overlaps with
+      // deep-discover's. Note field shows tier + toggle count.
+      "ante-normalize",
       "verify-registry",
       "ocr-auto-detect",
       "deep-extract",
@@ -1806,6 +1942,9 @@ export class ManualSessionManager {
         throw PAUSE_SENTINEL;
       }
     };
+    // Clear any stale game error from a prior run — caller knows we're
+    // starting fresh + the dashboard banner shouldn't persist.
+    this.clearGameError();
     try {
       console.log(`[manual/auto-onboard] ${this.gameSlug}: starting — deep-discover → verify → payout`);
 
@@ -2041,6 +2180,17 @@ export class ManualSessionManager {
         console.log(`[manual/auto-onboard] ${this.gameSlug}: PAUSED — state persisted, resume via dashboard button`);
         this.autoOnboardResumeAvailable = true;
         return { ok: true, reason: "paused by request" };
+      }
+      // GameErrorDetectedError → halt with a clear message so the route
+      // handler can surface "game error — reload URL and resume" to QA.
+      // The detection site already recorded this.gameError, so the
+      // dashboard banner will show the popup text. Mark resume available
+      // so QA can pick up where they left off after reloading.
+      const { GameErrorDetectedError } = await import("../utils/game-error-detect.js");
+      if (err instanceof GameErrorDetectedError) {
+        console.error(`[manual/auto-onboard] ${this.gameSlug}: HALTED by game error — ${err.message}`);
+        this.autoOnboardResumeAvailable = true;
+        return { ok: false, reason: `Game error detected: ${err.matchedKeywords.join(", ")}. Reload the game URL in the browser, then click Resume Auto-Onboard.` };
       }
       throw err;
     } finally {
@@ -2382,13 +2532,32 @@ export class ManualSessionManager {
   }
 
   /** Load current ocr-regions.json for the active game. Returns empty object
-   *  when none exist yet (UI shows "no regions defined" state). */
-  async loadOcrRegions(): Promise<{ ok: boolean; regions?: import("../registry/types.js").OcrRegions; reason?: string }> {
+   *  when none exist yet (UI shows "no regions defined" state).
+   *  Also returns any pending PROPOSALS from ocr-regions.proposed.json
+   *  (low-confidence picks the auto-detector flagged for QA review).
+   *  Saved keys take priority — if a key appears in both lists, the
+   *  proposal is filtered out (already accepted/superseded). */
+  async loadOcrRegions(): Promise<{
+    ok: boolean;
+    regions?: import("../registry/types.js").OcrRegions;
+    proposals?: import("../registry/ocr-regions-proposed.js").OcrProposalsFile["proposals"];
+    reason?: string;
+  }> {
     const slug = this.gameSlug;
     if (!slug) return { ok: false, reason: "no active session" };
     const { ocrRegions } = await import("../registry/ocr-regions.js");
-    const cur = await ocrRegions.load(slug);
-    return { ok: true, regions: cur ?? {} };
+    const { loadOcrProposals } = await import("../registry/ocr-regions-proposed.js");
+    const cur = (await ocrRegions.load(slug)) ?? {};
+    const propFile = await loadOcrProposals(slug);
+    // Filter proposals: if a key is already in saved regions, drop the
+    // proposal — QA has already committed (or auto-detector vetted it).
+    const proposals: typeof propFile.proposals = {};
+    for (const [key, entry] of Object.entries(propFile.proposals)) {
+      if (!entry) continue;
+      if ((cur as Record<string, unknown>)[key]) continue;
+      (proposals as Record<string, typeof entry>)[key] = entry;
+    }
+    return { ok: true, regions: cur, proposals };
   }
 
   /** Persist a region patch into ocr-regions.json (merge into existing).
@@ -2405,6 +2574,15 @@ export class ManualSessionManager {
     const cur = (await ocrRegions.load(slug)) ?? {};
     const next = { ...cur, [key]: region };
     await ocrRegions.save(slug, next);
+    // Clear any pending proposal for this key — QA has committed (either
+    // by Accept on a proposal or Draw of a fresh bbox). Dashboard should
+    // not continue to show "pending review" for a now-saved region.
+    try {
+      const { dropOcrProposal } = await import("../registry/ocr-regions-proposed.js");
+      await dropOcrProposal(slug, key as keyof import("../registry/ocr-regions-proposed.js").OcrProposalsFile["proposals"]);
+    } catch {
+      /* non-fatal — proposal cleanup failure shouldn't break the save */
+    }
     return { ok: true, regions: next };
   }
 
@@ -2607,7 +2785,59 @@ export class ManualSessionManager {
     } else {
       console.log(`[manual/ocr-region/auto-detect] ${this.gameSlug}: no vision-verified picks — ${proposed.length} proposed for review, ${skipped.length} skipped`);
     }
+
+    // Persist proposals to disk so the dashboard's OCR Regions panel can
+    // show them as "pending review" rows. Without this, Auto-Onboard's
+    // proposals were silently dropped (manual button surfaced them in
+    // a one-off popup but Auto-Onboard ran in background with no popup).
+    // Save once per run — wipe slate of prior proposals for the keys
+    // this run produced, then write current `proposed` list keyed by
+    // region name. The mergeOcrProposals helper preserves keys this run
+    // didn't touch (skipped widgets keep their prior proposal if any).
+    try {
+      const { mergeOcrProposals, dropOcrProposal } = await import("../registry/ocr-regions-proposed.js");
+      const nowIso = new Date().toISOString();
+      const proposalMap: Record<string, import("../registry/ocr-regions-proposed.js").OcrProposalEntry> = {};
+      for (const p of proposed) {
+        proposalMap[p.key] = {
+          region: p.region,
+          visionConfidence: p.visionConfidence,
+          aiValueRead: p.aiValueRead,
+          aiReason: p.aiReason,
+          ocrText: p.ocrText,
+          ocrParsed: p.ocrParsed,
+          rejectReason: p.rejectReason,
+          proposedAt: nowIso,
+        };
+      }
+      await mergeOcrProposals(this.gameSlug, proposalMap);
+      // Any key that just got SAVED should not also have a stale proposal —
+      // wipe its proposal so the dashboard doesn't show "saved + pending review"
+      // for the same key. Cheap (at most 4 keys).
+      for (const s of saved) {
+        await dropOcrProposal(this.gameSlug, s.key as keyof import("../registry/ocr-regions-proposed.js").OcrProposalsFile["proposals"]);
+      }
+    } catch (err) {
+      // Non-fatal — proposals fail to persist → user just has to re-run
+      // manual auto-detect to see them. Logged so it's noticed.
+      console.warn(`[manual/ocr-region/auto-detect] ${this.gameSlug}: failed to persist proposals: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
     return { ok: true, saved, proposed, skipped, regions: merged as import("../registry/types.js").OcrRegions };
+  }
+
+  /** Reject one pending OCR-region proposal — wipes it from
+   *  ocr-regions.proposed.json without saving. Used by the dashboard's
+   *  "Reject" button on pending review rows. Pairs with saveOcrRegion
+   *  (which is the implicit "accept" flow). */
+  async rejectOcrProposal(
+    key: "balanceArea" | "betArea" | "winArea" | "freeSpinCounter",
+  ): Promise<{ ok: boolean; reason?: string }> {
+    const slug = this.gameSlug;
+    if (!slug) return { ok: false, reason: "no active session" };
+    const { dropOcrProposal } = await import("../registry/ocr-regions-proposed.js");
+    await dropOcrProposal(slug, key);
+    return { ok: true };
   }
 
   /** Delete one region entry from ocr-regions.json. */
@@ -3628,6 +3858,41 @@ export class ManualSessionManager {
     const page = this.session.page;
     const K = Math.max(8, Math.min(60, opts.spinsPerLevel ?? 25));
 
+    // Pre-flight registry check. Calibration spins 25-50 times — clicking
+    // a missing coord just throws immediately, but the historic error
+    // message ("no winning combos captured") was misleading because the
+    // outer code only checked combo count, not WHY no spins ran. Verify
+    // the elements we depend on are present + verified, fail fast with
+    // a clear reason if not. QA sees this directly in the phase note
+    // instead of guessing.
+    const required = ["spinButton", "betMinus"] as const;
+    const missing: string[] = [];
+    const unverified: string[] = [];
+    for (const k of required) {
+      const el = this.registry[k];
+      if (!el) { missing.push(k); continue; }
+      if (el.verifiedBy !== "QA" && el.verifiedBy !== "probe") unverified.push(k);
+    }
+    if (missing.length > 0) {
+      return {
+        ok: false,
+        reason: `calibration cannot run — registry missing required elements: ${missing.join(", ")}. Run Deep Discover first, or add the entries manually via the dashboard's [Add Element] / [Pick] flow.`,
+      };
+    }
+    if (unverified.length > 0) {
+      console.warn(`[calibrate-payout] ${this.gameSlug}: required elements unverified (${unverified.join(", ")}) — proceeding anyway, but coords may be wrong`);
+    }
+    // Bet ladder check — set_bet_to_min uses betControls.minBetClicks
+    // (default 20) which usually reaches min without needing gameSpec.
+    // But the SECOND coin level uses set_bet_to_value(higherBet) which
+    // needs a valid ladder. Warn loudly when missing; we still proceed
+    // with the single-level path (K spins at min) which gives partial
+    // calibration data.
+    const hasLadder = (this.gameSpec?.betLadder?.length ?? 0) > 1;
+    if (!hasLadder) {
+      console.warn(`[calibrate-payout] ${this.gameSlug}: gameSpec.betLadder missing or has ≤1 entry — running 1-level calibration only (less accurate). Make sure the game's do_init API has been captured (open the game URL fresh in session, observe network).`);
+    }
+
     // Side-channel capture: parse wlc_v + actual coin `c` from EVERY spin
     // response (initial + cascade frames) — independent of executeCase's own
     // dedup listener, and robust to set_bet not landing an exact coin.
@@ -3651,22 +3916,25 @@ export class ManualSessionManager {
     };
     page.on("response", onResp);
 
-    try {
-      // Pick two distinct bet levels (=> two distinct coins) from the ladder.
-      const ladder = this.gameSpec?.betLadder ?? [];
-      const higherIdx = ladder.length > 1 ? Math.min(Math.floor(ladder.length / 2) || 1, ladder.length - 1) : -1;
-      const higherBet = higherIdx > 0 ? ladder[higherIdx]! : null;
-
-      const actions: import("../step7-testcase-gen/case-action-translator.js").CaseAction[] = [
-        { kind: "set_bet_to_min" },
-        { kind: "wait_ms", ms: 800 },
-      ];
+    // Hoist these out of the try block so the post-executeCase
+    // diagnostics (combos === 0 disambiguation) can reference them
+    // when reporting why calibration didn't capture any spins.
+    const ladder = this.gameSpec?.betLadder ?? [];
+    const higherIdx = ladder.length > 1 ? Math.min(Math.floor(ladder.length / 2) || 1, ladder.length - 1) : -1;
+    const higherBet = higherIdx > 0 ? ladder[higherIdx]! : null;
+    const actions: import("../step7-testcase-gen/case-action-translator.js").CaseAction[] = [
+      { kind: "set_bet_to_min" },
+      { kind: "wait_ms", ms: 800 },
+    ];
+    for (let i = 0; i < K; i++) { actions.push({ kind: "spin" }); actions.push({ kind: "wait_ms", ms: 2500 }); }
+    if (higherBet != null) {
+      actions.push({ kind: "set_bet_to_value", value: higherBet, reason: "calibration: second coin level" });
+      actions.push({ kind: "wait_ms", ms: 800 });
       for (let i = 0; i < K; i++) { actions.push({ kind: "spin" }); actions.push({ kind: "wait_ms", ms: 2500 }); }
-      if (higherBet != null) {
-        actions.push({ kind: "set_bet_to_value", value: higherBet, reason: "calibration: second coin level" });
-        actions.push({ kind: "wait_ms", ms: 800 });
-        for (let i = 0; i < K; i++) { actions.push({ kind: "spin" }); actions.push({ kind: "wait_ms", ms: 2500 }); }
-      }
+    }
+
+    let caseResult: Awaited<ReturnType<typeof executeCase>> | null = null;
+    try {
 
       const parser = await createParserForGame(this.gameSlug);
       const ctx = {
@@ -3679,7 +3947,10 @@ export class ManualSessionManager {
         payoutModel: null,
       };
       console.log(`[calibrate-payout] ${this.gameSlug}: spinning ${K}×${higherBet != null ? 2 : 1} level(s) to capture combos…`);
-      await executeCase(ctx, {
+      // Capture executeCase result so we can distinguish "spins ran but
+      // no wins" from "spins never fired" — the former is a volatility
+      // issue (genuine), the latter is a setup issue (wrong reason).
+      caseResult = await executeCase(ctx, {
         id: "payout-calibration",
         name: "Payout model calibration",
         category: "payout_correctness",
@@ -3693,9 +3964,31 @@ export class ManualSessionManager {
     }
 
     const distinctCoins = [...new Set(combos.map((c) => c.coin))];
-    console.log(`[calibrate-payout] ${this.gameSlug}: captured ${combos.length} combos across coins [${distinctCoins.join(", ")}]`);
+    const cr = caseResult; // null when executeCase threw (rare — caught by outer)
+    console.log(`[calibrate-payout] ${this.gameSlug}: case status=${cr?.status ?? "errored"} actionsExecuted=${cr?.actionsExecuted ?? 0}/${actions.length} captured=${combos.length} combos across coins [${distinctCoins.join(", ")}]`);
     if (combos.length === 0) {
-      return { ok: false, reason: "no winning combos captured — try more spins or a higher-volatility bet" };
+      // Disambiguate root cause:
+      //   - executeCase fail with skipReason → bet/spin setup broke
+      //   - actionsExecuted ≈ 0 → never reached spin actions
+      //   - actionsExecuted ≈ planned → spins ran but no wins (volatility)
+      if (cr?.status === "fail" && cr.skipReason) {
+        return {
+          ok: false,
+          reason: `calibration setup failed before any spin landed: ${cr.skipReason}. Check registry (spinButton/betMinus coords + verified) and the game canvas state.`,
+        };
+      }
+      const executed = cr?.actionsExecuted ?? 0;
+      if (executed < Math.min(5, actions.length)) {
+        return {
+          ok: false,
+          reason: `calibration aborted after only ${executed}/${actions.length} actions — spins never reliably fired. Check the game is on the MAIN screen (not stuck on a popup) and that spinButton coord is correct.`,
+        };
+      }
+      // True "spins ran but no wins" case — this is the original message.
+      return {
+        ok: false,
+        reason: `spun ${executed}/${actions.length} actions but no winning combos captured. Try more spins via QA_CALIBRATE_SPINS env, or pick a higher-volatility bet level (current betMin may be too low).`,
+      };
     }
 
     const paytableData = await paytableStore.load(this.gameSlug).catch(() => null);

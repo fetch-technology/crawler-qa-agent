@@ -33,6 +33,13 @@ export const EXPECTED_UI_ELEMENTS_DEFAULTS: ExpectedUiElement[] = [
   { key: "menuButton", description: "☰ hamburger lines, top-left corner" },
   { key: "betPlus", description: "a '+' icon button immediately to the RIGHT of the bet value display" },
   { key: "betMinus", description: "a '−' icon button immediately to the LEFT of the bet value display" },
+  // anteButton is non-critical: many slot titles don't expose it. AI vision
+  // returns null when absent; presence triggers ante-normalize (enforce OFF
+  // + baseline crop) BEFORE sub-state exploration so popups like
+  // bet_settings / autoplay_settings capture base-bet values, not ante-
+  // inflated ones. Visual cue: usually a small switch / pill labeled
+  // "Ante Bet" / "+25%" / star icon, on the LEFT of the reels.
+  { key: "anteButton", description: "ANTE BET / Bet Boost / Boost toggle — small switch or pill on the LEFT side of the reels, often labeled 'ANTE BET', '+25%', or with a coin/star icon. Returns null if the game has no ante feature." },
 ];
 
 export const expectedUiElementsStore: RegistryStore<ExpectedUiElementsConfig> = {

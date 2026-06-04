@@ -77,6 +77,27 @@
   <div style="display: flex; align-items: center; gap: 14px; margin-bottom: 6px;">
     <a id="backToOverview" href="/" style="display: none; font-size: 13px; color: #93c5fd; text-decoration: none; padding: 6px 12px; background: #1f2937; border-radius: 4px;">← All Games</a>
     <h1 style="margin: 0;">QA · Manual Verify <span id="scopedSlugBadge" style="display: none; margin-left: 10px; font-size: 14px; font-family: ui-monospace, monospace; padding: 3px 10px; background: #1e3a8a; color: #dbeafe; border-radius: 12px; font-weight: 500;"></span></h1>
+    <!-- Claude Token settings — right-aligned, click to open modal -->
+    <div id="claudeTokenBadge" style="margin-left: auto; cursor: pointer; padding: 6px 12px; background: #1f2937; border: 1px solid #374151; border-radius: 4px; font-size: 12px; color: #9ca3af; font-family: ui-monospace, monospace;" title="Click to set/replace your Claude token. AI calls during your session bill back to YOUR Claude account.">
+      🔑 <span id="claudeTokenLabel">(not set)</span>
+    </div>
+  </div>
+  <!-- Token Settings Modal -->
+  <div id="claudeTokenModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 9999; align-items: center; justify-content: center;">
+    <div style="background: #0d1117; border: 1px solid #2a3140; border-radius: 8px; padding: 24px; max-width: 580px; width: 90%;">
+      <h3 style="margin: 0 0 8px 0; color: #c8d0d8;">Claude Token</h3>
+      <p style="margin: 0 0 14px 0; color: #8b939c; font-size: 13px; line-height: 1.5;">
+        Paste your personal Claude token (<code>sk-ant-oat01-...</code> or <code>sk-ant-api03-...</code>). AI calls during your session bill to your account, not the shared master.
+        Token is stored in browser localStorage only — never sent to anything besides this server's <code>X-Claude-Token</code> header.
+      </p>
+      <input id="claudeTokenInput" type="password" placeholder="sk-ant-oat01-..." style="width: 100%; box-sizing: border-box; padding: 8px 10px; background: #111827; border: 1px solid #374151; border-radius: 4px; color: #e5e7eb; font-family: ui-monospace, monospace; font-size: 12px;" autocomplete="off" />
+      <div id="claudeTokenError" style="color: #f87171; font-size: 11px; margin-top: 6px; display: none;"></div>
+      <div style="display: flex; gap: 8px; margin-top: 14px; justify-content: flex-end;">
+        <button id="claudeTokenClear" class="red" style="font-size: 12px; padding: 6px 12px;">Clear</button>
+        <button id="claudeTokenCancel" class="gray" style="font-size: 12px; padding: 6px 12px;">Cancel</button>
+        <button id="claudeTokenSave" style="font-size: 12px; padding: 6px 12px; background: #16a34a; color: white; border: none; border-radius: 4px; cursor: pointer;">Save</button>
+      </div>
+    </div>
   </div>
   <p class="sub">Phase 6.1 — Human-in-the-loop UI element verification. AI proposes, QA confirms.</p>
   <script>
@@ -98,6 +119,43 @@
       } catch {}
     })();
   </script>
+
+  <!-- Per-QA Claude usage panel — collapsed by default; toggle via the
+       badge in the header or auto-opens on first load if there's a token. -->
+  <div id="claudeUsagePanel" style="display: none; background: #111827; border: 1px solid #1f2937; border-radius: 6px; padding: 10px 14px; margin-bottom: 10px; font-size: 12px; color: #cbd5e1;">
+    <div style="display: flex; align-items: center; gap: 12px;">
+      <strong style="color: #e5e7eb;">📊 Your Claude usage</strong>
+      <span id="claudeUsageRange" style="color: #6b7280;">(today)</span>
+      <select id="claudeUsageDays" style="margin-left: 6px; background: #0d1117; color: #cbd5e1; border: 1px solid #374151; border-radius: 3px; padding: 2px 6px; font-size: 11px;">
+        <option value="1">Today</option>
+        <option value="7">Last 7 days</option>
+        <option value="30">Last 30 days</option>
+      </select>
+      <button id="claudeUsageRefresh" class="gray" style="font-size: 11px; padding: 3px 8px;">↻</button>
+      <span id="claudeUsageHash" style="margin-left: auto; color: #6b7280; font-family: ui-monospace, monospace; font-size: 11px;"></span>
+    </div>
+    <div id="claudeUsageBody" style="margin-top: 8px; color: #9ca3af;">Loading…</div>
+  </div>
+
+  <!-- Game-engine error banner (visible across page). Set when automation
+       detects an unrecoverable popup like PP's "Internal server error. The
+       game will be restarted." — clicks don't work, automation halts.
+       Stays visible until QA reloads the game URL + clicks Acknowledge. -->
+  <div id="gameErrorBanner" style="display: none; background: linear-gradient(90deg, #b91c1c, #7f1d1d); color: #fff; padding: 14px 18px; border-radius: 6px; margin-bottom: 12px; font-size: 13px; box-shadow: 0 2px 12px rgba(185,28,28,0.5); border: 2px solid #fca5a5;">
+    <div style="display: flex; align-items: flex-start; gap: 12px;">
+      <span style="font-size: 28px; line-height: 1;">⛔</span>
+      <div style="flex: 1;">
+        <strong style="font-size: 14px; display: block; margin-bottom: 4px;">Game-engine error — automation halted</strong>
+        <div id="gameErrorBannerSite" style="font-size: 11px; color: #fecaca; font-family: ui-monospace, monospace; margin-bottom: 4px;"></div>
+        <div id="gameErrorBannerMatched" style="font-size: 12px; margin-bottom: 6px;"></div>
+        <div id="gameErrorBannerText" style="font-size: 11px; color: #fee2e2; font-family: ui-monospace, monospace; max-height: 80px; overflow-y: auto; background: rgba(0,0,0,0.2); padding: 6px 8px; border-radius: 3px;"></div>
+        <div style="margin-top: 10px; font-size: 12px;">
+          <strong>Action:</strong> Reload the game URL in the browser (or in this session's Chrome window), confirm the game is back to a playable state, then click <em>Acknowledge</em> to clear this banner + resume automation.
+        </div>
+      </div>
+      <button id="gameErrorAcknowledge" style="background: #fff; color: #b91c1c; font-weight: 600; font-size: 12px; padding: 8px 14px; border: none; border-radius: 4px; cursor: pointer; align-self: center;">Acknowledge + clear</button>
+    </div>
+  </div>
 
   <!-- Pipeline task banner (visible across page) -->
   <div id="taskBanner" style="display: none; background: linear-gradient(90deg, #2563eb, #1d4ed8); color: #fff; padding: 10px 14px; border-radius: 6px; margin-bottom: 12px; font-size: 13px; box-shadow: 0 2px 8px rgba(37,99,235,0.4);">
@@ -302,6 +360,184 @@
       return null;
     })();
 
+    // Per-QA Claude token helpers. Token stored in localStorage (browser-
+    // local — server never persists it). Injected as X-Claude-Token header
+    // on every API call so AI work bills back to the QA's own account.
+    // When localStorage empty, header is omitted → server falls back to
+    // master env-var (CLAUDE_CODE_OAUTH_TOKEN).
+    const CLAUDE_TOKEN_KEY = "qaClaudeToken";
+    function getClaudeToken() {
+      try { return localStorage.getItem(CLAUDE_TOKEN_KEY) || null; } catch { return null; }
+    }
+    function setClaudeToken(token) {
+      try {
+        if (token) localStorage.setItem(CLAUDE_TOKEN_KEY, token);
+        else localStorage.removeItem(CLAUDE_TOKEN_KEY);
+      } catch {}
+    }
+    function isValidClaudeTokenFormat(token) {
+      // Mirror server's regex (src/ai/claude.ts isValidClaudeTokenFormat).
+      // Accept sk-ant-oat##-... (OAuth) or sk-ant-api##-... (API key).
+      return /^sk-ant-(oat\d+|api\d+)-[A-Za-z0-9_-]{32,}$/.test((token || "").trim());
+    }
+    function maskClaudeToken(token) {
+      if (!token) return "(not set)";
+      if (token.length < 16) return "(invalid)";
+      // sk-ant-oat01-***WXYZ — preserves prefix + last 4 chars only.
+      const head = token.split("-").slice(0, 3).join("-");
+      return `${head}-***${token.slice(-4)}`;
+    }
+
+    /** Sync the header badge label with current token state. Called on
+     *  page load + after every save/clear via setClaudeToken(). */
+    function updateClaudeTokenBadge() {
+      const label = document.getElementById("claudeTokenLabel");
+      const badge = document.getElementById("claudeTokenBadge");
+      if (!label || !badge) return;
+      const token = getClaudeToken();
+      label.textContent = maskClaudeToken(token);
+      badge.style.borderColor = token ? "#16a34a" : "#dc2626";
+      badge.style.color = token ? "#86efac" : "#fca5a5";
+    }
+
+    /** Open token modal. Triggered by badge click + 401 error response. */
+    function promptForClaudeToken() {
+      const modal = document.getElementById("claudeTokenModal");
+      const input = document.getElementById("claudeTokenInput");
+      const err = document.getElementById("claudeTokenError");
+      if (!modal || !input || !err) return;
+      input.value = getClaudeToken() || "";
+      err.style.display = "none";
+      err.textContent = "";
+      modal.style.display = "flex";
+      // Defer focus a tick so modal CSS animation doesn't steal it.
+      setTimeout(() => input.focus(), 50);
+    }
+    function closeClaudeTokenModal() {
+      const modal = document.getElementById("claudeTokenModal");
+      if (modal) modal.style.display = "none";
+    }
+
+    // Wire modal buttons + badge once DOM ready.
+    (function initClaudeTokenUi() {
+      const wire = () => {
+        const badge = document.getElementById("claudeTokenBadge");
+        if (badge) badge.onclick = promptForClaudeToken;
+        const saveBtn = document.getElementById("claudeTokenSave");
+        if (saveBtn) saveBtn.onclick = () => {
+          const input = document.getElementById("claudeTokenInput");
+          const err = document.getElementById("claudeTokenError");
+          const raw = (input?.value || "").trim();
+          if (!raw) {
+            err.textContent = "Token is empty.";
+            err.style.display = "block";
+            return;
+          }
+          if (!isValidClaudeTokenFormat(raw)) {
+            err.textContent = "Invalid format. Expected sk-ant-oat##-... or sk-ant-api##-... (≥32 char suffix).";
+            err.style.display = "block";
+            return;
+          }
+          setClaudeToken(raw);
+          updateClaudeTokenBadge();
+          closeClaudeTokenModal();
+          toast("✓ Claude token saved (browser localStorage)");
+          // Fire-and-forget — usage panel becomes visible + fetches data
+          // for the newly-saved token's hash.
+          try { refreshClaudeUsage(); } catch {}
+        };
+        const clearBtn = document.getElementById("claudeTokenClear");
+        if (clearBtn) clearBtn.onclick = () => {
+          setClaudeToken(null);
+          updateClaudeTokenBadge();
+          closeClaudeTokenModal();
+          toast("Claude token cleared — falling back to server's master token (if set)");
+          // Hide usage panel — without a QA token there's nothing to attribute.
+          try { refreshClaudeUsage(); } catch {}
+        };
+        const cancelBtn = document.getElementById("claudeTokenCancel");
+        if (cancelBtn) cancelBtn.onclick = closeClaudeTokenModal;
+        updateClaudeTokenBadge();
+      };
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", wire);
+      } else {
+        wire();
+      }
+    })();
+
+    // ─── Claude usage panel ────────────────────────────────────────────
+    // Tied to the QA's saved token. Renders nothing (panel stays hidden)
+    // until token is set; once set, fetches /api/qa/manual/usage and
+    // shows totals + top labels. Refresh button + days selector are the
+    // only manual triggers — we don't auto-poll because usage info is
+    // not time-critical and polling would burn an extra request per
+    // 10s on every open tab.
+    function fmtNum(n) { return (n || 0).toLocaleString(); }
+    function fmtMs(ms) {
+      ms = ms || 0;
+      if (ms < 1000) return `${ms} ms`;
+      if (ms < 60_000) return `${(ms / 1000).toFixed(1)} s`;
+      return `${(ms / 60_000).toFixed(1)} min`;
+    }
+    async function refreshClaudeUsage() {
+      const panel = document.getElementById("claudeUsagePanel");
+      const body = document.getElementById("claudeUsageBody");
+      const hashEl = document.getElementById("claudeUsageHash");
+      const daysSel = document.getElementById("claudeUsageDays");
+      if (!panel || !body) return;
+      const token = getClaudeToken();
+      if (!token) {
+        panel.style.display = "none";
+        return;
+      }
+      panel.style.display = "block";
+      const days = Number(daysSel?.value || 1);
+      body.textContent = "Loading…";
+      try {
+        const r = await fetch(`/api/qa/manual/usage?days=${days}`, {
+          headers: { "x-claude-token": token },
+        });
+        const j = await r.json();
+        if (!r.ok || !j.summary) {
+          body.textContent = j.hint || j.error || "No usage data.";
+          if (hashEl) hashEl.textContent = "";
+          return;
+        }
+        const s = j.summary;
+        if (hashEl) hashEl.textContent = `qa#${j.qaHash}`;
+        const topRows = (s.topLabels || []).slice(0, 5).map((l) => {
+          return `<div style="display: flex; justify-content: space-between; gap: 8px;"><span style="color: #cbd5e1; font-family: ui-monospace, monospace;">${l.label}</span><span style="color: #94a3b8;">${fmtNum(l.calls)} calls · ~${fmtNum(l.estTokens)} tok</span></div>`;
+        }).join("");
+        body.innerHTML = `
+          <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 8px;">
+            <div><div style="color: #6b7280; font-size: 10px;">CALLS</div><div style="color: #e5e7eb; font-size: 14px; font-weight: 600;">${fmtNum(s.totalCalls)} <span style="color: #6b7280; font-size: 10px; font-weight: 400;">(${fmtNum(s.failedCalls)} failed)</span></div></div>
+            <div><div style="color: #6b7280; font-size: 10px;">EST INPUT TOK</div><div style="color: #e5e7eb; font-size: 14px; font-weight: 600;">${fmtNum(s.estInputTokens)}</div></div>
+            <div><div style="color: #6b7280; font-size: 10px;">EST OUTPUT TOK</div><div style="color: #e5e7eb; font-size: 14px; font-weight: 600;">${fmtNum(s.estOutputTokens)}</div></div>
+            <div><div style="color: #6b7280; font-size: 10px;">TOTAL TIME</div><div style="color: #e5e7eb; font-size: 14px; font-weight: 600;">${fmtMs(s.totalMs)}</div></div>
+          </div>
+          ${topRows ? `<div style="margin-top: 4px;"><div style="color: #6b7280; font-size: 10px; margin-bottom: 4px;">TOP LABELS</div>${topRows}</div>` : ""}
+        `;
+      } catch (e) {
+        body.textContent = `Usage fetch failed: ${e && e.message ? e.message : String(e)}`;
+      }
+    }
+    (function initClaudeUsageUi() {
+      const wire = () => {
+        const refreshBtn = document.getElementById("claudeUsageRefresh");
+        if (refreshBtn) refreshBtn.onclick = () => refreshClaudeUsage();
+        const daysSel = document.getElementById("claudeUsageDays");
+        if (daysSel) daysSel.onchange = () => refreshClaudeUsage();
+        // Initial load if token already present from a prior session.
+        if (getClaudeToken()) refreshClaudeUsage();
+      };
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", wire);
+      } else {
+        wire();
+      }
+    })();
+
     async function api(path, opts = {}) {
       const method = opts.method || "GET";
       const tag = `[api] ${method} ${path}`;
@@ -310,6 +546,8 @@
       try {
         const headers = opts.body ? { "content-type": "application/json" } : {};
         if (SCOPED_GAME_SLUG) headers["x-game-slug"] = SCOPED_GAME_SLUG;
+        const claudeToken = getClaudeToken();
+        if (claudeToken) headers["x-claude-token"] = claudeToken;
         const r = await fetch(path, {
           method,
           headers: Object.keys(headers).length ? headers : undefined,
@@ -318,7 +556,15 @@
         const body = await r.json().catch(() => ({}));
         console.log(tag, "→", r.status, body);
         appendLog(`${tag} → ${r.status} ${JSON.stringify(body).slice(0, 200)}`);
-        if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+        if (!r.ok) {
+          // 401 with MissingClaudeTokenError → server tried to call Claude
+          // but neither header nor master env had a usable token. Prompt
+          // QA to set theirs before retrying.
+          if (r.status === 401 && /claude token/i.test(body.error || body.reason || "")) {
+            promptForClaudeToken();
+          }
+          throw new Error(body.error || body.reason || `HTTP ${r.status}`);
+        }
         return body;
       } catch (err) {
         console.error(tag, "✗", err);
@@ -430,6 +676,7 @@
     // session yet — keep dashboard uncluttered for first-time use).
     const PHASE_LABELS = {
       "deep-discover": "Deep Discover",
+      "ante-normalize": "Ante Normalize (force OFF)",
       "verify-registry": "Verify Registry",
       "ocr-auto-detect": "OCR Auto-Detect",
       "deep-extract": "Deep Extract (paytable/rules)",
@@ -527,6 +774,22 @@
     function renderStatus(status) {
       const prevOnboarding = !!currentStatus?.autoOnboardInProgress;
       currentStatus = status;
+      // Game-engine error banner. Set when automation detected a fatal
+      // popup ("Internal server error", "session expired", etc) — clicks
+      // are useless until QA reloads. Block all action buttons while
+      // this is set so QA can't accidentally fire wasted automation.
+      const ge = status.gameError;
+      const banner = document.getElementById("gameErrorBanner");
+      if (banner) {
+        if (ge) {
+          banner.style.display = "block";
+          document.getElementById("gameErrorBannerSite").textContent = `site: ${ge.site} · detected at ${ge.detectedAt}`;
+          document.getElementById("gameErrorBannerMatched").innerHTML = `<strong>Matched patterns:</strong> ${escapeHtml((ge.matchedKeywords || []).join(", "))}`;
+          document.getElementById("gameErrorBannerText").textContent = ge.detectedText || "(no OCR text captured)";
+        } else {
+          banner.style.display = "none";
+        }
+      }
       const active = status.active;
       $("#btnRefresh").disabled = !active;
       $("#btnAdd").disabled = !active;
@@ -3039,6 +3302,23 @@
     };
 
     $("#btnRefresh").onclick = refresh;
+    // Acknowledge + clear the game-error banner. POSTs to the clear
+    // endpoint which wipes session.gameError → renderStatus on next
+    // poll (or this one) hides the banner. Don't refresh the actual
+    // game URL from here — that's the QA's manual step (they need to
+    // confirm in the embedded Chrome that the game is playable again).
+    {
+      const ackBtn = document.getElementById("gameErrorAcknowledge");
+      if (ackBtn) ackBtn.onclick = async () => {
+        try {
+          const r = await api("/api/qa/manual/game-error/clear", { method: "POST", body: {} });
+          if (r?.status) renderStatus(r.status);
+          toast("Game error cleared — you can resume automation");
+        } catch (err) {
+          toast(`Clear failed: ${err.message}`, true);
+        }
+      };
+    }
 
     $("#btnProbePending").onclick = async () => {
       const btn = $("#btnProbePending");
@@ -3444,33 +3724,91 @@
       drawAllRegionsOnOverlay();
     }
 
+    // Cache pending proposals from latest auto-detect run. Rendered inline
+    // in the OCR Regions table when their key isn't already saved. QA can
+    // Accept (promote to saved) or Reject (drop without saving).
+    let ocrProposals = {};
     async function renderOcrRegions() {
       if (!currentStatus?.active) return;
       const r = await api("/api/qa/manual/ocr-regions");
       ocrCurrentRegions = r.regions ?? {};
+      ocrProposals = r.proposals ?? {};
       const rows = OCR_REGION_KEYS.map((cfg) => {
         const existing = ocrCurrentRegions[cfg.key];
-        const def = existing
-          ? `<code style="color:${cfg.color}">{x:${existing.x}, y:${existing.y}, w:${existing.width}, h:${existing.height}}</code>`
-          : `<span style="color:#5e6772">— not defined —</span>`;
+        const proposal = !existing ? ocrProposals[cfg.key] : null;
+        // Bbox cell: saved → coords; proposal → coords + "pending review" badge;
+        // neither → "not defined".
+        let def;
+        if (existing) {
+          def = `<code style="color:${cfg.color}">{x:${existing.x}, y:${existing.y}, w:${existing.width}, h:${existing.height}}</code>`;
+        } else if (proposal) {
+          const aiRead = proposal.aiValueRead ? `AI read: <code style="color:#a78bfa">${escapeHtml(String(proposal.aiValueRead))}</code>` : "";
+          const ocrRead = proposal.ocrText ? `OCR: <code style="color:#f59e0b">${escapeHtml(proposal.ocrText)}</code>` : "";
+          const why = proposal.rejectReason ? `<div style="color:#ef4444;font-size:10px;margin-top:2px;">Why pending: ${escapeHtml(proposal.rejectReason)}</div>` : "";
+          def = `<div>
+            <span style="background:#3a2a1f;color:#fbbf24;font-size:9px;padding:1px 6px;border-radius:8px;font-weight:600;">⚠ PENDING REVIEW</span>
+            <code style="color:${cfg.color};margin-left:6px;">{x:${proposal.region.x}, y:${proposal.region.y}, w:${proposal.region.width}, h:${proposal.region.height}}</code>
+            <div style="color:#5e6772;font-size:10px;margin-top:2px;">${aiRead}${aiRead && ocrRead ? " · " : ""}${ocrRead}</div>
+            ${why}
+          </div>`;
+        } else {
+          def = `<span style="color:#5e6772">— not defined —</span>`;
+        }
         const removeBtn = existing
           ? `<button class="gray" style="font-size:11px;padding:3px 8px;" onclick="removeOcrRegion('${cfg.key}')">Remove</button>`
           : "";
-        const drawBtn = `<button style="background:${cfg.color};color:#fff;font-size:11px;padding:3px 8px;font-weight:600;" onclick="startDrawRegion('${cfg.key}')">✏️ ${existing ? "Redraw" : "Draw"}</button>`;
+        const drawBtn = `<button style="background:${cfg.color};color:#fff;font-size:11px;padding:3px 8px;font-weight:600;" onclick="startDrawRegion('${cfg.key}')">✏️ ${existing || proposal ? "Redraw" : "Draw"}</button>`;
         const testBtn = existing
           ? `<button class="gray" style="font-size:11px;padding:3px 8px;" onclick="testOcrRegionExisting('${cfg.key}')">🔍 Test OCR</button>`
+          : "";
+        // Proposal-specific buttons — Accept commits the AI bbox to saved;
+        // Reject drops it from the proposals file without saving. Both
+        // trigger renderOcrRegions() so the row updates immediately.
+        const proposalBtns = proposal
+          ? `<button style="background:#16a34a;color:#fff;font-size:11px;padding:3px 8px;font-weight:600;" onclick='__acceptProposal(${JSON.stringify({ key: cfg.key, region: proposal.region }).replace(/'/g, "&#39;")})'>✓ Accept</button>
+             <button class="red" style="font-size:11px;padding:3px 8px;" onclick="rejectOcrProposal('${cfg.key}')">✗ Reject</button>`
           : "";
         return `<tr>
           <td style="padding:6px 8px;border-bottom:1px solid #232a35;"><strong style="color:${cfg.color}">${cfg.label}</strong><div style="color:#5e6772;font-size:10px;">${cfg.hint}</div></td>
           <td style="padding:6px 8px;border-bottom:1px solid #232a35;">${def}</td>
-          <td style="padding:6px 8px;border-bottom:1px solid #232a35;white-space:nowrap;">${drawBtn} ${testBtn} ${removeBtn}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid #232a35;white-space:nowrap;">${proposalBtns} ${drawBtn} ${testBtn} ${removeBtn}</td>
         </tr>`;
       }).join("");
-      $("#ocrRegionsTable").innerHTML = `<table style="width:100%;font-size:12px;border-collapse:collapse;">
-        <thead><tr style="background:#161a22;"><th style="text-align:left;padding:6px 8px;">Region</th><th style="text-align:left;padding:6px 8px;">Current bbox</th><th style="text-align:left;padding:6px 8px;width:280px;">Action</th></tr></thead>
+      const pendingCount = Object.keys(ocrProposals).filter((k) => !ocrCurrentRegions[k]).length;
+      const banner = pendingCount > 0
+        ? `<div style="background:#3a2a1f;border:1px solid #f59e0b;color:#fbbf24;padding:6px 10px;border-radius:4px;font-size:12px;margin-bottom:8px;">⚠ ${pendingCount} region${pendingCount === 1 ? "" : "s"} pending review from last AI auto-detect run — click Accept or Reject below.</div>`
+        : "";
+      $("#ocrRegionsTable").innerHTML = `${banner}<table style="width:100%;font-size:12px;border-collapse:collapse;">
+        <thead><tr style="background:#161a22;"><th style="text-align:left;padding:6px 8px;">Region</th><th style="text-align:left;padding:6px 8px;">Current bbox</th><th style="text-align:left;padding:6px 8px;width:340px;">Action</th></tr></thead>
         <tbody>${rows}</tbody></table>`;
       drawAllRegionsOnOverlay();
     }
+
+    /** Reject a pending proposal — calls DELETE /ocr-regions/proposed. */
+    async function rejectOcrProposal(key) {
+      try {
+        await api(`/api/qa/manual/ocr-regions/proposed?key=${encodeURIComponent(key)}`, { method: "DELETE" });
+        toast(`Rejected proposal for ${key}`);
+        await renderOcrRegions();
+      } catch (err) {
+        toast(`Reject failed: ${err.message}`, true);
+      }
+    }
+    window.rejectOcrProposal = rejectOcrProposal;
+
+    /** Accept a proposal — POST to ocr-regions saves bbox + auto-drops proposal. */
+    window.__acceptProposal = async ({ key, region }) => {
+      try {
+        await api("/api/qa/manual/ocr-regions", {
+          method: "POST",
+          body: { key, x: region.x, y: region.y, width: region.width, height: region.height },
+        });
+        toast(`Accepted ${key} bbox from AI proposal`);
+        await renderOcrRegions();
+      } catch (err) {
+        toast(`Accept failed: ${err.message}`, true);
+      }
+    };
 
     async function loadOcrScreenshot() {
       if (!currentStatus?.active) {
@@ -3515,6 +3853,23 @@
         ctx.fillText(cfg.label, r.x + 4, r.y - 6);
       }
       ctx.setLineDash([]);
+      // Pending proposals (dashed) — only when not already saved. Visually
+      // distinct from saved (dashed + amber label suffix) so QA spots
+      // "this needs review" at a glance.
+      for (const cfg of OCR_REGION_KEYS) {
+        if (ocrCurrentRegions[cfg.key]) continue;
+        const p = (ocrProposals ?? {})[cfg.key];
+        if (!p?.region) continue;
+        const r = p.region;
+        ctx.strokeStyle = cfg.color;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([10, 6]);
+        ctx.strokeRect(r.x, r.y, r.width, r.height);
+        ctx.setLineDash([]);
+        ctx.fillStyle = "#fbbf24";
+        ctx.font = "bold 14px sans-serif";
+        ctx.fillText(`${cfg.label} (pending)`, r.x + 4, r.y - 6);
+      }
       // First click marker
       if (ocrDrawMode.firstPoint) {
         const cfg = OCR_REGION_KEYS.find((c) => c.key === ocrDrawMode.key);
