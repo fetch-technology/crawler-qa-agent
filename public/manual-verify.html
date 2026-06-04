@@ -1104,6 +1104,7 @@
           <button onclick="doClick('${key}')">Test</button>
           <button class="green" onclick="doConfirm('${key}')">✓ Verify</button>
           ${hasChildren ? `<button class="green" title="Verify ALL ${children.length} child element(s) under ${key}" onclick="doConfirmChildren('${key}')">✓ All (${children.length})</button>` : ""}
+          ${hasChildren ? `<button class="gray" title="View discover-time screenshot + child markers" onclick="viewChildrenSnapshot('${key.replace(/'/g, "\\'")}')">View</button>` : ""}
           <button style="background: #6366f1;" onclick="doPickScreenshot('${key}')" title="Pick by clicking on a fresh screenshot in this dashboard">Pick</button>
           <button class="purple" onclick="doDiscoverFromButton('${key}')">Discover</button>
           <button class="green" title="Add child element under this key (prefills '${key}__' in form)" onclick="doAddChild('${key}')">+</button>
@@ -1228,6 +1229,141 @@
         // Re-enable pointer-events on the SVG (parent had pointer-events:none).
         svg.style.pointerEvents = "auto";
       };
+    };
+
+    function directChildrenOf(parentKey, registry) {
+      const out = [];
+      const prefix = `${parentKey}__`;
+      for (const key of Object.keys(registry || {})) {
+        if (!key.startsWith(prefix)) continue;
+        const tail = key.slice(prefix.length);
+        if (tail.length === 0 || tail.includes("__")) continue;
+        out.push(key);
+      }
+      return out.sort();
+    }
+
+    window.viewChildrenSnapshot = async function(parentKey) {
+      const slug = currentStatus?.gameSlug;
+      if (!slug) return toast("No active session", true);
+      const reg = currentStatus?.registry || {};
+      const childKeys = directChildrenOf(parentKey, reg);
+      if (childKeys.length === 0) return toast(`No direct children under ${parentKey}`, true);
+
+      let listResp;
+      try {
+        listResp = await fetch(`/api/qa/manual/discovery-snapshots?gameSlug=${encodeURIComponent(slug)}`).then((r) => r.json());
+      } catch {
+        return toast("Failed to load snapshot list", true);
+      }
+      const manifest = (listResp.snapshots || []).find((s) => s.stateId === parentKey);
+      if (!manifest) return toast(`No discovery snapshot found for ${parentKey}`, true);
+
+      const existing = document.getElementById("childrenSnapshotModal");
+      if (existing) existing.remove();
+      const modal = document.createElement("div");
+      modal.id = "childrenSnapshotModal";
+      modal.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:10001;display:flex;align-items:center;justify-content:center;padding:16px;";
+      const imgUrl = `/api/qa/manual/discovery-snapshot-image?gameSlug=${encodeURIComponent(slug)}&stateId=${encodeURIComponent(parentKey)}&t=${Date.now()}`;
+      modal.innerHTML = `
+        <div style="width:min(1280px,98vw);height:min(900px,96vh);background:#111723;border:1px solid #273142;border-radius:8px;display:flex;flex-direction:column;overflow:hidden;">
+          <div style="padding:10px 12px;border-bottom:1px solid #273142;display:flex;justify-content:space-between;align-items:center;gap:10px;">
+            <div>
+              <div style="color:#dbe5f0;font-weight:700;font-size:14px;">Children Of <code>${escapeHtml(parentKey)}</code></div>
+              <div style="color:#93a2b7;font-size:11px;">snapshot: ${escapeHtml(parentKey)} · ${new Date(manifest.capturedAt).toLocaleString()} · ${childKeys.length} direct children</div>
+            </div>
+            <div style="display:flex;gap:8px;">
+              <button id="childSnapVerifyAll" class="green" style="font-size:11px;">✓ Verify All Children</button>
+              <button id="childSnapClose" class="gray" style="font-size:11px;">Close</button>
+            </div>
+          </div>
+          <div style="flex:1;min-height:0;display:flex;background:#0b1018;">
+            <div style="flex:1;min-width:0;display:flex;align-items:center;justify-content:center;overflow:auto;">
+              <div style="position:relative;display:inline-block;line-height:0;">
+                <img id="childSnapImg" src="${imgUrl}" alt="${escapeHtml(parentKey)} snapshot" style="max-width:100%;max-height:100%;display:block;" />
+                <svg id="childSnapSvg" style="position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;"></svg>
+              </div>
+            </div>
+            <div id="childSnapList" style="width:360px;border-left:1px solid #273142;padding:8px 10px;overflow:auto;"></div>
+          </div>
+          <div style="padding:8px 12px;border-top:1px solid #273142;color:#90a0b5;font-size:11px;">Markers: green=verified, yellow=pending, red=rejected. Click marker or Re-pick to update coord.</div>
+        </div>`;
+      document.body.appendChild(modal);
+
+      const close = () => {
+        modal.remove();
+        if (window.__refreshChildrenSnapshotModal) delete window.__refreshChildrenSnapshotModal;
+      };
+      modal.querySelector("#childSnapClose").onclick = close;
+      modal.addEventListener("click", (e) => { if (e.target === modal) close(); });
+
+      const renderChildList = () => {
+        const rows = childKeys.map((k) => {
+          const el = (currentStatus?.registry || {})[k];
+          const color = statusColorFor(el);
+          const status = el?.status || "missing";
+          const xy = el && Number.isFinite(el.x) && Number.isFinite(el.y) ? `(${Math.round(el.x)}, ${Math.round(el.y)})` : "(no coord)";
+          return `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:5px 0;border-bottom:1px dashed #1f2937;">
+            <div style="min-width:0;">
+              <div style="color:#dbe5f0;font-size:11px;"><code>${escapeHtml(k)}</code></div>
+              <div style="font-size:10px;color:${color};">${status} · ${xy}</div>
+            </div>
+            <button style="background:#1f2937;color:#cde3ff;font-size:10px;padding:2px 8px;border:1px solid #334155;border-radius:4px;" onclick="doPickScreenshot('${k.replace(/'/g, "\\'")}')">Re-pick</button>
+          </div>`;
+        }).join("");
+        modal.querySelector("#childSnapList").innerHTML = rows;
+      };
+
+      const drawMarkers = () => {
+        const img = modal.querySelector("#childSnapImg");
+        const svg = modal.querySelector("#childSnapSvg");
+        if (!img || !svg || !img.naturalWidth || !img.naturalHeight) return;
+        svg.setAttribute("viewBox", `0 0 ${img.naturalWidth} ${img.naturalHeight}`);
+        const regNow = currentStatus?.registry || {};
+        svg.innerHTML = childKeys.map((k) => {
+          const el = regNow[k];
+          if (!el || !Number.isFinite(el.x) || !Number.isFinite(el.y)) return "";
+          const color = statusColorFor(el);
+          const short = k.split("__").pop() || k;
+          const tooltip = `${k}\nstatus=${el.status || "pending"}${el.verifiedBy ? ` by ${el.verifiedBy}` : ""}`;
+          const box = 44;
+          const half = box / 2;
+          return `<g pointer-events="visible" style="cursor:pointer;" onclick="doPickScreenshot('${k.replace(/'/g, "\\'")}')">
+            <title>${tooltip.replace(/</g, "&lt;")}</title>
+            <rect x="${el.x - half}" y="${el.y - half}" width="${box}" height="${box}" fill="none" stroke="${color}" stroke-width="3" rx="6" />
+            <circle cx="${el.x}" cy="${el.y}" r="4" fill="${color}" />
+            <text x="${el.x + half + 6}" y="${el.y - half + 4}" font-size="14" fill="${color}" stroke="black" stroke-width="0.7" paint-order="stroke" font-weight="600">${escapeHtml(short)}</text>
+          </g>`;
+        }).join("");
+        svg.style.pointerEvents = "auto";
+      };
+
+      window.__refreshChildrenSnapshotModal = () => {
+        renderChildList();
+        drawMarkers();
+      };
+
+      modal.querySelector("#childSnapVerifyAll").onclick = async () => {
+        try {
+          const r = await api("/api/qa/manual/confirm-children", { method: "POST", body: { parentKey } });
+          if (r.status) renderStatus(r.status);
+          renderChildList();
+          drawMarkers();
+          toast(`Verified ${r.count ?? 0} children of ${parentKey}`);
+        } catch (err) {
+          toast(`Verify all failed: ${err.message}`, true);
+        }
+      };
+
+      const img = modal.querySelector("#childSnapImg");
+      img.onload = () => {
+        renderChildList();
+        drawMarkers();
+      };
+      if (img.complete) {
+        renderChildList();
+        drawMarkers();
+      }
     };
 
     document.addEventListener("DOMContentLoaded", () => {
@@ -4529,7 +4665,7 @@
         : `live game screenshot`;
       const modal = document.createElement("div");
       modal.id = "pickScreenshotModal";
-      modal.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:16px;";
+      modal.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:11050;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:16px;";
       modal.innerHTML = `
         <div style="background:#161a22;border:1px solid #2a3140;padding:12px;border-radius:6px;max-width:96vw;max-height:96vh;display:flex;flex-direction:column;gap:8px;align-items:stretch;box-sizing:border-box;">
           <div style="display:flex;justify-content:space-between;align-items:center;gap:16px;color:#cdd5dd;font-size:13px;flex:0 0 auto;">
@@ -4594,6 +4730,9 @@
           const r = await api("/api/qa/manual/update", { method: "POST", body: { uiKey, x, y } });
           close();
           await refresh(); // updates registry tree + discovery-snapshots overlays
+          if (typeof window.__refreshChildrenSnapshotModal === "function") {
+            try { window.__refreshChildrenSnapshotModal(); } catch (e) { console.warn("children snapshot refresh failed", e); }
+          }
           toast(`Picked ${uiKey} at (${x},${y}) — saved as verified`);
         } catch (err) { toast(`Pick failed: ${err.message}`, true); }
       };
