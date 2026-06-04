@@ -4793,14 +4793,51 @@ CHECK_CODE RULES
 
     const rawReq = res.request().postData();
     if (!rawReq) return;
+    // Only derive from real spin requests. Other gameService actions
+    // (doCollect/reloadBalance/etc.) can move balance and poison the
+    // inferred multiplier if treated as stake deductions.
+    if (!/(?:^|&)action=doSpin(?:&|$)/i.test(rawReq)) return;
     const parsedReq = pragmaticProvider.parseBody(rawReq);
     if (!parsedReq) return;
+    const num = (v: unknown): number => {
+      const n = typeof v === "number" ? v : Number(v);
+      return Number.isFinite(n) ? n : 0;
+    };
+
+    // Prefer balanceBefore (`bb`) from THIS response over tracker's previous
+    // value. Listener ordering can interleave unrelated balance updates
+    // between spins; `bb` is the authoritative before-balance for the same
+    // doSpin response.
+    const bbMatch = body.match(/(?:^|&)bb=([\d.]+)/);
+    const bbFromResp = bbMatch ? Number(bbMatch[1]) : NaN;
+    const effectiveBefore = Number.isFinite(bbFromResp) && bbFromResp > 0
+      ? bbFromResp
+      : prevBalance;
+
     // Pull win from response body (PP `tw` field). Default to 0 if absent.
     const twMatch = body.match(/(?:^|&)tw=([\d.]+)/);
     const win = twMatch ? Number(twMatch[1]) : 0;
+
+    // Outlier guard: if observed deduction is wildly larger than the request's
+    // nominal stake (`c*bl` or `c*l`), this sample is likely polluted by a
+    // stale balance delta. Skip derive and wait for the next clean spin.
+    const c = num(parsedReq["c"]);
+    const bl = num(parsedReq["bl"]);
+    const l = num(parsedReq["l"]);
+    const reqStake = c > 0 ? (bl > 0 ? c * bl : l > 0 ? c * l : 0) : 0;
+    const observedDeduct = effectiveBefore - newBalance + (Number.isFinite(win) ? win : 0);
+    if (reqStake > 0 && observedDeduct > reqStake * 5) {
+      console.warn(
+        `[manual/game-mechanics] skip noisy sample for ${this.gameSlug}: `
+        + `observedDeduct=${observedDeduct.toFixed(3)} vs reqStake≈${reqStake.toFixed(3)} `
+        + `(c=${c}, bl=${bl}, l=${l})`,
+      );
+      return;
+    }
+
     const derived = deriveGameMechanics({
       parsedRequest: parsedReq,
-      balanceBefore: prevBalance,
+      balanceBefore: effectiveBefore,
       balanceAfter: newBalance,
       win,
       rawRequest: rawReq,
