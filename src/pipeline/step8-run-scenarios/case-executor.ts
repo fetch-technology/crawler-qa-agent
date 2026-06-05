@@ -1105,6 +1105,15 @@ export async function executeCase(
     // "if (collectedSpins.length > lastCount)" branch which never fires when
     // the BUY response landed BEFORE post-action wait starts.
     let settleMs = POST_ACTION_SETTLE_MS;
+    const isAutoplayStyleCase =
+      input.actions.some((a) => a.kind === "wait_until_no_spin_response")
+      || /\bautoplay\b/i.test(input.category)
+      || /autoplay|autospin/i.test(`${input.id} ${input.name}`);
+    if (isAutoplayStyleCase) {
+      // Autoplay batches can have occasional long gaps (win flow, UI latency).
+      // 10s default settle is too aggressive and can terminate capture early.
+      settleMs = Math.max(settleMs, 25_000);
+    }
     let buyFeatureDetected = false;
     if (collectedSpins.length >= 1) {
       const first = collectedSpins[0]!;
@@ -2076,15 +2085,6 @@ export async function waitUntilNoSpinResponse(
       console.log(`[case-action]   progress: ${curCount - startCount} spins captured (elapsed ${opts.now() - start}ms, last spin ${gap}ms ago)`);
       lastLoggedCount = curCount;
     }
-        const isAutoplayStyleCase =
-          input.actions.some((a) => a.kind === "wait_until_no_spin_response")
-          || /\bautoplay\b/i.test(input.category)
-          || /autoplay|autospin/i.test(`${input.id} ${input.name}`);
-        if (isAutoplayStyleCase) {
-          // Autoplay batches can have occasional long gaps (win flow, UI latency).
-          // 10s default settle is too aggressive and can terminate capture early.
-          settleMs = Math.max(settleMs, 25_000);
-        }
     await opts.sleep(poll);
   }
   const finalGap = opts.now() - opts.lastSpinResponseAt();
