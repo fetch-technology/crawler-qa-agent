@@ -793,7 +793,7 @@ export async function handleManualRoute(
     // Iterate every case in the AI catalog via previewCase. Catalog must
     // exist (cold-started game). Returns per-case status + aggregate counts.
     if (url === "/api/qa/manual/run-all-testcases" && method === "POST") {
-      const body = await asJsonBody<{ continueOnFail?: boolean; mode?: "all" | "unrun" }>(req);
+      const body = await asJsonBody<{ continueOnFail?: boolean; mode?: "all" | "unrun" | "failed" }>(req);
       const r = await resolveSession(req, body as any, url).runAllTestcases(body);
       return sendJson(res, r.ok ? 200 : 400, r), true;
     }

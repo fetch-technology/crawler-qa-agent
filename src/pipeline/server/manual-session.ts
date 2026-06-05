@@ -143,7 +143,7 @@ export type SessionStatus = {
    *  /status for the same game session. */
   runAllInProgress: boolean;
   runAllProgress: {
-    mode?: "all" | "unrun";
+    mode?: "all" | "unrun" | "failed";
     total: number;
     completed: number;
     passed: number;
@@ -2429,7 +2429,7 @@ export class ManualSessionManager {
    * pre-flight ensure-main + post-case eval still applies.
    */
   async runAllTestcases(
-    opts: { continueOnFail?: boolean; caseFilter?: (id: string) => boolean; mode?: "all" | "unrun" } = {},
+    opts: { continueOnFail?: boolean; caseFilter?: (id: string) => boolean; mode?: "all" | "unrun" | "failed" } = {},
   ): Promise<{
     ok: boolean;
     reason?: string;
@@ -2455,7 +2455,7 @@ export class ManualSessionManager {
     const continueOnFail = opts.continueOnFail ?? true;
     const mode = opts.mode ?? "all";
     const resultsByCaseId: Record<string, { status?: string }> = {};
-    if (mode === "unrun") {
+    if (mode === "unrun" || mode === "failed") {
       const { readFile } = await import("node:fs/promises");
       const safe = (id: string) => id.replace(/[^a-zA-Z0-9_.-]/g, "_");
       for (const c of catalog.cases) {
@@ -2470,8 +2470,9 @@ export class ManualSessionManager {
       }
     }
     const modeFilter = (id: string): boolean => {
-      if (mode !== "unrun") return true;
+      if (mode === "all") return true;
       const r = resultsByCaseId[id];
+      if (mode === "failed") return !!r && r.status === "fail";
       return !r || r.status === "skip";
     };
     const cases = catalog.cases.filter((c) => modeFilter(c.id) && (!opts.caseFilter || opts.caseFilter(c.id)));

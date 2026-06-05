@@ -293,6 +293,7 @@
       <button id="btnRetranslateAllForce" style="background: #d9534f; float: right; font-size: 11px; padding: 4px 8px; margin-left: 6px;" title="Re-translate ALL cases (including runnable ones — re-runs AI for everything)">Re-translate ALL</button>
       <button id="btnRetranslateAll" style="background: #d97706; float: right; font-size: 11px; padding: 4px 8px; margin-left: 6px;" title="Re-translate only SKIPPED cases (those with 0 actions or skipReason)">Re-translate Skipped</button>
       <button id="btnLoadCases" class="gray" style="float: right; font-size: 11px; padding: 4px 8px; margin-left: 6px;">Load Cases</button>
+      <button id="btnRunFailed" style="background: #d9534f; float: right; font-size: 11px; padding: 4px 8px; margin-left: 6px;" title="Run only cases whose last verdict is FAIL — uses the active session">Run Failed</button>
       <button id="btnRunUnrun" style="background: #1f9d57; float: right; font-size: 11px; padding: 4px 8px; margin-left: 6px;" title="Run only cases with NO pass/fail verdict yet (unrun or skipped) — uses the active session">Run Unrun</button>
       <button id="btnRunAllCases" style="background: #29b673; float: right; font-size: 11px; padding: 4px 8px;" title="Run ALL runnable cases one by one — uses the active session">Run All cases</button>
       <button id="btnCalibratePayout" style="background: #7c5cff; float: right; font-size: 11px; padding: 4px 8px; margin-left: 6px;" title="Spin at >=2 bet levels to derive + self-validate the payout model (used by the payout-integrity case). One-time per game.">Calibrate Payout</button>
@@ -836,6 +837,7 @@
       const banner = $("#runAllBanner");
       const btnRunAll = $("#btnRunAllCases");
       const btnRunUnrun = $("#btnRunUnrun");
+      const btnRunFailed = $("#btnRunFailed");
       const p = status.runAllProgress || {};
       if (status.runAllInProgress) {
         syncServerRunProgress(status);
@@ -846,13 +848,15 @@
         const skipped = Number(p.skipped || 0);
         const current = p.currentCaseId ? ` · current=${escapeHtml(p.currentCaseId)}` : "";
         banner.style.display = "block";
-        const mode = p.mode === "unrun" ? "Run Unrun" : "Run All";
+        const mode = p.mode === "unrun" ? "Run Unrun" : p.mode === "failed" ? "Run Failed" : "Run All";
         banner.innerHTML = `<strong>${mode} (server)</strong> ${completed}/${total} done${current} · ✓ ${passed} · ✗ ${failed} · skip ${skipped}`;
         if (btnRunAll) btnRunAll.disabled = true;
         if (btnRunUnrun) btnRunUnrun.disabled = true;
+        if (btnRunFailed) btnRunFailed.disabled = true;
       } else {
         if (btnRunAll) btnRunAll.disabled = false;
         if (btnRunUnrun) btnRunUnrun.disabled = false;
+        if (btnRunFailed) btnRunFailed.disabled = false;
         runProgressState = [];
         const runProgressEl = $("#runProgressTable");
         if (runProgressEl) {
@@ -874,7 +878,11 @@
         status: (r.status === "running" || r.status === "pass" || r.status === "fail" || r.status === "skip") ? r.status : "pending",
         detail: r.detail || (typeof r.durationMs === "number" ? `${(r.durationMs / 1000).toFixed(1)}s` : ""),
       }));
-      const modeLabel = p.mode === "unrun" ? "Run Unrun (server)" : "Run All (server)";
+      const modeLabel = p.mode === "unrun"
+        ? "Run Unrun (server)"
+        : p.mode === "failed"
+          ? "Run Failed (server)"
+          : "Run All (server)";
       renderRunProgressTable(modeLabel);
       const el = $("#runProgressTable");
       if (el) el.style.display = "block";
@@ -1602,7 +1610,7 @@
     window.doRunCases = async (gameSlug, mode = "all") => {
       // Run-All / Run-Unrun are server-side so every browser on the same
       // game session sees the same progress via /status polling.
-      if (mode === "all" || mode === "unrun") {
+      if (mode === "all" || mode === "unrun" || mode === "failed") {
         return window.doRunAllServer(gameSlug, mode);
       }
       // Sanity check: need an active session targeting this game.
@@ -1769,7 +1777,8 @@
       }
       const startIso = new Date().toISOString();
       appendLog(`[run-all] server-side ${mode} start requested for ${gameSlug}`);
-      toast(`${mode === "unrun" ? "Run Unrun" : "Run All"} started on server…`);
+      const modeLabel = mode === "unrun" ? "Run Unrun" : mode === "failed" ? "Run Failed" : "Run All";
+      toast(`${modeLabel} started on server…`);
       let directOk = false;
       try {
         await api("/api/qa/manual/run-all-testcases", {
@@ -1795,7 +1804,7 @@
           && s.runAllProgress.lastFinishedAt > startIso;
         if (done) {
           const p = s.runAllProgress || {};
-          const label = mode === "unrun" ? "Run Unrun" : "Run All";
+          const label = mode === "unrun" ? "Run Unrun" : mode === "failed" ? "Run Failed" : "Run All";
           const summary = `${label} done · ✓ ${p.passed || 0} · ✗ ${p.failed || 0} · skip ${p.skipped || 0}`;
           appendLog(`[run-all] ${summary}${directOk ? "" : " (detected via polling)"}`);
           toast(summary);
@@ -2300,6 +2309,11 @@
       const slug = currentStatus?.gameSlug ?? window.__lastCasesSlug;
       if (!slug) return toast("Open a game session first (Open on a game row)", true);
       doRunCases(slug, "unrun");
+    };
+    $("#btnRunFailed").onclick = () => {
+      const slug = currentStatus?.gameSlug ?? window.__lastCasesSlug;
+      if (!slug) return toast("Open a game session first (Open on a game row)", true);
+      doRunCases(slug, "failed");
     };
 
     function renderPayoutModelStatus(r) {
