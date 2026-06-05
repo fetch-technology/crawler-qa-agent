@@ -1298,8 +1298,14 @@ export async function executeCase(
     warnings.push(`captured ${collectedSpins.length} spins but action list had ${expectedSpins} — autoplay or extra responses`);
   }
 
-  // Use last spin as the "representative" spin in result.spin. Full list goes to assertions.
-  const spin = collectedSpins.length > 0 ? collectedSpins[collectedSpins.length - 1] : null;
+  // Use LAST ROUND-END spin as the representative spin. Using the raw last
+  // captured frame can pick a non-terminal/cascade frame where `bet` semantics
+  // differ, causing false balance-conservation fails (often off by exactly bet).
+  // Full list still goes to collector-based assertions.
+  const roundEndSpins = getRoundEndSpinsImpl(collectedSpins as unknown as Record<string, unknown>[]) as unknown as NormalizedSpinResult[];
+  const spin = roundEndSpins.length > 0
+    ? roundEndSpins[roundEndSpins.length - 1]!
+    : (collectedSpins.length > 0 ? collectedSpins[collectedSpins.length - 1]! : null);
   // A case "expects spins" only when its action list actually contains spin
   // actions OR its assertion text references spin collector data. UI-only
   // cases (info popup browsing, settings tour, paytable inspection) don't
@@ -2917,7 +2923,10 @@ function explainFailure(
   }
 
   // If outermost expression is `LHS === RHS` or `LHS == RHS`, eval both sides
-  const eqMatch = code.match(/^\s*\(?\s*(.+?)\s*===?\s*(.+?)\s*\)?\s*$/s);
+  const hasBooleanChain = /\|\||&&/.test(code);
+  const eqMatch = !hasBooleanChain
+    ? code.match(/^\s*\(?\s*(.+?)\s*===?\s*(.+?)\s*\)?\s*$/s)
+    : null;
   if (eqMatch) {
     try {
       const lhs = eqMatch[1]!;

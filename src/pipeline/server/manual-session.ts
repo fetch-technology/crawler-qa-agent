@@ -843,7 +843,13 @@ export class ManualSessionManager {
         ? `\n\n--- STATE-SPECIFIC GUIDANCE (${safeLabel}) ---\n${matched.discoverHint}`
         : "";
       const mainHint = buildMainElementsHint(this.registry);
-      const prompt = `${POPUP_FOCUS_PROMPT}${stateGuidance}${mainHint}`;
+      // Existing-children hint: AI sees which keys + coords already exist
+      // under this parent → REUSES exact key names instead of inventing
+      // synonyms (bet-0.40 vs betAmount-0.40). Mechanical coord dedup
+      // is still applied below as a safety net.
+      const { buildExistingChildrenHint } = await import("../step2-detect-ui/popup-filter.js");
+      const existingHint = buildExistingChildrenHint(this.registry, safeLabel);
+      const prompt = `${POPUP_FOCUS_PROMPT}${stateGuidance}${mainHint}${existingHint}`;
       if (matched?.discoverHint) {
         console.log(`[manual/discover] applied discover-hint for "${safeLabel}" (${matched.discoverHint.length} chars)`);
       }
@@ -893,11 +899,34 @@ export class ManualSessionManager {
       // the SAME panel → same physical chips under different parent namespaces;
       // both names are legitimate keys the AI translator may reference).
       // Same-key under same parent will overwrite (idempotent re-discover).
+      // Coord-overlap skip: AI may label the same chip differently across
+      // runs (`bet-0.40` vs `betAmount-0.40`). When a NEW emission lands
+      // within COORD_OVERLAP_TOLERANCE px of an EXISTING VERIFIED entry
+      // under the same parent namespace, treat it as synonym + skip
+      // (verified wins). Mirrors the graph-explorer dedup added 2026-06-05.
+      const COORD_OVERLAP_TOLERANCE = 12;
+      const verifiedSiblings: Array<{ key: string; x: number; y: number }> = [];
+      for (const [key, regEl] of Object.entries(this.registry)) {
+        if (!regEl) continue;
+        if (regEl.verifiedBy !== "QA" && regEl.verifiedBy !== "probe") continue;
+        if (!key.startsWith(`${safeLabel}__`)) continue;
+        verifiedSiblings.push({ key, x: regEl.x, y: regEl.y });
+      }
       const addedKeys: string[] = [];
       const overwrittenKeys: string[] = [];
+      const skippedDuplicates: Array<{ proposed: string; matchedExisting: string }> = [];
       const now = new Date().toISOString();
       for (const e of aiElements) {
         const namespacedKey = `${safeLabel}__${e.key}`;
+        const overlap = verifiedSiblings.find(
+          (s) => Math.abs(s.x - Math.round(e.x)) <= COORD_OVERLAP_TOLERANCE
+              && Math.abs(s.y - Math.round(e.y)) <= COORD_OVERLAP_TOLERANCE
+              && s.key !== namespacedKey,
+        );
+        if (overlap) {
+          skippedDuplicates.push({ proposed: namespacedKey, matchedExisting: overlap.key });
+          continue;
+        }
         const wasPresent = Boolean(this.registry[namespacedKey]);
         const el: UiElement = {
           x: Math.round(e.x),
@@ -911,6 +940,10 @@ export class ManualSessionManager {
         this.verifyState[namespacedKey] = "pending";
         if (wasPresent) overwrittenKeys.push(namespacedKey);
         else addedKeys.push(namespacedKey);
+      }
+      if (skippedDuplicates.length > 0) {
+        const sample = skippedDuplicates.slice(0, 5).map((d) => `${d.proposed}→${d.matchedExisting}`).join("; ");
+        console.log(`[manual/discover] dedup: skipped ${skippedDuplicates.length} AI emissions that overlap verified entries (synonym names): ${sample}${skippedDuplicates.length > 5 ? "…" : ""}`);
       }
       if (overwrittenKeys.length > 0) {
         console.log(`[manual/discover] overwrote ${overwrittenKeys.length} existing entries with fresh coords: ${overwrittenKeys.slice(0, 5).join(", ")}`);

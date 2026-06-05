@@ -59,6 +59,58 @@ export function buildMainElementsHint(
 }
 
 /**
+ * Build a hint block listing the popup's ALREADY-KNOWN children so AI
+ * vision REUSES the exact same key names instead of inventing synonyms.
+ *
+ * Problem this solves: between Discover runs AI labels the same chip
+ * inconsistently — e.g. run 1 returns `bet-0.40`, run 2 returns
+ * `betAmount-0.40`. Both end up registered → duplicate entries. Mechanical
+ * coord-overlap dedup catches this, but only post-fact. Telling the AI
+ * "this popup already has bet-0.40 at (631,347) — reuse that name if
+ * you see the same chip" stops the duplication at the source AND saves
+ * downstream dedup logic from chasing every possible synonym.
+ *
+ * Lists ALL existing children (verified + pending) so resume-runs don't
+ * blow away the pending ones with renames either. Only the parent's
+ * direct children — grand-children belong to a deeper nesting level.
+ */
+export function buildExistingChildrenHint(
+  registry: Record<string, { x: number; y: number; verifiedBy?: string | null } | undefined>,
+  parentNamespace: string,
+): string {
+  if (!parentNamespace) return "";
+  const prefix = `${parentNamespace}__`;
+  const lines: string[] = [];
+  for (const [k, v] of Object.entries(registry)) {
+    if (!v) continue;
+    if (!k.startsWith(prefix)) continue;
+    // Only DIRECT children — skip deeper nesting (`<prefix>__X__Y` etc).
+    const remainder = k.slice(prefix.length);
+    if (remainder.includes("__")) continue;
+    if (!Number.isFinite(v.x) || !Number.isFinite(v.y)) continue;
+    const tag = v.verifiedBy === "QA" ? " [QA-verified]"
+      : v.verifiedBy === "probe" ? " [probe-verified]"
+      : "";
+    lines.push(`  - ${remainder} at (${Math.round(v.x)}, ${Math.round(v.y)})${tag}`);
+  }
+  if (lines.length === 0) return "";
+  return [
+    "",
+    "",
+    `--- EXISTING CHILDREN of this popup (REUSE these key names verbatim) ---`,
+    `The registry already has these children for "${parentNamespace}".`,
+    `If you see the same UI control, return the EXACT SAME key (NOT a synonym).`,
+    `For example, if "bet-0.40" is listed, do NOT return "betAmount-0.40" /`,
+    `"betValue-0.40" / "wagerAmount-0.40" for the same chip — return "bet-0.40".`,
+    `Only emit NEW children that have NO entry below:`,
+    ...lines,
+    "",
+    "You MAY emit additional children not in this list — those are new discoveries.",
+    "You MUST NOT rename any control that's already listed.",
+  ].join("\n");
+}
+
+/**
  * Partition AI-returned popup elements into `kept` (popup-specific) vs
  * `dropped` (overlap a canonical main element → background false positive).
  * Pure; safe to test in isolation.

@@ -15,7 +15,7 @@ import { snapshot, waitUntilStable } from "../utils/pixel-diff/index.js";
 import type { UiElement, UiRegistry } from "../registry/types.js";
 import { dirForGame } from "../registry/paths.js";
 import { saveDiscoverySnapshot } from "../registry/discovery-snapshots.js";
-import { filterMainOverlap, buildMainElementsHint } from "./popup-filter.js";
+import { filterMainOverlap, buildMainElementsHint, buildExistingChildrenHint } from "./popup-filter.js";
 import type { UiGraph, UiGraphState } from "../registry/ui-graph-store.js";
 import { classifyState, nextStateId, STATE_SAME_THRESHOLD } from "./state-hash.js";
 import { isSafeToClickForDiscovery, explainSafety } from "./safe-click.js";
@@ -519,11 +519,22 @@ export async function exploreUiGraph(
       // prompt when no main entries (shouldn't happen during normal explore,
       // but defensive).
       const mainHint = buildMainElementsHint(initialRegistry as Record<string, { x: number; y: number } | undefined>);
+      // Existing-children hint: tell AI which children of THIS parent are
+      // already in registry so it reuses canonical key names (e.g. "bet-0.40")
+      // instead of inventing synonyms ("betAmount-0.40") that produce
+      // duplicates on re-run. Coord-overlap dedup is a backstop; this prompt
+      // stops the duplication at the source.
+      const existingHint = buildExistingChildrenHint(
+        initialRegistry as Record<string, { x: number; y: number; verifiedBy?: string | null } | undefined>,
+        elKey,
+      );
       // Per-trigger extra hint (e.g. bet popup → use the exact bet ladder so
       // labels match real selectable values, not AI-interpolated guesses).
       const triggerHint = o.triggerHints[elKey] ?? "";
       const popupPrompt =
-        (mainHint || triggerHint) ? USER_PROMPT_BASE + mainHint + (triggerHint ? "\n\n" + triggerHint : "") : undefined;
+        (mainHint || triggerHint || existingHint)
+          ? USER_PROMPT_BASE + mainHint + existingHint + (triggerHint ? "\n\n" + triggerHint : "")
+          : undefined;
       // If a new tab opened, run AI discover on THAT page (its DOM has the
       // history/external content), not on the original game page (still
       // showing the main screen). The captured screenshot already used the
@@ -577,8 +588,40 @@ export async function exploreUiGraph(
       const elementNamespace = elKey;
       const newElements = new Map<string, UiElement>();
       const isExternal = !!externalPageSlot[0];
+      // Coord-overlap skip: when an AI-emitted child has nearly the same
+      // coord as an EXISTING VERIFIED entry under this same namespace
+      // (or a sibling namespace pointing at the same physical popup),
+      // treat it as the same element under a synonym name and skip the
+      // new emission. Without this, AI's inconsistent labelling between
+      // runs (e.g. "bet-0.40" vs "betAmount-0.40" for the same chip)
+      // produces duplicates because nothing wipes verified entries +
+      // AI sees a fresh popup screenshot every re-run.
+      //
+      // Tolerance 12px chosen to be larger than typical AI-vision drift
+      // (~5-10px) but smaller than chip-to-chip spacing in slot UIs.
+      const COORD_OVERLAP_TOLERANCE = 12;
+      const verifiedSiblings: Array<{ key: string; x: number; y: number }> = [];
+      for (const [key, regEl] of Object.entries(initialRegistry)) {
+        if (!regEl) continue;
+        if (regEl.verifiedBy !== "QA" && regEl.verifiedBy !== "probe") continue;
+        if (!key.startsWith(`${elementNamespace}__`)) continue;
+        verifiedSiblings.push({ key, x: regEl.x, y: regEl.y });
+      }
+      const skippedDuplicates: Array<{ proposed: string; matchedExisting: string }> = [];
       for (const e of filteredNew.kept) {
         const namespacedKey = `${elementNamespace}__${e.key}`;
+        // Synonym detection: does AI's new chip land within tolerance of
+        // a verified existing one? If yes AND the existing key isn't an
+        // exact rename target (different name same coord), skip.
+        const overlap = verifiedSiblings.find(
+          (s) => Math.abs(s.x - e.x) <= COORD_OVERLAP_TOLERANCE
+              && Math.abs(s.y - e.y) <= COORD_OVERLAP_TOLERANCE
+              && s.key !== namespacedKey,
+        );
+        if (overlap) {
+          skippedDuplicates.push({ proposed: namespacedKey, matchedExisting: overlap.key });
+          continue;
+        }
         newElements.set(namespacedKey, {
           x: e.x,
           y: e.y,
@@ -592,6 +635,10 @@ export async function exploreUiGraph(
           // in the external tab.
           ...(isExternal ? { externalPage: true } : {}),
         });
+      }
+      if (skippedDuplicates.length > 0) {
+        const sample = skippedDuplicates.slice(0, 5).map((d) => `${d.proposed}→${d.matchedExisting}`).join("; ");
+        console.log(`[explorer/dedup] state ${newStateId} via ${elKey}: skipped ${skippedDuplicates.length} AI-emitted chips that overlap verified existing entries (synonym names): ${sample}${skippedDuplicates.length > 5 ? "…" : ""}`);
       }
 
       const baselinePath = path.join(debugDir, `${newStateId}.png`);
