@@ -34,6 +34,43 @@ import { evaluateBalanceMultiSignal } from "./evidence/balance-multi-signal.js";
 import { ocrRegions } from "../registry/ocr-regions.js";
 import { verifyHistory, type HistoryVerifyResult } from "../step9-verify/history-verifier.js";
 
+// Per-process guard for UNKNOWN learner to avoid repeated AI calls across
+// consecutive cases that land on the same transient end-state screen.
+const unknownLearnSeenAt = new Map<string, number>();
+let unknownLearnAttemptCount = 0;
+
+function buildUnknownLearnFingerprint(ocrText: string): string {
+  const norm = (ocrText ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return norm.length > 0 ? norm.slice(0, 200) : "__empty__";
+}
+
+function shouldRunUnknownLearner(ocrText: string): { run: boolean; reason?: string; key: string } {
+  const maxCalls = Number(process.env.QA_UNKNOWN_LEARN_MAX_CALLS ?? 3);
+  const cooldownMs = Number(process.env.QA_UNKNOWN_LEARN_COOLDOWN_MS ?? 120_000);
+  const key = buildUnknownLearnFingerprint(ocrText);
+  const now = Date.now();
+
+  if (Number.isFinite(maxCalls) && maxCalls >= 0 && unknownLearnAttemptCount >= maxCalls) {
+    return { run: false, reason: `budget exhausted (${unknownLearnAttemptCount}/${maxCalls})`, key };
+  }
+
+  const lastAt = unknownLearnSeenAt.get(key);
+  if (
+    Number.isFinite(cooldownMs)
+    && cooldownMs > 0
+    && typeof lastAt === "number"
+    && (now - lastAt) < cooldownMs
+  ) {
+    return { run: false, reason: `duplicate UNKNOWN fingerprint within cooldown (${now - lastAt}ms < ${cooldownMs}ms)`, key };
+  }
+
+  return { run: true, key };
+}
+
 /**
  * Capture the current page state as PNG and save under
  * fixtures/registry/<slug>/case-failures/<caseId>.png. Returns the relative
@@ -1128,11 +1165,25 @@ export async function executeCase(
     try {
       const { observeState } = await import("./state-observer.js");
       const { getHandler } = await import("./interrupt-handlers/index.js");
-      const observed = await observeState(ctx.page, {
+      let observed = await observeState(ctx.page, {
         interstitialKeywords: popupKeywords.interstitial,
         substateKeywords: popupKeywords.substate,
         lastSpin: collectedSpins.length > 0 ? collectedSpins[collectedSpins.length - 1] : null,
       });
+      // Cloud runs can briefly classify end-of-spin animation as UNKNOWN.
+      // Re-observe once after a short settle before committing timeline state.
+      if (observed.state === "UNKNOWN") {
+        await ctx.page.waitForTimeout(700);
+        const reObserved = await observeState(ctx.page, {
+          interstitialKeywords: popupKeywords.interstitial,
+          substateKeywords: popupKeywords.substate,
+          lastSpin: collectedSpins.length > 0 ? collectedSpins[collectedSpins.length - 1] : null,
+        });
+        if (reObserved.state !== "UNKNOWN") {
+          console.log(`[adaptive-runner] UNKNOWN resolved after settle: ${observed.state} -> ${reObserved.state}`);
+          observed = reObserved;
+        }
+      }
       if (observed.state !== "MAIN") {
         stateTimeline.push({ at: new Date().toISOString(), from: "MAIN", to: observed.state, via: "observed" });
         const allowed = input.allowed_interruptions ?? [];
@@ -1143,21 +1194,29 @@ export async function executeCase(
         // verify the suggestion before subsequent runs trust it.
         if (observed.state === "UNKNOWN" && process.env.QA_UNKNOWN_LEARN !== "0") {
           try {
-            const { learnUnknownState, persistSignature } = await import("../step14-unknown-state-learn/index.js");
-            const learned = await learnUnknownState(ctx.page, observed.ocrText ?? "");
-            if (learned.ok && learned.signature && ctx.gameSlug) {
-              const persisted = await persistSignature(ctx.gameSlug, learned.signature, {
-                confidence: learned.confidence,
-                minConfidence: 0.7,
-              });
-              if (persisted.ok) {
-                warnings.push(`learned unknown state "${learned.signature.state}" (confidence ${(learned.confidence * 100).toFixed(0)}%) — saved to state-signatures.json`);
-                stateTimeline.push({ at: new Date().toISOString(), from: "UNKNOWN", to: learned.signature.state, via: "AI-learner" });
-              } else {
-                warnings.push(`learner produced signature but persist refused: ${persisted.reason}`);
+            const ocrForLearn = observed.ocrText ?? "";
+            const gate = shouldRunUnknownLearner(ocrForLearn);
+            if (!gate.run) {
+              warnings.push(`unknown-state learner skipped: ${gate.reason}`);
+            } else {
+              const { learnUnknownState, persistSignature } = await import("../step14-unknown-state-learn/index.js");
+              unknownLearnAttemptCount++;
+              unknownLearnSeenAt.set(gate.key, Date.now());
+              const learned = await learnUnknownState(ctx.page, ocrForLearn);
+              if (learned.ok && learned.signature && ctx.gameSlug) {
+                const persisted = await persistSignature(ctx.gameSlug, learned.signature, {
+                  confidence: learned.confidence,
+                  minConfidence: 0.7,
+                });
+                if (persisted.ok) {
+                  warnings.push(`learned unknown state "${learned.signature.state}" (confidence ${(learned.confidence * 100).toFixed(0)}%) — saved to state-signatures.json`);
+                  stateTimeline.push({ at: new Date().toISOString(), from: "UNKNOWN", to: learned.signature.state, via: "AI-learner" });
+                } else {
+                  warnings.push(`learner produced signature but persist refused: ${persisted.reason}`);
+                }
+              } else if (!learned.ok) {
+                warnings.push(`unknown-state learner: ${learned.reason}`);
               }
-            } else if (!learned.ok) {
-              warnings.push(`unknown-state learner: ${learned.reason}`);
             }
           } catch (err) {
             warnings.push(`unknown-state learner threw: ${err instanceof Error ? err.message : String(err)}`);
