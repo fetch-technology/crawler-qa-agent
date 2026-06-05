@@ -4264,14 +4264,15 @@ CHECK_CODE RULES
       payoutModel: loadedPayoutModel,
     };
 
-    // Retry loop. If the catalog declares a retry_policy, honor it. Otherwise
-    // apply the DEFAULT "re-run on fail" behavior: a case that FAILS is re-run
-    // exactly ONCE (maxRetries=1); only a persistent fail is recorded. A re-run
-    // that passes is recorded as pass. ONLY a hard fail (status === "fail")
-    // triggers a retry — INCONCLUSIVE / FAIL_LOW / FLAKY do NOT (retryWhen: []).
+    // Retry loop policy (forced): run at most 2 times total.
+    //   - First attempt always runs
+    //   - Retry exactly once ONLY when status === "fail"
+    //   - If retry passes, stop immediately and record pass
+    // This intentionally ignores per-case retry_policy/env so behavior stays
+    // deterministic in QA runs.
     const { runWithRetry } = await import("../step8-run-scenarios/case-retry-loop.js");
-    const policy = tc.retry_policy ?? {
-      maxRetries: Math.max(0, Math.min(5, Number(process.env.QA_CASE_FAIL_RETRIES ?? 1))),
+    const policy = {
+      maxRetries: 1,
       retryWhen: [],
       retryOnFailStatus: true,
     };

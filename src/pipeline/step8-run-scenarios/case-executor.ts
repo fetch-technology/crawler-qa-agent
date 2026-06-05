@@ -751,7 +751,10 @@ export async function executeCase(
           }
         }
         const beforeLen = collectedSpins.length;
-        ingestFrame(dedupState, spin);
+        // Strict dedup: merge only when roundId truly matches. Balance
+        // continuity fallback can merge distinct autoplay rounds and drop
+        // spin count (observed on Pragmatic autoplay batches).
+        ingestFrame(dedupState, spin, { allowBalanceContinuity: false });
         // Always stamp lastSpinResponseAt — whether the frame extended the
         // dedup list (new round) OR merged into an existing one (cascade
         // continuation). Both signal "spin server still active" for the
@@ -2060,8 +2063,11 @@ export async function waitUntilNoSpinResponse(
   let lastLoggedCount = startCount;
   while (opts.now() - start < opts.maxMs) {
     const gap = opts.now() - opts.lastSpinResponseAt();
-    if (gap >= opts.quietMs) {
-      const captured = opts.spinResponseCount() - startCount;
+    const captured = opts.spinResponseCount() - startCount;
+    // Do not declare "quiet complete" before at least one new spin lands.
+    // Otherwise, if action execution before this wait took > quietMs,
+    // lastSpinResponseAt can be stale and the wait exits immediately.
+    if (captured > 0 && gap >= opts.quietMs) {
       console.log(`[case-action]   quiet for ${gap}ms — captured ${captured} spin response(s) during wait; exiting after ${opts.now() - start}ms`);
       return { exitReason: "quiet", elapsedMs: opts.now() - start, spinsCapturedDuringWait: captured, lastGapMs: gap };
     }
@@ -2070,6 +2076,15 @@ export async function waitUntilNoSpinResponse(
       console.log(`[case-action]   progress: ${curCount - startCount} spins captured (elapsed ${opts.now() - start}ms, last spin ${gap}ms ago)`);
       lastLoggedCount = curCount;
     }
+        const isAutoplayStyleCase =
+          input.actions.some((a) => a.kind === "wait_until_no_spin_response")
+          || /\bautoplay\b/i.test(input.category)
+          || /autoplay|autospin/i.test(`${input.id} ${input.name}`);
+        if (isAutoplayStyleCase) {
+          // Autoplay batches can have occasional long gaps (win flow, UI latency).
+          // 10s default settle is too aggressive and can terminate capture early.
+          settleMs = Math.max(settleMs, 25_000);
+        }
     await opts.sleep(poll);
   }
   const finalGap = opts.now() - opts.lastSpinResponseAt();
