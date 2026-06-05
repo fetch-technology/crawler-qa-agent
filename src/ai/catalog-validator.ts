@@ -383,6 +383,40 @@ function validateUniqueIds(cases: TestCase[]): ValidationIssue[] {
   return issues;
 }
 
+/** Spin field vocabulary the runtime ACTUALLY emits. `status` is the adapter
+ *  constant; `state` is the SpinState union (see normalized.ts). Keep in sync
+ *  with spin-adapter.ts / normalized.ts. */
+const KNOWN_STATUS_LITERALS = new Set(["RESOLVED"]);
+const KNOWN_STATE_LITERALS = new Set([
+  "NORMAL", "FREE_SPIN", "BONUS", "GAMBLE", "RETRIGGER", "END_BONUS",
+]);
+
+/**
+ * Flag `status`/`state` equality comparisons against literals the engine never
+ * produces — these make an assertion a guaranteed false-FAIL on EVERY run.
+ * AIs habitually invent terminal words ('completed'/'success'/'finished'),
+ * e.g. `collector.spins.every(s => s.status === 'completed')`, which can never
+ * be true here. Returns one message per offending literal (empty = clean).
+ * Handles both `s.status === 'x'` and `'x' === s.status` orderings.
+ */
+export function validateStatusStateLiterals(code: string): string[] {
+  const out: string[] = [];
+  const re = /(?:\.(status|state)\s*===?\s*['"]([^'"]+)['"])|(?:['"]([^'"]+)['"]\s*===?\s*[\w.]*\.(status|state)\b)/g;
+  for (const m of code.matchAll(re)) {
+    const field = (m[1] ?? m[4])!;
+    const literal = (m[2] ?? m[3])!;
+    const allowed = field === "status" ? KNOWN_STATUS_LITERALS : KNOWN_STATE_LITERALS;
+    if (!allowed.has(literal)) {
+      out.push(
+        `compares spin.${field} to "${literal}", a value the engine never emits ` +
+        `(status is always "RESOLVED"; state ∈ ${[...KNOWN_STATE_LITERALS].join("/")}). ` +
+        `This always fails — use a real value or drop the status/state check.`,
+      );
+    }
+  }
+  return out;
+}
+
 function validateAssertions(c: TestCase): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   const seenIds = new Set<string>();
@@ -421,6 +455,17 @@ function validateAssertions(c: TestCase): ValidationIssue[] {
         rule: "assertion-identifier",
         case_id: c.id,
         message: `assertion "${a.id}": ${w}`,
+      });
+    }
+
+    // Unknown-literal guard: an assertion comparing `status`/`state` to a
+    // string the engine NEVER emits is a guaranteed false-FAIL on every run.
+    for (const msg of validateStatusStateLiterals(a.check_code)) {
+      issues.push({
+        severity: "error",
+        rule: "assertion-unknown-literal",
+        case_id: c.id,
+        message: `assertion "${a.id}": ${msg}`,
       });
     }
 

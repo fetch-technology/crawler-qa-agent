@@ -25,7 +25,7 @@ import {
 import { detectAssertionSignals, signalsFromRefs } from "./assertion-signals.js";
 import { detectUiOnlyCase, isOpenUiKey } from "./ui-case-detect.js";
 import { calcConfidence, buildSignalEvidence } from "./evidence/confidence.js";
-import { adaptSpinForAssertions } from "../step6-build-model/spin-adapter.js";
+import { adaptSpinForAssertions, KNOWN_FIELD_NAMES } from "../step6-build-model/spin-adapter.js";
 import { CaseVideoRecorder } from "./case-video-recorder.js";
 import { resolveTimingConfig } from "../registry/timing-config.js";
 import { resolveBetControls } from "../registry/bet-controls.js";
@@ -2960,6 +2960,22 @@ function explainFailure(
           }
         }
       }
+      // Non-balance fields the check_code ACTUALLY reads (status, state,
+      // isEndRound, isFreeSpin, freeSpinsRemaining, …). The balance dump above
+      // only explains reconciliation checks; status/terminal checks like
+      // `all-spins-completed` reconcile to diff=0 yet still FAIL because they
+      // test a DIFFERENT field. Surface those per spin so QA sees which spin
+      // (and value) tripped the check instead of a misleading balance diff.
+      const balanceFields = new Set([
+        "betAmount", "winAmount", "startingBalance", "endingBalance",
+        "bet", "win", "balanceBefore", "balanceAfter", "roundId", "id",
+      ]);
+      const extraFields = [...KNOWN_FIELD_NAMES].filter(
+        (f) => !balanceFields.has(f) && new RegExp(`\\.${f}\\b`).test(code),
+      );
+      if (extraFields.length > 0) {
+        parts.push(`fields read by check: ${extraFields.join(", ")}`);
+      }
       // Per-spin breakdown (compact) to spot the misbehaving spin. No cap —
       // QA wants the whole batch (autoplay rounds can exceed any fixed limit).
       // `[end]` marks spins that getRoundEndSpins keeps (the subset reconciled).
@@ -2972,7 +2988,10 @@ function explainFailure(
         const expectedDrop = bet - win;
         const mismatch = Math.abs(drop - expectedDrop) > 0.01 ? " ⚠" : "";
         const endTag = usesRoundEnds ? (endRoundIds.has(s.roundId) ? " [end]" : " [·]") : "";
-        return `#${i + 1} bet=${bet} win=${win} bb=${bb} ba=${ba} drop=${drop.toFixed(2)} expected=${expectedDrop.toFixed(2)}${mismatch}${endTag}`;
+        const extra = extraFields.length > 0
+          ? " " + extraFields.map((f) => `${f}=${jsonShort(s[f])}`).join(" ")
+          : "";
+        return `#${i + 1} bet=${bet} win=${win} bb=${bb} ba=${ba} drop=${drop.toFixed(2)} expected=${expectedDrop.toFixed(2)}${mismatch}${endTag}${extra}`;
       });
       parts.push(`per-spin: ${rows.join(" | ")}`);
     }
