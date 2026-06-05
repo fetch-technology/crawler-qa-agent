@@ -50,6 +50,30 @@ export function ingestFrame(
   const last = state.spins.length > 0 ? state.spins[state.spins.length - 1] : null;
 
   const matchByRid = rid && state.byRoundId.has(rid) ? state.byRoundId.get(rid)! : -1;
+
+  // Cascade/tumble continuation — AUTHORITATIVE merge via the game's own tumble
+  // markers (not a balance heuristic). PP tumble games (e.g. vs20swordofares)
+  // emit MULTIPLE doSpin responses for ONE bet: a round-start frame
+  // (rs_c=1, rs_p=0) followed by continuation frames (rs_p>0 / rs_c>1 / rs_more
+  // set) that re-use the SAME index+counter and do NOT move balance until the
+  // round's doCollect. When the request body is missing, buildRoundId falls
+  // back to `index + sa` (reel-state) which DIFFERS on every tumble frame, so
+  // continuation frames would otherwise leak as separate spins (autoplay 10 →
+  // 12 captured). Markers stay reliable even when balance-continuity is
+  // disabled (case-executor turns it off to avoid mis-merging distinct autoplay
+  // rounds). Absent on classic line games → Number(undefined)=NaN → no false
+  // positives. A continuation always merges into the LAST appended round (the
+  // round-start frame), since tumble frames arrive contiguously before the next
+  // bet's doSpin.
+  const raw = spin.raw as Record<string, unknown> | undefined;
+  const toNum = (v: unknown): number => (v == null ? NaN : Number(v));
+  const rsPhase = toNum(raw?.["rs_p"]);
+  const rsCount = toNum(raw?.["rs_c"]);
+  const isCascadeContinuation =
+    (Number.isFinite(rsPhase) && rsPhase > 0)
+    || (Number.isFinite(rsCount) && rsCount > 1);
+  const matchByCascadeMarker = isCascadeContinuation && last ? state.spins.length - 1 : -1;
+
   // Balance-continuity fallback: merges frames where balance flow is continuous
   // (last.ba ≈ spin.bb) AND no deduction (spin.ba ≈ spin.bb). Designed for
   // cascade frames within ONE spin (same logical round, multiple visual frames).
@@ -73,7 +97,9 @@ export function ingestFrame(
     ? state.spins.length - 1
     : -1;
 
-  const mergeIdx = matchByRid !== -1 ? matchByRid : matchByBalance;
+  const mergeIdx = matchByRid !== -1 ? matchByRid
+    : matchByCascadeMarker !== -1 ? matchByCascadeMarker
+    : matchByBalance;
 
   if (mergeIdx !== -1) {
     const prev = state.spins[mergeIdx]!;

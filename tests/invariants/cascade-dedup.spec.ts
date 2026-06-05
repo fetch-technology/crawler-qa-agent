@@ -131,3 +131,63 @@ test("10 clean spins (no cascade) → 10 entries, no merging", () => {
   }
   expect(state.spins.length).toBe(10);
 });
+
+// --- Tumble-marker merge (vs20swordofares) -------------------------------
+// PP tumble games emit MULTIPLE doSpin responses for ONE bet. The round-start
+// frame is rs_c=1/rs_p=0; continuation frames carry rs_p>0 / rs_c>1 / rs_more.
+// When the request body is missing, buildRoundId falls back to `index + sa`
+// (reel-state) which DIFFERS per tumble frame → distinct leaked roundIds. With
+// balance-continuity disabled (autoplay batches), only the cascade-marker path
+// can keep these from leaking as separate spins (the autoplay 10 → 12 bug).
+
+test("tumble continuation frames merge via rs_p/rs_c even with distinct roundIds AND balance-continuity disabled", () => {
+  const state = createDedupState();
+  const opts = { allowBalanceContinuity: false };
+  // Round-start frame: bet deducted, rs_c=1/rs_p=0, leaked sa-based roundId.
+  ingestFrame(state, synthSpin({ roundId: "1-saA", bet: 30, balanceBefore: 986678.9, balanceAfter: 986648.9, raw: { rs_c: "1", rs_p: "0" } }), opts);
+  // Continuation frames: DIFFERENT roundIds (sa changes), balance unchanged.
+  ingestFrame(state, synthSpin({ roundId: "1-saB", bet: 30, balanceBefore: 986648.9, balanceAfter: 986648.9, raw: { rs_c: "2", rs_p: "1", rs_more: "1" } }), opts);
+  ingestFrame(state, synthSpin({ roundId: "1-saC", bet: 30, balanceBefore: 986648.9, balanceAfter: 986648.9, raw: { rs_c: "3", rs_p: "2", rs_more: "1" } }), opts);
+  expect(state.spins.length).toBe(1); // all 3 frames = ONE round
+  expect(state.spins[0]!.roundId).toBe("1-saA"); // keeps round-start identity
+});
+
+test("next bet's round-start (rs_c=1, balance drops) is NOT swallowed by prior tumble round", () => {
+  const state = createDedupState();
+  const opts = { allowBalanceContinuity: false };
+  ingestFrame(state, synthSpin({ roundId: "1-saA", bet: 30, balanceBefore: 986678.9, balanceAfter: 986648.9, raw: { rs_c: "1", rs_p: "0" } }), opts);
+  ingestFrame(state, synthSpin({ roundId: "1-saB", bet: 30, balanceBefore: 986648.9, balanceAfter: 986648.9, raw: { rs_c: "2", rs_p: "1" } }), opts);
+  // Fresh bet: rs_c=1/rs_p=0 again, balance DROPS → must be a new spin.
+  ingestFrame(state, synthSpin({ roundId: "2-saC", bet: 30, balanceBefore: 986648.9, balanceAfter: 986618.9, raw: { rs_c: "1", rs_p: "0" } }), opts);
+  expect(state.spins.length).toBe(2);
+});
+
+test("classic line game (no rs_* markers) is unaffected by cascade-marker path", () => {
+  const state = createDedupState();
+  const opts = { allowBalanceContinuity: false };
+  // No rs_p/rs_c in raw → Number(undefined)=NaN → not a continuation.
+  ingestFrame(state, synthSpin({ roundId: "r1", bet: 10, balanceBefore: 100, balanceAfter: 90, raw: {} }), opts);
+  ingestFrame(state, synthSpin({ roundId: "r2", bet: 10, balanceBefore: 90, balanceAfter: 85, raw: {} }), opts);
+  expect(state.spins.length).toBe(2);
+});
+
+test("autoplay-10 with 2 winning tumble rounds → 10 logical spins (not 12)", () => {
+  const state = createDedupState();
+  const opts = { allowBalanceContinuity: false };
+  let bal = 1000;
+  let captured = 0;
+  for (let i = 0; i < 10; i++) {
+    const isWin = i === 3 || i === 7; // 2 rounds tumble
+    // Round-start frame (bet deducted).
+    ingestFrame(state, synthSpin({ roundId: `${i}-saStart`, bet: 10, balanceBefore: bal, balanceAfter: bal - 10, raw: { rs_c: "1", rs_p: "0" } }), opts);
+    captured++;
+    bal -= 10;
+    if (isWin) {
+      // One extra tumble frame, distinct leaked roundId, balance unchanged.
+      ingestFrame(state, synthSpin({ roundId: `${i}-saTumble`, bet: 10, balanceBefore: bal, balanceAfter: bal, raw: { rs_c: "2", rs_p: "1", rs_more: "1" } }), opts);
+      captured++;
+    }
+  }
+  expect(captured).toBe(12);          // 12 raw responses observed
+  expect(state.spins.length).toBe(10); // but only 10 logical rounds
+});

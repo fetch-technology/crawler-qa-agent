@@ -2848,9 +2848,37 @@
               ? `<button onclick="fetchNetworkLog('${c.id}', '${window.__lastCasesSlug ?? ""}')" class="gray" style="font-size:10px;padding:3px 8px;margin-left:6px;">View full bodies →</button>`
               : "";
             const spinCount = r.networkSummary.filter((n) => n.parsedAsSpin === true).length;
+            // Per-spin breakdown — EVERY captured spin (no cap), bet/win/balance
+            // with drop vs expected (⚠ when they disagree). Mirrors the
+            // server-side explainFailure format so QA reads the whole batch.
+            const fmt = (v) => (typeof v === "number" ? v.toFixed(2) : "—");
+            const spinBreakdown = Array.isArray(r.spins) && r.spins.length > 0
+              ? r.spins.map((s, i) => {
+                  const bb = s.balanceBefore;
+                  const ba = s.balanceAfter;
+                  const drop = (typeof bb === "number" && typeof ba === "number") ? bb - ba : null;
+                  const expected = s.bet - s.win;
+                  const mismatch = drop !== null && Math.abs(drop - expected) > 0.01;
+                  const fs = s.isFreeSpin ? ' <span style="color:#7da3d8;">FS</span>' : "";
+                  return `<div style="font-family:ui-monospace,monospace;font-size:10px;padding:1px 0;color:${mismatch ? '#d97706' : '#c8d0d8'};">`
+                    + `<span style="opacity:0.55;">#${i + 1}</span> `
+                    + `bet=${fmt(s.bet)} win=${fmt(s.win)} `
+                    + `bb=${fmt(bb)} ba=${fmt(ba)} `
+                    + `drop=${drop === null ? "—" : fmt(drop)} expected=${fmt(expected)}`
+                    + `${mismatch ? " ⚠" : ""}${fs}`
+                    + `</div>`;
+                }).join("")
+              : "";
+            const logicalSpins = Array.isArray(r.spins) ? r.spins.length : spinCount;
+            const spinBreakdownHtml = spinBreakdown
+              ? `<div style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid #232a35;">`
+                + `<div style="font-size:10px;color:#8b939c;margin-bottom:4px;">Per-spin breakdown (${logicalSpins} spins)</div>`
+                + spinBreakdown
+                + `</div>`
+              : "";
             return `<div style="margin-top:6px;">
-              <button onclick="toggleEvidence('${rid}')" class="gray" style="font-size:11px;padding:4px 8px;">📡 Network Capture (${spinCount} spins / ${r.networkSummary.length} req)</button>${fetchBtn}
-              <div id="${rid}" style="display:none;margin-top:6px;padding:6px 10px;background:#0b0e13;border:1px solid #232a35;border-radius:4px;">${rows}</div>
+              <button onclick="toggleEvidence('${rid}')" class="gray" style="font-size:11px;padding:4px 8px;">📡 Network Capture (${logicalSpins} spins / ${r.networkSummary.length} req)</button>${fetchBtn}
+              <div id="${rid}" style="display:none;margin-top:6px;padding:6px 10px;background:#0b0e13;border:1px solid #232a35;border-radius:4px;">${spinBreakdownHtml}${rows}</div>
               <div id="netBodies-${c.id}" style="display:none;margin-top:6px;padding:6px 10px;background:#0b0e13;border:1px solid #232a35;border-radius:4px;font-family:ui-monospace,monospace;font-size:10px;color:#c8d0d8;white-space:pre-wrap;max-height:400px;overflow:auto;"></div>
             </div>`;
           })()

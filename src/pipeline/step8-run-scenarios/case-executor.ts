@@ -230,6 +230,19 @@ export type CaseResult = {
   } | null;
   /** Total parseable spin responses captured during case (autoplay/cascade). */
   spinsCount?: number;
+  /** EVERY spin captured this case (post-dedup), in order. Lets the dashboard
+   *  render a full per-spin breakdown (bet / win / balance / drop) with NO cap,
+   *  instead of only `spin` (last) + `spinsCount`. `win` is the post-dedup
+   *  value (balance-derived on merged cascade rounds, parser win otherwise). */
+  spins?: Array<{
+    bet: number;
+    win: number;
+    balanceBefore: number | null;
+    balanceAfter: number;
+    state: string;
+    roundId: string;
+    isFreeSpin?: boolean;
+  }>;
   durationMs: number;
   /** Path to a PNG snapshot taken at end of case. Captured for EVERY case
    *  (pass + fail + skip) so QA can verify visual state without re-running.
@@ -1963,6 +1976,17 @@ export async function executeCase(
         }
       : null,
     spinsCount: collectedSpins.length,
+    spins: collectedSpins.length > 0
+      ? collectedSpins.map((s) => ({
+          bet: s.bet,
+          win: s.win,
+          balanceBefore: s.balanceBefore,
+          balanceAfter: s.balanceAfter,
+          state: s.state,
+          roundId: s.roundId,
+          isFreeSpin: s.isFreeSpin,
+        }))
+      : undefined,
     durationMs: Date.now() - start,
     screenshotPath,
     videoPath,
@@ -2907,8 +2931,9 @@ function explainFailure(
         parts.push(`expected (start − sumBet + sumWin) = ${expected}`);
         parts.push(`diff (actual − expected) = ${actualMinusExpected}`);
       }
-      // Per-spin breakdown (compact) to spot the misbehaving spin.
-      const rows = spins.slice(0, 20).map((s, i) => {
+      // Per-spin breakdown (compact) to spot the misbehaving spin. No cap —
+      // QA wants the whole batch (autoplay rounds can exceed any fixed limit).
+      const rows = spins.map((s, i) => {
         const bb = num(s.startingBalance);
         const ba = num(s.endingBalance);
         const bet = num(s.betAmount);
