@@ -3043,6 +3043,21 @@ export class ManualSessionManager {
         interstitialKeywords: popupKws.interstitial,
         substateKeywords: popupKws.substate,
       });
+      // Common false-positive: some games always render an "AUTOPLAY" button
+      // on the main screen. If OCR matched ONLY that label (no interstitial
+      // text, no other substate cues), treat it as on-main noise.
+      if (ocr.substate && !ocr.interstitial) {
+        const lower = ocr.matchedKeywords.map((k) => k.toLowerCase());
+        const autoplayOnly =
+          lower.length > 0
+          && lower.every((k) => k === "autoplay" || k === "auto play");
+        if (autoplayOnly) {
+          console.log(`[ensure-main] attempt ${attempt}: suppressing autoplay-only OCR match (main-screen label)`);
+          ocr.hasPopup = false;
+          ocr.substate = false;
+          ocr.matchedKeywords = [];
+        }
+      }
       layers.ocr = { hasPopup: ocr.hasPopup, matched: ocr.matchedKeywords, durationMs: ocr.durationMs };
       console.log(`[ensure-main] attempt ${attempt} OCR: hasPopup=${ocr.hasPopup} matched=[${ocr.matchedKeywords.join(",")}] ms=${ocr.durationMs}`);
 
