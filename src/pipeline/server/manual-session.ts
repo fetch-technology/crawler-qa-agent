@@ -1961,15 +1961,21 @@ export class ManualSessionManager {
       return { ok: false, reason: ocrState.reason ?? "failed to load OCR regions" };
     }
     const requiredKeys = ["balanceArea", "betArea"] as const;
+    // Auto-Onboard OCR policy: only balance/bet are required and auto-managed.
+    // win/freeSpinCounter are intentionally excluded from this phase.
+    const autoDetectKeys = requiredKeys;
+    const isValidOcrRegion = (region: { x: number; y: number; width: number; height: number } | undefined): boolean => {
+      if (!region) return false;
+      return Number.isFinite(region.x)
+        && Number.isFinite(region.y)
+        && Number.isFinite(region.width)
+        && Number.isFinite(region.height)
+        && region.width > 0
+        && region.height > 0;
+    };
     const missingRequired = requiredKeys.filter((key) => {
       const region = ocrState.regions?.[key];
-      if (!region) return true;
-      return !Number.isFinite(region.x)
-        || !Number.isFinite(region.y)
-        || !Number.isFinite(region.width)
-        || !Number.isFinite(region.height)
-        || region.width <= 0
-        || region.height <= 0;
+      return !isValidOcrRegion(region);
     });
     if (missingRequired.length > 0) {
       return {
@@ -1977,6 +1983,7 @@ export class ManualSessionManager {
         reason: `missing required OCR regions for Auto-Onboard: ${missingRequired.join(", ")}. Draw Balance widget + Bet widget in OCR Regions first.`,
       };
     }
+    const missingOrInvalidOcr = autoDetectKeys.filter((key) => !isValidOcrRegion(ocrState.regions?.[key]));
     const expectedTopLevel = this.expectedElementKeys.filter((k) => typeof k === "string" && k.length > 0 && !k.includes("__"));
     const requiredMainKeys = Array.from(new Set<string>([...LEVEL1_EXPECTED_KEYS, ...expectedTopLevel]));
     const missingLevel1Qa = requiredMainKeys.filter((key) => {
@@ -2064,17 +2071,27 @@ export class ManualSessionManager {
         { ok: false, reason: "no baseline captured", saved: [], proposed: [], skipped: [] },
       );
       checkPause();
-      const ocrSkipped = isPhaseDone("ocr-auto-detect");
+      let ocrSkipped = isPhaseDone("ocr-auto-detect");
+      if (!ocrSkipped && missingOrInvalidOcr.length === 0) {
+        // All OCR regions already exist and are valid from prior QA/manual work.
+        // Skip expensive re-detect loop unless resume state explicitly requires it.
+        this.endPhase("ocr-auto-detect", "skip", "all OCR regions already valid");
+        ocrSkipped = true;
+        console.log(`[manual/auto-onboard] ${this.gameSlug}: ocr-auto-detect SKIPPED (all regions already valid)`);
+      }
       if (this.session && !ocrSkipped) {
         this.startPhase("ocr-auto-detect");
         try {
           const baseline = await this.session.page.screenshot({ type: "png" });
-          ocrPromise = this.autoDetectOcrRegions({ baselineScreenshot: baseline }).catch((err) => ({
+          ocrPromise = this.autoDetectOcrRegions({
+            baselineScreenshot: baseline,
+            regions: missingOrInvalidOcr,
+          }).catch((err) => ({
             ok: false as const,
             reason: err instanceof Error ? err.message : String(err),
             saved: [] as never[], proposed: [] as never[], skipped: [] as never[],
           }));
-          console.log(`[manual/auto-onboard] ${this.gameSlug}: ocr-region detection running in parallel`);
+          console.log(`[manual/auto-onboard] ${this.gameSlug}: ocr-region detection running in parallel (targets=${missingOrInvalidOcr.join(",") || "none"})`);
         } catch (err) {
           console.warn(`[manual/auto-onboard] ${this.gameSlug}: baseline screenshot for OCR detection threw: ${err instanceof Error ? err.message : String(err)}`);
         }

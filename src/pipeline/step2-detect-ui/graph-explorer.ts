@@ -68,11 +68,14 @@ type Transition = { from: string; via: string; to: string };
 export function aliasElementsForNewTrigger(
   elements: Map<string, UiElement>,
   newTrigger: string,
+  sourceTrigger?: string,
 ): number {
   if (!newTrigger || elements.size === 0) return 0;
   const newPrefix = `${newTrigger}__`;
+  const sourcePrefix = sourceTrigger ? `${sourceTrigger}__` : null;
   let aliased = 0;
   for (const [existingKey, existingEl] of Array.from(elements)) {
+    if (sourcePrefix && !existingKey.startsWith(sourcePrefix)) continue;
     const parts = existingKey.split("__");
     if (parts.length < 2) continue; // top-level main key
     const tail = parts.slice(1).join("__");
@@ -206,7 +209,10 @@ export async function exploreUiGraph(
   await writeFile(mainBaseline, PNG.sync.write(mainPng));
   const mainElements = new Map<string, UiElement>();
   for (const [key, el] of Object.entries(initialRegistry)) {
-    if (el) mainElements.set(key, el);
+    // Main state should only expose top-level keys. Including namespaced
+    // sub-state keys here lets the explorer click in-popup aliases while
+    // standing on main, which can trigger alias explosion.
+    if (el && !key.includes("__")) mainElements.set(key, el);
   }
   knownStates.push({ id: "main", baseline: mainPng, elements: mainElements, close: null });
   stateIds.add("main");
@@ -474,10 +480,12 @@ export async function exploreUiGraph(
         // popup (betPlus AND betMinus → bet_selection_popup). Both clicks
         // originate from frame.stateId === "main", so the restriction below
         // keeps that case working while killing the bet-level explosion.
-        if (frame.stateId === "main" && cls.stateId !== "main" && cls.stateId !== elKey) {
+        const triggerIsTopLevel = !elKey.includes("__");
+        if (frame.stateId === "main" && triggerIsTopLevel && cls.stateId !== "main" && cls.stateId !== elKey) {
           const matchedState = knownStates.find((s) => s.id === cls.stateId);
           if (matchedState) {
-            const aliased = aliasElementsForNewTrigger(matchedState.elements, elKey);
+            const canonical = transitions.find((t) => t.to === cls.stateId && t.from === "main" && !t.via.includes("__"));
+            const aliased = aliasElementsForNewTrigger(matchedState.elements, elKey, canonical?.via);
             if (aliased > 0) {
               console.log(`[explorer/alias] ${cls.stateId} reached via NEW trigger "${elKey}" — aliased ${aliased} elements under ${elKey}__*`);
             }
