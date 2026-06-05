@@ -171,6 +171,28 @@ test("classic line game (no rs_* markers) is unaffected by cascade-marker path",
   expect(state.spins.length).toBe(2);
 });
 
+test("na=c / rs_t continuation frames merge (swordofares: tumble frames are separate doSpins with incrementing index)", () => {
+  const state = createDedupState();
+  const opts = { allowBalanceContinuity: false };
+  // Round F start: na=s, rs_c=1/rs_p=0, bet deducted, distinct roundId.
+  ingestFrame(state, synthSpin({ roundId: "req-34-2", bet: 0.4, balanceBefore: 987180.36, balanceAfter: 987179.96, raw: { na: "s", rs_c: "1", rs_p: "0" } }), opts);
+  // Tumble of F: na=c + rs_t=1 (NO rs_p/rs_c), balance credited, DIFFERENT roundId.
+  ingestFrame(state, synthSpin({ roundId: "req-35-2", bet: 0.4, balanceBefore: 987179.96, balanceAfter: 987180.06, raw: { na: "c", rs_t: "1" } }), opts);
+  expect(state.spins.length).toBe(1); // F merged
+  // Round G (losing): na=s, no markers → new round.
+  ingestFrame(state, synthSpin({ roundId: "req-37-4", bet: 0.4, balanceBefore: 987179.66, balanceAfter: 987179.26, raw: { na: "s" } }), opts);
+  // Round H start.
+  ingestFrame(state, synthSpin({ roundId: "req-38-2", bet: 0.4, balanceBefore: 987179.66, balanceAfter: 987179.26, raw: { na: "s", rs_c: "1", rs_p: "0" } }), opts);
+  // Tumble of H via rs_p/rs_c (na=s).
+  ingestFrame(state, synthSpin({ roundId: "req-39-2", bet: 0.4, balanceBefore: 987179.26, balanceAfter: 987179.26, raw: { na: "s", rs_p: "1", rs_c: "2", rs_more: "1" } }), opts);
+  // Tumble of H via na=c + rs_t=2.
+  ingestFrame(state, synthSpin({ roundId: "req-40-2", bet: 0.4, balanceBefore: 987179.26, balanceAfter: 987179.60, raw: { na: "c", rs_t: "2" } }), opts);
+  // 3 rounds total: F, G, H (H absorbed 2 tumble frames).
+  expect(state.spins.length).toBe(3);
+  // Merged win is balance-derived: round H 987179.66→987179.60 + bet 0.4 = 0.34.
+  expect(state.spins[2]!.win).toBe(0.34);
+});
+
 test("autoplay-10 with 2 winning tumble rounds → 10 logical spins (not 12)", () => {
   const state = createDedupState();
   const opts = { allowBalanceContinuity: false };

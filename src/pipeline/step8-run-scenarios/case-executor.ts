@@ -2928,11 +2928,41 @@ function explainFailure(
       if (typeof startBal === "number") {
         const expected = startBal - sumBet + sumWin;
         const actualMinusExpected = endBal - expected;
-        parts.push(`expected (start − sumBet + sumWin) = ${expected}`);
-        parts.push(`diff (actual − expected) = ${actualMinusExpected}`);
+        parts.push(`[all spins] expected (start − sumBet + sumWin) = ${expected}`);
+        parts.push(`[all spins] diff (actual − expected) = ${actualMinusExpected}`);
+      }
+      // ROUND-END subset reconciliation — mirrors what reconciliation checks
+      // ACTUALLY compute (`getRoundEndSpins(collector.spins)` + top-level
+      // `balanceBefore` = first captured spin's startingBalance, and
+      // `last` = last ROUND-END spin, NOT last spin overall). When this subset
+      // differs from the all-spins view above, the assertion can FAIL even
+      // though the all-spins diff reads 0 — which is exactly the confusing case.
+      // Show both so QA sees which set the verdict came from.
+      const usesRoundEnds = /getRoundEndSpins\s*\(/.test(code);
+      let endRoundIds = new Set<unknown>();
+      if (usesRoundEnds) {
+        const ends = getRoundEndSpinsImpl(spins) as Record<string, unknown>[];
+        endRoundIds = new Set(ends.map((s) => s.roundId));
+        parts.push(`[round-end] count=${ends.length} (of ${spins.length} captured)`);
+        if (ends.length > 0) {
+          const lastEnd = ends[ends.length - 1]!;
+          const sumBetE = ends.reduce((a, s) => a + num(s.betAmount), 0);
+          const sumWinE = ends.reduce((a, s) => a + num(s.winAmount), 0);
+          const endBalE = num(lastEnd.endingBalance);
+          parts.push(`[round-end] balanceBefore=${jsonShort(startBal)}`);
+          parts.push(`[round-end] last(round-end).endingBalance=${endBalE}`);
+          parts.push(`[round-end] sumBet=${sumBetE}`);
+          parts.push(`[round-end] sumWin=${sumWinE}`);
+          if (typeof startBal === "number") {
+            const expectedE = startBal - sumBetE + sumWinE;
+            parts.push(`[round-end] expected (balanceBefore − sumBet + sumWin) = ${expectedE}`);
+            parts.push(`[round-end] diff (actual − expected) = ${endBalE - expectedE}  ← this is what the check evaluates`);
+          }
+        }
       }
       // Per-spin breakdown (compact) to spot the misbehaving spin. No cap —
       // QA wants the whole batch (autoplay rounds can exceed any fixed limit).
+      // `[end]` marks spins that getRoundEndSpins keeps (the subset reconciled).
       const rows = spins.map((s, i) => {
         const bb = num(s.startingBalance);
         const ba = num(s.endingBalance);
@@ -2941,7 +2971,8 @@ function explainFailure(
         const drop = bb - ba;
         const expectedDrop = bet - win;
         const mismatch = Math.abs(drop - expectedDrop) > 0.01 ? " ⚠" : "";
-        return `#${i + 1} bet=${bet} win=${win} bb=${bb} ba=${ba} drop=${drop.toFixed(2)} expected=${expectedDrop.toFixed(2)}${mismatch}`;
+        const endTag = usesRoundEnds ? (endRoundIds.has(s.roundId) ? " [end]" : " [·]") : "";
+        return `#${i + 1} bet=${bet} win=${win} bb=${bb} ba=${ba} drop=${drop.toFixed(2)} expected=${expectedDrop.toFixed(2)}${mismatch}${endTag}`;
       });
       parts.push(`per-spin: ${rows.join(" | ")}`);
     }

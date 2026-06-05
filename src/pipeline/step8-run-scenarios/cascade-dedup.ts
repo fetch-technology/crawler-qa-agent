@@ -54,23 +54,34 @@ export function ingestFrame(
   // Cascade/tumble continuation — AUTHORITATIVE merge via the game's own tumble
   // markers (not a balance heuristic). PP tumble games (e.g. vs20swordofares)
   // emit MULTIPLE doSpin responses for ONE bet: a round-start frame
-  // (rs_c=1, rs_p=0) followed by continuation frames (rs_p>0 / rs_c>1 / rs_more
-  // set) that re-use the SAME index+counter and do NOT move balance until the
-  // round's doCollect. When the request body is missing, buildRoundId falls
-  // back to `index + sa` (reel-state) which DIFFERS on every tumble frame, so
-  // continuation frames would otherwise leak as separate spins (autoplay 10 →
-  // 12 captured). Markers stay reliable even when balance-continuity is
+  // (na=s, rs_c=1, rs_p=0) followed by continuation frames, then a doCollect.
+  // CRITICAL: each frame is a SEPARATE doSpin request with an INCREMENTING
+  // index, so buildRoundId (`req-<index>-<counter>`) yields a DIFFERENT roundId
+  // for every frame → the roundId path can never merge them. They also don't
+  // move balance until the round's doCollect. So continuation frames leak as
+  // separate spins (autoplay 10 → 12+ captured) unless caught by markers.
+  //
+  // Continuation markers (any one ⇒ this frame belongs to the previous round):
+  //   - na === "c"   — explicit cascade-continue frame (#7/#12 in swordofares)
+  //   - rs_t > 0     — running cascade-tier flag (set on na=c frames)
+  //   - rs_p > 0     — tumble phase advanced past the round-start
+  //   - rs_c > 1     — tumble-frame counter past the first
+  // Round-start frames are na=s with rs_c=1/rs_p=0 and no rs_t → NOT a
+  // continuation. Classic line games have none of these → Number(undefined)=NaN
+  // / na=s → no false positives. Markers work even when balance-continuity is
   // disabled (case-executor turns it off to avoid mis-merging distinct autoplay
-  // rounds). Absent on classic line games → Number(undefined)=NaN → no false
-  // positives. A continuation always merges into the LAST appended round (the
-  // round-start frame), since tumble frames arrive contiguously before the next
-  // bet's doSpin.
+  // rounds). A continuation merges into the LAST appended round, since frames
+  // arrive contiguously before the next bet's doSpin.
   const raw = spin.raw as Record<string, unknown> | undefined;
   const toNum = (v: unknown): number => (v == null ? NaN : Number(v));
   const rsPhase = toNum(raw?.["rs_p"]);
   const rsCount = toNum(raw?.["rs_c"]);
+  const rsTier = toNum(raw?.["rs_t"]);
+  const naVal = raw?.["na"] == null ? "" : String(raw["na"]);
   const isCascadeContinuation =
-    (Number.isFinite(rsPhase) && rsPhase > 0)
+    naVal === "c"
+    || (Number.isFinite(rsTier) && rsTier > 0)
+    || (Number.isFinite(rsPhase) && rsPhase > 0)
     || (Number.isFinite(rsCount) && rsCount > 1);
   const matchByCascadeMarker = isCascadeContinuation && last ? state.spins.length - 1 : -1;
 
