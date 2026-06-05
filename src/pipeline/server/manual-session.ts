@@ -139,6 +139,20 @@ export type SessionStatus = {
   generateCatalogInProgress: boolean;
   generateCatalogStartedAt: string | null;
   generateCatalogLastFinishedAt: string | null;
+  /** Shared Run-All progress (server-side), visible across devices polling
+   *  /status for the same game session. */
+  runAllInProgress: boolean;
+  runAllProgress: {
+    mode?: "all" | "unrun";
+    total: number;
+    completed: number;
+    passed: number;
+    failed: number;
+    skipped: number;
+    currentCaseId: string | null;
+    startedAt: string | null;
+    lastFinishedAt: string | null;
+  };
   /** Effective game spec — captured from do_init API merged with any QA
    *  overrides from `game-spec-override.json`. Null until first network
    *  response observed OR override file loaded on resume. Editable via
@@ -412,6 +426,19 @@ export class ManualSessionManager {
   private generateCatalogInProgress = false;
   private generateCatalogStartedAt: string | null = null;
   private generateCatalogLastFinishedAt: string | null = null;
+  /** Shared server-side progress for /run-all-testcases. */
+  private runAllInProgress = false;
+  private runAllProgress: SessionStatus["runAllProgress"] = {
+    mode: "all",
+    total: 0,
+    completed: 0,
+    passed: 0,
+    failed: 0,
+    skipped: 0,
+    currentCaseId: null,
+    startedAt: null,
+    lastFinishedAt: null,
+  };
   /** P3 — game-specific buttons the AI noticed beyond the expected list during
    *  the last discovery, AUTO-ADDED to the registry as pending. Tracked so the
    *  dashboard can highlight them for QA to verify / rename / remove. */
@@ -565,6 +592,8 @@ export class ManualSessionManager {
       generateCatalogInProgress: this.generateCatalogInProgress,
       generateCatalogStartedAt: this.generateCatalogStartedAt,
       generateCatalogLastFinishedAt: this.generateCatalogLastFinishedAt,
+      runAllInProgress: this.runAllInProgress,
+      runAllProgress: { ...this.runAllProgress },
       gameSpec: this.gameSpec ? { ...this.gameSpec } : null,
       gameSpecOverride: this.gameSpecOverrideCached ? { ...this.gameSpecOverrideCached } : null,
       gameError: this.gameError ? { ...this.gameError } : null,
@@ -2392,7 +2421,7 @@ export class ManualSessionManager {
    * pre-flight ensure-main + post-case eval still applies.
    */
   async runAllTestcases(
-    opts: { continueOnFail?: boolean; caseFilter?: (id: string) => boolean } = {},
+    opts: { continueOnFail?: boolean; caseFilter?: (id: string) => boolean; mode?: "all" | "unrun" } = {},
   ): Promise<{
     ok: boolean;
     reason?: string;
@@ -2404,6 +2433,9 @@ export class ManualSessionManager {
     if (!this.session || !this.gameSlug) {
       return { ok: false, reason: "no active session", results: [], passed: 0, failed: 0, skipped: 0 };
     }
+    if (this.runAllInProgress) {
+      return { ok: false, reason: "run-all already in progress", results: [], passed: 0, failed: 0, skipped: 0 };
+    }
     const catalog = await loadAiCatalog(this.gameSlug);
     if (!catalog) {
       return {
@@ -2413,33 +2445,77 @@ export class ManualSessionManager {
       };
     }
     const continueOnFail = opts.continueOnFail ?? true;
-    const cases = catalog.cases.filter((c) => !opts.caseFilter || opts.caseFilter(c.id));
-    const results: Array<{ caseId: string; status: string; durationMs: number; skipReason?: string }> = [];
-    let passed = 0; let failed = 0; let skipped = 0;
-    console.log(`[manual/run-all] ${this.gameSlug}: starting — ${cases.length} cases (continueOnFail=${continueOnFail})`);
-    for (let i = 0; i < cases.length; i++) {
-      const c = cases[i]!;
-      console.log(`[manual/run-all] [${i + 1}/${cases.length}] ${c.id} (${c.severity ?? "?"}) — ${c.name}`);
-      let runResult: Awaited<ReturnType<typeof this.previewCase>>;
-      try {
-        runResult = await this.previewCase(c.id, { ensureMain: true });
-      } catch (err) {
-        runResult = { ok: false, reason: err instanceof Error ? err.message : String(err) };
-      }
-      const status = runResult.result?.status ?? (runResult.ok ? "unknown" : "error");
-      const durationMs = runResult.result?.durationMs ?? 0;
-      results.push({ caseId: c.id, status, durationMs, skipReason: runResult.result?.skipReason });
-      if (status === "pass") passed++;
-      else if (status === "skip") skipped++;
-      else failed++;
-      console.log(`[manual/run-all] [${i + 1}/${cases.length}] ${c.id} → ${status} (${(durationMs / 1000).toFixed(1)}s)`);
-      if (!continueOnFail && status === "fail") {
-        console.log(`[manual/run-all] bailing after fail (continueOnFail=false)`);
-        break;
+    const mode = opts.mode ?? "all";
+    const resultsByCaseId: Record<string, { status?: string }> = {};
+    if (mode === "unrun") {
+      const { readFile } = await import("node:fs/promises");
+      const safe = (id: string) => id.replace(/[^a-zA-Z0-9_.-]/g, "_");
+      for (const c of catalog.cases) {
+        const file = path.join(dirForGame(this.gameSlug), "case-evidence", `${safe(c.id)}.result.json`);
+        try {
+          const txt = await readFile(file, "utf8");
+          const parsed = JSON.parse(txt) as { status?: string };
+          resultsByCaseId[c.id] = { status: parsed.status };
+        } catch {
+          // no result yet for this case
+        }
       }
     }
-    console.log(`[manual/run-all] ${this.gameSlug}: done — ${passed} pass / ${failed} fail / ${skipped} skip`);
-    return { ok: true, results, passed, failed, skipped };
+    const modeFilter = (id: string): boolean => {
+      if (mode !== "unrun") return true;
+      const r = resultsByCaseId[id];
+      return !r || r.status === "skip";
+    };
+    const cases = catalog.cases.filter((c) => modeFilter(c.id) && (!opts.caseFilter || opts.caseFilter(c.id)));
+    const results: Array<{ caseId: string; status: string; durationMs: number; skipReason?: string }> = [];
+    let passed = 0; let failed = 0; let skipped = 0;
+    this.runAllInProgress = true;
+    this.runAllProgress = {
+      mode,
+      total: cases.length,
+      completed: 0,
+      passed: 0,
+      failed: 0,
+      skipped: 0,
+      currentCaseId: null,
+      startedAt: new Date().toISOString(),
+      lastFinishedAt: null,
+    };
+    console.log(`[manual/run-all] ${this.gameSlug}: starting — ${cases.length} cases (continueOnFail=${continueOnFail})`);
+    try {
+      for (let i = 0; i < cases.length; i++) {
+        const c = cases[i]!;
+        this.runAllProgress.currentCaseId = c.id;
+        console.log(`[manual/run-all] [${i + 1}/${cases.length}] ${c.id} (${c.severity ?? "?"}) — ${c.name}`);
+        let runResult: Awaited<ReturnType<typeof this.previewCase>>;
+        try {
+          runResult = await this.previewCase(c.id, { ensureMain: true });
+        } catch (err) {
+          runResult = { ok: false, reason: err instanceof Error ? err.message : String(err) };
+        }
+        const status = runResult.result?.status ?? (runResult.ok ? "unknown" : "error");
+        const durationMs = runResult.result?.durationMs ?? 0;
+        results.push({ caseId: c.id, status, durationMs, skipReason: runResult.result?.skipReason });
+        if (status === "pass") passed++;
+        else if (status === "skip") skipped++;
+        else failed++;
+        this.runAllProgress.completed = results.length;
+        this.runAllProgress.passed = passed;
+        this.runAllProgress.failed = failed;
+        this.runAllProgress.skipped = skipped;
+        console.log(`[manual/run-all] [${i + 1}/${cases.length}] ${c.id} → ${status} (${(durationMs / 1000).toFixed(1)}s)`);
+        if (!continueOnFail && status === "fail") {
+          console.log(`[manual/run-all] bailing after fail (continueOnFail=false)`);
+          break;
+        }
+      }
+      console.log(`[manual/run-all] ${this.gameSlug}: done — ${passed} pass / ${failed} fail / ${skipped} skip`);
+      return { ok: true, results, passed, failed, skipped };
+    } finally {
+      this.runAllInProgress = false;
+      this.runAllProgress.currentCaseId = null;
+      this.runAllProgress.lastFinishedAt = new Date().toISOString();
+    }
   }
 
   /**

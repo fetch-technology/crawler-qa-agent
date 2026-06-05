@@ -583,6 +583,7 @@
     }
 
     let onboardPollTimer = null;
+    let runAllPollTimer = null;
     const REQUIRED_ONBOARD_OCR_KEYS = ["balanceArea", "betArea"];
     const REQUIRED_ONBOARD_OCR_LABELS = {
       balanceArea: "Balance widget",
@@ -818,6 +819,44 @@
       if (onboardLocalTickTimer) { clearInterval(onboardLocalTickTimer); onboardLocalTickTimer = null; }
     }
 
+    function startRunAllPolling() {
+      if (runAllPollTimer) return;
+      runAllPollTimer = setInterval(async () => {
+        try {
+          const status = await api("/api/qa/manual/status");
+          renderStatus(status);
+        } catch { /* transient */ }
+      }, 3000);
+    }
+    function stopRunAllPolling() {
+      if (runAllPollTimer) { clearInterval(runAllPollTimer); runAllPollTimer = null; }
+    }
+
+    function renderSharedRunAll(status) {
+      const banner = $("#runAllBanner");
+      const btnRunAll = $("#btnRunAllCases");
+      const btnRunUnrun = $("#btnRunUnrun");
+      const p = status.runAllProgress || {};
+      if (status.runAllInProgress) {
+        const total = Number(p.total || 0);
+        const completed = Number(p.completed || 0);
+        const passed = Number(p.passed || 0);
+        const failed = Number(p.failed || 0);
+        const skipped = Number(p.skipped || 0);
+        const current = p.currentCaseId ? ` · current=${escapeHtml(p.currentCaseId)}` : "";
+        banner.style.display = "block";
+        const mode = p.mode === "unrun" ? "Run Unrun" : "Run All";
+        banner.innerHTML = `<strong>${mode} (server)</strong> ${completed}/${total} done${current} · ✓ ${passed} · ✗ ${failed} · skip ${skipped}`;
+        if (btnRunAll) btnRunAll.disabled = true;
+        if (btnRunUnrun) btnRunUnrun.disabled = true;
+      } else {
+        if (btnRunAll) btnRunAll.disabled = false;
+        if (btnRunUnrun) btnRunUnrun.disabled = false;
+        // If local run loop isn't using this banner, hide it when server run-all stops.
+        if (!runCasesCancelFlag) banner.style.display = "none";
+      }
+    }
+
     function renderStatus(status) {
       const prevOnboarding = !!currentStatus?.autoOnboardInProgress;
       currentStatus = status;
@@ -896,6 +935,9 @@
           refresh().catch(() => {});
         }
       }
+      if (status.runAllInProgress) startRunAllPolling();
+      else stopRunAllPolling();
+      renderSharedRunAll(status);
       renderOnboardPhases(status.autoOnboardPhases ?? [], status.autoOnboardCurrentPhase ?? null, onboarding);
       renderGameSpec(status.gameSpec ?? null, status.gameSpecOverride ?? null);
       $("#btnStart").disabled = active;
@@ -1535,6 +1577,11 @@
     // (must Open game first). Same code path as single Run, just looped.
     let runCasesCancelFlag = false;
     window.doRunCases = async (gameSlug, mode = "all") => {
+      // Run-All / Run-Unrun are server-side so every browser on the same
+      // game session sees the same progress via /status polling.
+      if (mode === "all" || mode === "unrun") {
+        return window.doRunAllServer(gameSlug, mode);
+      }
       // Sanity check: need an active session targeting this game.
       const status = await api("/api/qa/manual/status").catch(() => ({ active: false }));
       if (!status.active || status.gameSlug !== gameSlug) {
@@ -1685,6 +1732,55 @@
       const summary = `${modeLabel} done · ${pass} pass · ${fail} fail · ${skip} skip${skippedNotOnMain > 0 ? ` (${skippedNotOnMain} not-on-main)` : ''}`;
       toast(summary);
       appendLog(`[run-all] FINISHED ${summary} out of ${runnable.length}`);
+    };
+
+    window.doRunAllServer = async (gameSlug, mode = "all") => {
+      const status = await api("/api/qa/manual/status").catch(() => ({ active: false }));
+      if (!status.active || status.gameSlug !== gameSlug) {
+        return toast(`Click [Open] for ${gameSlug} first (need active browser session)`, true);
+      }
+      if (status.runAllInProgress) {
+        toast("Run All is already in progress on server");
+        startRunAllPolling();
+        return;
+      }
+      const startIso = new Date().toISOString();
+      appendLog(`[run-all] server-side ${mode} start requested for ${gameSlug}`);
+      toast(`${mode === "unrun" ? "Run Unrun" : "Run All"} started on server…`);
+      let directOk = false;
+      try {
+        await api("/api/qa/manual/run-all-testcases", {
+          method: "POST",
+          body: { continueOnFail: true, gameSlug, mode },
+        });
+        directOk = true;
+      } catch (err) {
+        appendLog(`[run-all] HTTP failed (likely timeout/proxy): ${err.message}. Polling /status for completion…`);
+      }
+
+      // Ensure UI follows server-side progress even if initiating POST timed out.
+      startRunAllPolling();
+      const POLL_MS = 3000;
+      const deadline = Date.now() + 4 * 60 * 60 * 1000; // 4h
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, POLL_MS));
+        let s = null;
+        try { s = await api("/api/qa/manual/status"); } catch { continue; }
+        renderStatus(s);
+        const done = !s.runAllInProgress
+          && s.runAllProgress?.lastFinishedAt
+          && s.runAllProgress.lastFinishedAt > startIso;
+        if (done) {
+          const p = s.runAllProgress || {};
+          const label = mode === "unrun" ? "Run Unrun" : "Run All";
+          const summary = `${label} done · ✓ ${p.passed || 0} · ✗ ${p.failed || 0} · skip ${p.skipped || 0}`;
+          appendLog(`[run-all] ${summary}${directOk ? "" : " (detected via polling)"}`);
+          toast(summary);
+          await refresh().catch(() => {});
+          return;
+        }
+      }
+      toast("Run All polling timed out (4h). Check server logs.", true);
     };
 
     function toggleRunAllUi(running, total) {

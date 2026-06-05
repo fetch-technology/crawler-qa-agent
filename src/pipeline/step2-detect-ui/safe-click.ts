@@ -32,6 +32,20 @@ const PRODUCTION_BLACKLIST_PATTERNS: RegExp[] = [
   /superButton$/i,
   /normalButton$/i,
   /anteButton$/i,          // ante toggle → changes next spin
+  // LEAF-value chips inside selector popups. These commit a value +
+  // dismiss the popup (no new state to explore). The chip is still
+  // DISCOVERED (AI vision lists it as a child of the parent popup +
+  // registry stores the coord for runtime set_bet_to_value to click) —
+  // but the explorer must NOT recurse INTO it, else clicking returns to
+  // a same-shape state and AI hallucinates duplicated children
+  // (observed 2026-06-05: betPlus → bet-120.00 → fake "infoButton" →
+  // duplicate chip set). Skipping at the recursion gate breaks the loop
+  // without touching discovery.
+  /__bet-\d+(?:\.\d+)?(?:-selected)?$/i,   // betPlus__bet-2.80, …__bet-120.00-selected
+  /__autoCountSlide-\d+$/i,                // autoButton__autoCountSlide-10/20/50/…
+  /__lossLimit-\d+$/i,                     // autoButton__lossLimit-50/100/…
+  /__singleWinLimit-\d+$/i,                // autoButton__singleWinLimit-N
+  /__coin-\d+(?:\.\d+)?$/i,                // coin-value chips inside coin selector
 ];
 
 // Elements that are CONFIRMED safe to click for discovery — they reveal
