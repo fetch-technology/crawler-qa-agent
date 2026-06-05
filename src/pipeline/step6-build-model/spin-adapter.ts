@@ -30,11 +30,36 @@ export type AdaptedSpin = Record<string, unknown>;
 
 export function adaptSpinForAssertions(spin: NormalizedSpinResult): AdaptedSpin {
   const na = (spin.raw as Record<string, unknown> | undefined)?.na;
+
+  // Balance-derived win (2026-06-05). Providers like Pragmatic Play debit the
+  // bet on `doSpin` but credit the win asynchronously on `doCollect` (round
+  // end), so the per-response `win` field can read 0 even when that round pays
+  // — the credit then shows up on a LATER response. Summing the server `win`
+  // across an autoplay batch therefore under-counts, and
+  // `start − Σbet + Σwin` drifts from the real wallet delta (observed: 0.28).
+  // Deriving win from the wallet movement itself (balanceAfter − balanceBefore
+  // + bet) re-attributes each credit to the response where it actually landed,
+  // so Σwin reconciles to the true balance change. Falls back to the
+  // server-reported win when either balance is unknown.
+  // NOTE: this only affects the assertion-facing shape (collector.spins / win /
+  // winAmount). The per-spin FinancialRule reads NormalizedSpinResult.win
+  // directly, so it keeps the raw server win and is NOT made tautological.
+  // Payout-integrity (winBreakdown / serverTotalWin) is preserved untouched.
+  const bb = spin.balanceBefore;
+  const ba = spin.balanceAfter;
+  const bet = typeof spin.bet === "number" ? spin.bet : 0;
+  const balanceDerivedWin =
+    typeof bb === "number" && Number.isFinite(bb) && Number.isFinite(ba)
+      ? Math.round((ba - bb + bet) * 100) / 100 // round to currency precision
+      : null;
+  const serverWin = spin.win;
+  const win = balanceDerivedWin ?? serverWin;
+
   return {
     // Canonical
     roundId: spin.roundId,
     bet: spin.bet,
-    win: spin.win,
+    win,
     balanceBefore: spin.balanceBefore ?? null,
     balanceAfter: spin.balanceAfter,
     reels: spin.reels,
@@ -46,7 +71,7 @@ export function adaptSpinForAssertions(spin: NormalizedSpinResult): AdaptedSpin 
     // Aliases
     id: spin.roundId,
     betAmount: spin.bet,
-    winAmount: spin.win,
+    winAmount: win,
     startingBalance: spin.balanceBefore ?? null,
     endingBalance: spin.balanceAfter,
     matrix: spin.reels,
@@ -55,6 +80,10 @@ export function adaptSpinForAssertions(spin: NormalizedSpinResult): AdaptedSpin 
     isEndRound: na === "s" || na === undefined,
 
     raw: spin.raw,
+
+    // Raw server-reported win for assertions that explicitly need the
+    // provider's per-response value (not the balance-derived one).
+    serverWin,
 
     // Payout-integrity inputs (PP wlc_v). winBreakdown is accumulated across
     // tumble frames by cascade-dedup; serverTotalWin is the round's `tw`.
@@ -73,6 +102,8 @@ export const KNOWN_FIELD_NAMES: ReadonlySet<string> = new Set([
   // Aliases
   "id", "betAmount", "winAmount", "startingBalance", "endingBalance",
   "matrix", "grid", "status", "isEndRound", "raw",
+  // Raw server win (balance-derived win is the default for win/winAmount)
+  "serverWin",
   // Payout-integrity
   "winBreakdown", "serverTotalWin",
 ]);
