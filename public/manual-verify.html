@@ -837,8 +837,8 @@
       const btnRunAll = $("#btnRunAllCases");
       const btnRunUnrun = $("#btnRunUnrun");
       const p = status.runAllProgress || {};
-      syncServerRunProgress(status);
       if (status.runAllInProgress) {
+        syncServerRunProgress(status);
         const total = Number(p.total || 0);
         const completed = Number(p.completed || 0);
         const passed = Number(p.passed || 0);
@@ -853,6 +853,12 @@
       } else {
         if (btnRunAll) btnRunAll.disabled = false;
         if (btnRunUnrun) btnRunUnrun.disabled = false;
+        runProgressState = [];
+        const runProgressEl = $("#runProgressTable");
+        if (runProgressEl) {
+          runProgressEl.style.display = "none";
+          runProgressEl.innerHTML = "";
+        }
         // If local run loop isn't using this banner, hide it when server run-all stops.
         if (!runCasesCancelFlag) banner.style.display = "none";
       }
