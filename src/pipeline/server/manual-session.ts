@@ -152,6 +152,13 @@ export type SessionStatus = {
     currentCaseId: string | null;
     startedAt: string | null;
     lastFinishedAt: string | null;
+    rows: Array<{
+      caseId: string;
+      category?: string;
+      status: "pending" | "running" | "pass" | "fail" | "skip";
+      detail?: string;
+      durationMs?: number;
+    }>;
   };
   /** Effective game spec — captured from do_init API merged with any QA
    *  overrides from `game-spec-override.json`. Null until first network
@@ -438,6 +445,7 @@ export class ManualSessionManager {
     currentCaseId: null,
     startedAt: null,
     lastFinishedAt: null,
+    rows: [],
   };
   /** P3 — game-specific buttons the AI noticed beyond the expected list during
    *  the last discovery, AUTO-ADDED to the registry as pending. Tracked so the
@@ -2480,12 +2488,21 @@ export class ManualSessionManager {
       currentCaseId: null,
       startedAt: new Date().toISOString(),
       lastFinishedAt: null,
+      rows: cases.map((c) => ({
+        caseId: c.id,
+        category: c.category,
+        status: "pending",
+      })),
     };
     console.log(`[manual/run-all] ${this.gameSlug}: starting — ${cases.length} cases (continueOnFail=${continueOnFail})`);
     try {
       for (let i = 0; i < cases.length; i++) {
         const c = cases[i]!;
         this.runAllProgress.currentCaseId = c.id;
+        if (this.runAllProgress.rows[i]) {
+          this.runAllProgress.rows[i]!.status = "running";
+          this.runAllProgress.rows[i]!.detail = "running";
+        }
         console.log(`[manual/run-all] [${i + 1}/${cases.length}] ${c.id} (${c.severity ?? "?"}) — ${c.name}`);
         let runResult: Awaited<ReturnType<typeof this.previewCase>>;
         try {
@@ -2499,6 +2516,14 @@ export class ManualSessionManager {
         if (status === "pass") passed++;
         else if (status === "skip") skipped++;
         else failed++;
+        const rowStatus: "pass" | "fail" | "skip" = status === "pass" ? "pass" : (status === "skip" ? "skip" : "fail");
+        if (this.runAllProgress.rows[i]) {
+          this.runAllProgress.rows[i]!.status = rowStatus;
+          this.runAllProgress.rows[i]!.durationMs = durationMs;
+          this.runAllProgress.rows[i]!.detail = runResult.result?.skipReason
+            ? runResult.result.skipReason
+            : `${(durationMs / 1000).toFixed(1)}s`;
+        }
         this.runAllProgress.completed = results.length;
         this.runAllProgress.passed = passed;
         this.runAllProgress.failed = failed;

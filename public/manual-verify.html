@@ -837,6 +837,7 @@
       const btnRunAll = $("#btnRunAllCases");
       const btnRunUnrun = $("#btnRunUnrun");
       const p = status.runAllProgress || {};
+      syncServerRunProgress(status);
       if (status.runAllInProgress) {
         const total = Number(p.total || 0);
         const completed = Number(p.completed || 0);
@@ -855,6 +856,22 @@
         // If local run loop isn't using this banner, hide it when server run-all stops.
         if (!runCasesCancelFlag) banner.style.display = "none";
       }
+    }
+
+    function syncServerRunProgress(status) {
+      const p = status.runAllProgress || {};
+      const rows = Array.isArray(p.rows) ? p.rows : [];
+      if (!rows.length) return;
+      runProgressState = rows.map((r) => ({
+        id: r.caseId,
+        category: r.category || "",
+        status: (r.status === "running" || r.status === "pass" || r.status === "fail" || r.status === "skip") ? r.status : "pending",
+        detail: r.detail || (typeof r.durationMs === "number" ? `${(r.durationMs / 1000).toFixed(1)}s` : ""),
+      }));
+      const modeLabel = p.mode === "unrun" ? "Run Unrun (server)" : "Run All (server)";
+      renderRunProgressTable(modeLabel);
+      const el = $("#runProgressTable");
+      if (el) el.style.display = "block";
     }
 
     function renderStatus(status) {
