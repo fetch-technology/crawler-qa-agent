@@ -189,8 +189,13 @@ export function classify(signals: ObserverSignals): { state: ObservedState; conf
   if (hasSettings) return { state: "SETTINGS_POPUP", confidence: 0.8 };
   if (hasCongrats || hasContinue) return { state: "BIG_WIN_POPUP", confidence: 0.6 };
 
-  // 3. Dark overlay alone → some popup but no keyword match → UNKNOWN
-  if (signals.darkOverlay) return { state: "UNKNOWN", confidence: 0.4 };
+  // 3. Dark overlay alone is noisy on some themes (dark corners / vignette)
+  // in cloud rendering. Without OCR evidence, prefer MAIN to avoid flaky
+  // MAIN->UNKNOWN transitions.
+  if (signals.darkOverlay) {
+    if (ocrLower.length === 0) return { state: "MAIN", confidence: 0.55 };
+    return { state: "UNKNOWN", confidence: 0.4 };
+  }
 
   // 4. No signals → assume MAIN
   return { state: "MAIN", confidence: 0.7 };

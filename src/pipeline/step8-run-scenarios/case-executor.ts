@@ -1184,7 +1184,13 @@ export async function executeCase(
           observed = reObserved;
         }
       }
-      if (observed.state !== "MAIN") {
+      const weakUnknown = observed.state === "UNKNOWN"
+        && observed.confidence < 0.5
+        && (observed.signals.ocrMatched?.length ?? 0) === 0;
+      if (weakUnknown) {
+        console.log("[adaptive-runner] ignoring weak UNKNOWN (no OCR keywords, low confidence) — treat as MAIN");
+      }
+      if (observed.state !== "MAIN" && !weakUnknown) {
         stateTimeline.push({ at: new Date().toISOString(), from: "MAIN", to: observed.state, via: "observed" });
         const allowed = input.allowed_interruptions ?? [];
 
