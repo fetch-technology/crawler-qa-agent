@@ -4416,17 +4416,15 @@ CHECK_CODE RULES
       payoutModel: loadedPayoutModel,
     };
 
-    // Retry loop policy (forced): run at most 2 times total.
-    //   - First attempt always runs
-    //   - Retry exactly once ONLY when status === "fail"
-    //   - If retry passes, stop immediately and record pass
+    // Retry loop policy (forced): run exactly once — no retry on failure.
+    //   - First attempt always runs; result is recorded as-is (pass or fail)
     // This intentionally ignores per-case retry_policy/env so behavior stays
     // deterministic in QA runs.
     const { runWithRetry } = await import("../step8-run-scenarios/case-retry-loop.js");
     const policy = {
-      maxRetries: 1,
+      maxRetries: 0,
       retryWhen: [],
-      retryOnFailStatus: true,
+      retryOnFailStatus: false,
     };
     // Re-ensure main between attempts (a failed run may have left a popup /
     // mid-feature state). The first attempt relies on the pre-flight above.
