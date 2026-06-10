@@ -261,10 +261,23 @@ export function resolveSpinPolicy(args: {
   category?: string;
   customAssertions?: Array<{ check_code?: string }>;
 }): { policy: "REQUIRED" | "FORBIDDEN" | "OPTIONAL"; reason: string } {
-  // 1. Explicit negative-spin assertion → FORBIDDEN
   const assertions = args.customAssertions ?? [];
+  // 0. Spin-observation categories ALWAYS need spins to exercise the feature —
+  //    never FORBID them. A free-spin / respin WATCH case must spin even when
+  //    the catalog mis-set spin_count=0, or when an assertion uses a
+  //    `collector.spins.length === 0 || <check>` skip-guard. (buy_feature is
+  //    intentionally NOT here: its buy-click triggers the feature, so a
+  //    spin_count=0 buy case correctly emits no manual spins.)
+  if (args.category && /^(free_spins|respin)$/.test(args.category)) {
+    return { policy: "REQUIRED", reason: `category=${args.category} (must spin to observe the feature)` };
+  }
+  // 1. Explicit negative-spin assertion → FORBIDDEN. Only when the zero-check is
+  //    the assertion's OPERATIVE condition — NOT when it's part of an `|| …`
+  //    skip-guard. `collector.spins.length === 0 || <real check>` passes
+  //    vacuously on empty runs (a guard), and matching it here wrongly forbade
+  //    legitimate multi-spin watch cases (their actions came out empty).
   const negativeSpinPattern = /collector\.spins\.length\s*===?\s*0\b/;
-  if (assertions.some((a) => a.check_code && negativeSpinPattern.test(a.check_code))) {
+  if (assertions.some((a) => a.check_code && negativeSpinPattern.test(a.check_code) && !a.check_code.includes("||"))) {
     return { policy: "FORBIDDEN", reason: "assertion checks collector.spins.length === 0" };
   }
   // 2. spin_count = 0 (catalog explicitly says no spins) → FORBIDDEN
@@ -535,7 +548,76 @@ export async function translateCase(input: {
     parsed.actions.unshift(...preamble);
   }
 
-  return { caseId: input.caseId, actions: parsed.actions, aiCalled: true };
+  // POST-PROCESS SAFETY NET: convert a long uniform discrete-spin run into the
+  // game's NATIVE AUTOPLAY (deterministic — so re-translate reliably produces
+  // autoplay, no manual edit). Faster + far more robust than N manual clicks,
+  // and the only practical way to reach the spin counts that organically
+  // trigger free spins. Runs LAST so the ante/bet prelude is preserved.
+  const finalActions = maybeConvertToAutoplay(parsed.actions, {
+    category: input.category,
+    spinCount: input.spinCount,
+    uiMap: input.uiMap,
+  });
+  return { caseId: input.caseId, actions: finalActions, aiCalled: true };
+}
+
+/** Minimum discrete-spin run length that triggers native-autoplay conversion
+ *  (free-spin/respin watch cases convert at any count — they need autoplay to
+ *  reach a trigger). */
+const AUTOPLAY_MIN_SPINS = 20;
+
+/** Convert a uniform discrete-spin run → native autoplay when the registry
+ *  exposes the autoplay UI. Deterministic; exported for tests. */
+export function maybeConvertToAutoplay(
+  actions: CaseAction[],
+  input: { category?: string; spinCount?: number; uiMap: UiRegistry },
+): CaseAction[] {
+  const reg = input.uiMap as Record<string, UiElement | undefined>;
+  if (!reg.autoButton || !reg["autoButton__startAutoplayButton"]) return actions;
+  const presets = Object.keys(reg)
+    .map((k) => /^autoButton__autoCountSlide-(\d+)$/.exec(k))
+    .filter((m): m is RegExpExecArray => m != null)
+    .map((m) => Number(m[1]))
+    .filter((n) => Number.isFinite(n) && n > 0)
+    .sort((a, b) => a - b);
+  if (presets.length === 0) return actions;
+
+  const firstSpin = actions.findIndex((a) => a.kind === "spin");
+  if (firstSpin < 0) return actions; // AI already used autoplay (no discrete spins) — leave it
+  let lastSpin = firstSpin;
+  for (let i = firstSpin; i < actions.length; i++) {
+    if (actions[i]!.kind === "spin") lastSpin = i;
+  }
+  const runSlice = actions.slice(firstSpin, lastSpin + 1);
+  const numSpins = runSlice.filter((a) => a.kind === "spin").length;
+  // Only convert a UNIFORM run (spin + wait_ms only) — a run with bet changes /
+  // clicks interspersed needs discrete per-spin control, leave it alone.
+  if (!runSlice.every((a) => a.kind === "spin" || a.kind === "wait_ms")) return actions;
+
+  const isFsWatch = /^(free_spins|respin)$/.test(input.category ?? "");
+  const target = Math.max(numSpins, input.spinCount ?? 0);
+  if (!isFsWatch && target < AUTOPLAY_MIN_SPINS) return actions; // keep short runs discrete
+
+  // Count tile: FS watch → highest preset (maximise trigger chance); else the
+  // smallest preset that covers the target (fallback highest).
+  const tile = isFsWatch
+    ? presets[presets.length - 1]!
+    : (presets.find((n) => n >= target) ?? presets[presets.length - 1]!);
+  const maxMs = Math.min(900_000, tile * 3000 + 120_000);
+
+  const autoplaySeq: CaseAction[] = [
+    { kind: "click", uiKey: "autoButton", reason: "open autoplay panel (auto-converted from discrete spins)" },
+    { kind: "wait_ms", ms: 1500 },
+    { kind: "click", uiKey: `autoButton__autoCountSlide-${tile}`, reason: `select ${tile}-spin autoplay batch` },
+    { kind: "wait_ms", ms: 500 },
+    { kind: "click", uiKey: "autoButton__startAutoplayButton", reason: "start autoplay batch" },
+    { kind: "wait_until_no_spin_response", quietMs: 5000, maxMs, reason: `wait autoplay batch of ${tile} (FS-aware) to finish` },
+  ];
+  const before = actions.slice(0, firstSpin);
+  // Drop any trailing wait_ms after the spin run (belonged to discrete spins).
+  const after = actions.slice(lastSpin + 1).filter((a) => a.kind !== "wait_ms");
+  console.warn(`[case-translator/autoplay] converted ${numSpins} discrete spin(s) → native autoplay tile=${tile} (category=${input.category ?? "?"}, fsWatch=${isFsWatch})`);
+  return [...before, ...autoplaySeq, ...after];
 }
 
 /** Returns `[{kind:"ensure_ante_off"}]` when the registry has an

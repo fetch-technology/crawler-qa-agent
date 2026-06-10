@@ -83,3 +83,33 @@ test("negative-spin pattern: does NOT trigger for length > 0 or >= N", () => {
     expect(r.policy, `should NOT be FORBIDDEN for: ${code}`).not.toBe("FORBIDDEN");
   }
 });
+
+test("negative-spin: `length === 0 || <check>` skip-guard does NOT forbid", () => {
+  // A vacuous-pass guard on a watch case — NOT a "must be empty" requirement.
+  for (const code of [
+    "collector.spins.length === 0 || collector.spins.every(s => s.status === 'RESOLVED')",
+    "collector.spins.length === 0 || collector.spins.every(s => s.winAmount >= 0)",
+  ]) {
+    const r = resolveSpinPolicy({ spinCount: 60, customAssertions: [{ check_code: code }] });
+    expect(r.policy, `guard should NOT forbid: ${code}`).not.toBe("FORBIDDEN");
+  }
+});
+
+test("free_spins / respin categories are REQUIRED (never FORBIDDEN), even at spin_count=0", () => {
+  for (const category of ["free_spins", "respin"]) {
+    // spin_count=0 (catalog mistake) must NOT forbid a feature-observation case
+    const r0 = resolveSpinPolicy({ category, spinCount: 0 });
+    expect(r0.policy, `${category} spin_count=0 should be REQUIRED`).toBe("REQUIRED");
+    // a `length === 0 || …` guard assertion must NOT forbid it either
+    const rGuard = resolveSpinPolicy({
+      category,
+      customAssertions: [{ check_code: "collector.spins.length === 0 || collector.spins.every(s => s.isFreeSpin !== true || s.betAmount === 0)" }],
+    });
+    expect(rGuard.policy, `${category} guard should be REQUIRED`).toBe("REQUIRED");
+  }
+});
+
+test("buy_feature with spin_count=0 stays FORBIDDEN (buy-click triggers, no manual spins)", () => {
+  const r = resolveSpinPolicy({ category: "buy_feature", spinCount: 0 });
+  expect(r.policy).toBe("FORBIDDEN");
+});
