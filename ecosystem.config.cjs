@@ -20,10 +20,13 @@ module.exports = {
   apps: [
     {
       name: "qa",
-      // tsx is a local devDependency; resolve via node_modules/.bin to avoid
-      // requiring tsx in global PATH.
-      script: "./node_modules/.bin/tsx",
-      args: "src/server/index.ts",
+      // Launch via the wrapper so the server runs under a CPU ceiling
+      // (cpulimit -l <cores*100>%). Lets a co-located service on the same Mac
+      // mini keep headroom. The wrapper falls back to running UNCAPPED if
+      // cpulimit isn't installed, so the server always boots. Tune with
+      // QA_CPU_CORES (default 7) / QA_CPU_LIMIT=0 to disable. See scripts/qa-server.sh.
+      script: "./scripts/qa-server.sh",
+      interpreter: "bash",
       cwd: __dirname,
       // Keep ONE instance — game session state lives in-memory.
       instances: 1,
@@ -45,6 +48,13 @@ module.exports = {
       time: true, // prefix each log line with timestamp
       env: {
         NODE_ENV: "production",
+        // CPU ceiling for the testing tool — keep ~7 of 8 cores so a
+        // co-located service has room. The wrapper maps this to
+        // `cpulimit -l <QA_CPU_CORES*100>%`. Set QA_CPU_LIMIT=0 to disable.
+        QA_CPU_CORES: "7",
+        // Cap Node's libuv worker-thread pool (OCR/image fs work) too. Default
+        // is 4; pin to the same budget so background async doesn't oversubscribe.
+        UV_THREADPOOL_SIZE: "7",
         // Ensure Homebrew binaries (ffmpeg, etc.) resolve from the pm2-
         // managed process. Without this, /opt/homebrew/bin isn't on PATH
         // when pm2 is started via launchd / system boot and ffmpeg is missing
