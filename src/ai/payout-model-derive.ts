@@ -62,6 +62,28 @@ export function measureRates(combos: ReadonlyArray<CalibrationCombo>): {
 /** Find the global reference coin `c0` such that paytable_mult == rate * c0 for
  *  matched symbols, then attach candidate paytable names + agreement per index.
  *  Pure. Returns the symbolCurves map + overall agreement. */
+/** Map a measured N-of-a-kind count to its paytable TIER entry: the payout
+ *  whose `count` is the LARGEST that is still <= the measured count.
+ *
+ *  Pays-anywhere / cluster paytables store ONE entry per tier start — e.g.
+ *  {8, 10, 12}, where 8 covers 8-9, 10 covers 10-11, 12 covers 12+. But the
+ *  measured curve carries EXACT observed counts ({8, 9, 10, 11}), so exact
+ *  `count === entry.count` matching silently dropped counts 9/11 → the symbol
+ *  failed paytable agreement and the whole model stayed untrusted. Tier lookup
+ *  fixes that. For classic lines games (exact 3/4/5 entries) the largest-<=
+ *  rule returns the exact same entry, so this is safe for both shapes.
+ *  Returns undefined when the count is below the lowest paytable tier. */
+function findPaytableTier(
+  payouts: ReadonlyArray<{ count: number; multiplier: number }>,
+  count: number,
+): { count: number; multiplier: number } | undefined {
+  let best: { count: number; multiplier: number } | undefined;
+  for (const p of payouts) {
+    if (p.count <= count && (best === undefined || p.count > best.count)) best = p;
+  }
+  return best;
+}
+
 export function corroborateWithPaytable(
   rates: Record<string, Record<string, number>>,
   paytable: Paytable | null,
@@ -75,7 +97,7 @@ export function corroborateWithPaytable(
   for (const [, curve] of Object.entries(rates)) {
     for (const [countStr, rate] of Object.entries(curve)) {
       for (const p of pts) {
-        const m = p.payouts.find((x) => x.count === Number(countStr));
+        const m = findPaytableTier(p.payouts, Number(countStr));
         if (m && rate > 0) c0cands.push(m.multiplier / rate);
       }
     }
@@ -92,7 +114,7 @@ export function corroborateWithPaytable(
         let ok = true;
         let maxErr = 0;
         for (const [countStr, rate] of Object.entries(curve)) {
-          const m = p.payouts.find((x) => x.count === Number(countStr));
+          const m = findPaytableTier(p.payouts, Number(countStr));
           if (!m) { ok = false; break; }
           const expected = rate * c0;
           const denom = Math.max(Math.abs(m.multiplier), 1e-6);

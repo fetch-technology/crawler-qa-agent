@@ -133,3 +133,36 @@ test("derivePayoutModel (no AI): end-to-end trusted on clean 2-coin data", async
   expect(model.calibration.derivedBy).toBe("deterministic");
   expect(Object.keys(model.symbolCurves).sort()).toEqual(["3", "5"]);
 });
+
+// ── Pays-anywhere / cluster TIER mapping (vs20fruitsw shape).
+// The paytable lists ONE entry per tier start {8,10,12} (8 covers 8-9, 10
+// covers 10-11, 12 covers 12+), but the measured curve carries EXACT observed
+// counts {8,9,10,11}. Exact count-equality used to drop 9/11 → symbol failed
+// agreement → model stayed untrusted. Tier lookup (largest tier count <=
+// measured) fixes it.
+const CLUSTER_PAYTABLE: Paytable = {
+  symbols: [
+    { symbol: "yellow_banana", name: "banana", payouts: [{ count: 8, multiplier: 0.05 }, { count: 10, multiplier: 0.15 }, { count: 12, multiplier: 0.4 }] },
+    { symbol: "green_pentagon", name: "pentagon", payouts: [{ count: 8, multiplier: 0.4 }, { count: 10, multiplier: 1 }, { count: 12, multiplier: 3 }] },
+  ],
+};
+
+test("corroborateWithPaytable: tier-maps exact counts (9→8, 11→10) to pays-anywhere tiers", () => {
+  // Measured curve at c0=0.01: banana 8&9→rate5 (0.05), 10&11→rate15 (0.15).
+  const rates = {
+    "11": { "8": 5, "9": 5, "10": 15, "11": 15 }, // yellow_banana
+    "5": { "8": 40 },                              // green_pentagon (8→0.40)
+  };
+  const { symbolCurves, agreement } = corroborateWithPaytable(rates, CLUSTER_PAYTABLE);
+  expect(agreement).toBe(true);                       // count 9 & 11 no longer drop the symbol
+  expect(symbolCurves["11"]!.names).toContain("yellow_banana");
+  expect(symbolCurves["11"]!.paytableAgreement).toBe(true);
+  expect(symbolCurves["5"]!.names).toContain("green_pentagon");
+});
+
+test("corroborateWithPaytable: count BELOW lowest tier has no entry → no false match", () => {
+  // A curve with count 7 (below the 8 tier) must not spuriously match.
+  const rates = { "11": { "7": 5 } };
+  const { symbolCurves } = corroborateWithPaytable(rates, CLUSTER_PAYTABLE);
+  expect(symbolCurves["11"]!.paytableAgreement).toBe(false);
+});

@@ -40,7 +40,10 @@ export type WinCombo = {
 export function parseWlcV(raw: Record<string, unknown> | null | undefined): WinCombo[] {
   if (!raw) return [];
   const field = raw["wlc_v"];
-  if (typeof field !== "string" || field.length === 0) return [];
+  // No `wlc_v` → this is a cluster / pays-anywhere tumble game (e.g.
+  // vs20fruitsw) that itemizes wins as `l0`,`l1`,… instead. Fall back to the
+  // cluster parser, which resolves the symbol from the reel grid.
+  if (typeof field !== "string" || field.length === 0) return parseClusterWins(raw);
 
   const combos: WinCombo[] = [];
   for (const entry of field.split(";")) {
@@ -64,6 +67,54 @@ export function parseWlcV(raw: Record<string, unknown> | null | undefined): WinC
       positions,
       type: (parts[5] ?? "").trim(),
     });
+  }
+  return combos;
+}
+
+/**
+ * Parse the cluster / pays-anywhere win format used by tumble games that emit
+ * each winning cluster as `l0`, `l1`, … instead of `wlc_v`. One field per
+ * cluster, `~`-delimited:
+ *   <marker> ~ <win> ~ <pos> ~ <pos> ~ …
+ *   [0] marker   constant per observation (0); NOT the symbol
+ *   [1] win      this cluster's payout in currency
+ *   [2…] positions  reel-grid indices forming the cluster
+ *
+ * The winning SYMBOL is not in the field — it's the value of the reel grid
+ * `s` (comma-separated numeric codes) at the cluster's positions (uniform
+ * within a cluster, so the first position suffices). count = cluster size,
+ * ways = 1 (cluster pays have no ways multiplier). Returns [] when there is no
+ * grid to resolve symbols or no `lN` fields. Never throws.
+ */
+export function parseClusterWins(raw: Record<string, unknown> | null | undefined): WinCombo[] {
+  if (!raw) return [];
+  const gridStr = raw["s"];
+  if (typeof gridStr !== "string" || gridStr.length === 0) return [];
+  const grid = gridStr.split(",").map((x) => x.trim());
+
+  const lFields = Object.keys(raw)
+    .map((k) => /^l(\d+)$/.exec(k))
+    .filter((m): m is RegExpExecArray => m != null)
+    .map((m) => ({ key: m[0], n: Number(m[1]) }))
+    .sort((a, b) => a.n - b.n);
+
+  const combos: WinCombo[] = [];
+  for (const { key } of lFields) {
+    const field = raw[key];
+    if (typeof field !== "string" || field.length === 0) continue;
+    const parts = field.split("~");
+    if (parts.length < 3) continue; // need marker + win + >=1 position
+    const win = Number((parts[1] ?? "").trim());
+    if (!Number.isFinite(win) || win <= 0) continue;
+    const positions = parts
+      .slice(2)
+      .map((p) => Number(p.trim()))
+      .filter((n) => Number.isFinite(n));
+    if (positions.length === 0) continue;
+    const firstPos = positions[0]!;
+    const symbol = firstPos >= 0 && firstPos < grid.length ? grid[firstPos]! : "";
+    if (symbol === "") continue; // position out of grid range → can't resolve
+    combos.push({ symbol, win, ways: 1, count: positions.length, positions, type: "cluster" });
   }
   return combos;
 }

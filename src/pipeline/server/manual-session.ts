@@ -19,6 +19,7 @@ import {
   loadCache as loadActionsCache,
   saveCache as saveActionsCache,
   translateCase,
+  buildAutoplayBatch,
 } from "../step7-testcase-gen/case-action-translator.js";
 import { executeCase, type CaseResult } from "../step8-run-scenarios/case-executor.js";
 import "../step6-build-model/index.js";
@@ -4734,6 +4735,21 @@ CHECK_CODE RULES
   }
 
   /**
+   * Read-only: load the stored payout-model.json so the dashboard can show it
+   * (human-readable table + raw JSON). No active session required — accepts a
+   * slug override for inspecting any registered game.
+   */
+  async getPayoutModel(
+    slugOverride?: string,
+  ): Promise<{ ok: boolean; model?: import("../registry/types.js").PayoutModel; reason?: string }> {
+    const slug = slugOverride ?? this.gameSlug;
+    if (!slug) return { ok: false, reason: "gameSlug required (no active session or override)" };
+    const model = await payoutModel.load(slug).catch(() => null);
+    if (!model) return { ok: false, reason: `payout-model.json not found for ${slug} — run Calibrate Payout first` };
+    return { ok: true, model };
+  }
+
+  /**
    * Calibrate the per-game payout model (Layer 2 of payout verification).
    * Spins live at >= 2 bet levels, captures the server's per-combo win
    * breakdown (PP `wlc_v`) tagged with the ACTUAL coin from each response, then
@@ -4760,6 +4776,12 @@ CHECK_CODE RULES
   }> {
     if (!this.session || !this.gameSlug || !this.registry) return { ok: false, reason: "no active session" };
     const page = this.session.page;
+    // Target rounds PER bet level. When the registry exposes the autoplay UI
+    // we run this as ONE native autoplay batch per level (default ~100 rounds)
+    // — far faster wall-clock than per-click spins and yields more winning
+    // combos → a better-trusted model. Falls back to discrete spins (8–60)
+    // when autoplay UI is absent.
+    const targetSpins = Math.max(20, Math.min(1000, opts.spinsPerLevel ?? 100));
     const K = Math.max(8, Math.min(60, opts.spinsPerLevel ?? 25));
 
     // Pre-flight registry check. Calibration spins 25-50 times — clicking
@@ -4818,16 +4840,35 @@ CHECK_CODE RULES
     // response (initial + cascade frames) — independent of executeCase's own
     // dedup listener, and robust to set_bet not landing an exact coin.
     const combos: CalibrationCombo[] = [];
+    let fsFramesSkipped = 0;
+    let spinRespsSeen = 0; // PP spin responses the side-channel actually parsed (diagnostic)
     const onResp = async (res: import("playwright").Response) => {
       try {
         const url = res.url();
-        if (!/gameService|doSpin/i.test(url)) return;
+        // Use the PROVIDER's URL pattern, NOT a hardcoded /gameService|doSpin/
+        // regex. PP spin endpoints vary: `/gs2c/ge/…`, `…playGame`, `…doGame`,
+        // `…gameService`, `…doSpin`. The old hardcoded regex only matched the
+        // last two, so games served from `/gs2c/ge/…` (e.g. vs20fruitsw) had
+        // EVERY response dropped here → 0 combos captured even though spins
+        // fired fine. (Same lesson the main case-executor listener already
+        // learned — see its "hardcoded /gameService|doSpin/ dropped every
+        // response" note.)
+        if (!pragmaticProvider.urlPattern.test(url)) return;
+        if (pragmaticProvider.skipUrl?.(url)) return;
         if (res.request().method() !== "POST") return;
         const body = await res.text();
         const parsed = pragmaticProvider.parseBody(body);
         if (!parsed) return;
+        // Skip FREE-SPIN / bonus frames. With native autoplay over ~100 rounds
+        // (below) the run WILL trigger free spins; FS frames have bet=0 and
+        // different combo economics (retrigger awards, multipliers) so their
+        // wins would skew the per-symbol BASE rate the model derives. Discrete
+        // 25-spin runs rarely hit FS so this gate was previously unnecessary.
+        const resp = pragmaticProvider.parseResponse(parsed as Record<string, unknown>);
+        if (resp.isFreeSpin === true || (resp.freeSpinsRemaining ?? 0) > 0) { fsFramesSkipped++; return; }
         const coin = Number((parsed as Record<string, unknown>)["c"]);
         if (!Number.isFinite(coin) || coin <= 0) return;
+        spinRespsSeen++;
         for (const wc of parseWlcV(parsed as Record<string, unknown>)) {
           combos.push({ ...wc, coin });
         }
@@ -4840,21 +4881,69 @@ CHECK_CODE RULES
     // Hoist these out of the try block so the post-executeCase
     // diagnostics (combos === 0 disambiguation) can reference them
     // when reporting why calibration didn't capture any spins.
+    // Pick the SECOND coin level. Prefer the registry's real bet chips
+    // (`<parent>__bet-<n>` / `__betAmount-<n>`) over the computed betLadder:
+    //   - chips are values the UI actually exposes → set_bet_to_value lands via
+    //     a single direct chip click (no 30-click OCR ladder traversal), and
+    //   - chips are BASE-mode bets, whereas betLadder is coinValues × ALL
+    //     bls levels — which for ante games includes ante-multiplier rungs
+    //     (e.g. bls=[1,1.25,1.5,1.9] → 6.25). With ante OFF (as calibration
+    //     requires) those rungs are UNREACHABLE, so targeting one just makes
+    //     the OCR loop spin 30 clicks and settle on the wrong bet.
+    // Median chip gives a mid-volatility level distinct from min. Fall back to
+    // the betLadder median only when no chips are registered.
+    const chipValues = [...new Set(
+      Object.keys(this.registry)
+        .map((k) => /__bet(?:Amount)?-(\d+(?:\.\d+)?)$/.exec(k)?.[1])
+        .filter((v): v is string => v != null)
+        .map(Number)
+        .filter((n) => Number.isFinite(n) && n > 0),
+    )].sort((a, b) => a - b);
     const ladder = this.gameSpec?.betLadder ?? [];
-    const higherIdx = ladder.length > 1 ? Math.min(Math.floor(ladder.length / 2) || 1, ladder.length - 1) : -1;
-    const higherBet = higherIdx > 0 ? ladder[higherIdx]! : null;
+    let higherBet: number | null = null;
+    if (chipValues.length > 1) {
+      higherBet = chipValues[Math.floor(chipValues.length / 2)]!;
+      console.log(`[calibrate-payout] ${this.gameSlug}: level-2 bet=${higherBet} from registry chips [${chipValues.join(", ")}] (base-mode, UI-reachable)`);
+    } else if (ladder.length > 1) {
+      const higherIdx = Math.min(Math.floor(ladder.length / 2) || 1, ladder.length - 1);
+      higherBet = ladder[higherIdx]!;
+      console.warn(`[calibrate-payout] ${this.gameSlug}: no bet chips in registry — falling back to betLadder median=${higherBet} (may be an ante rung if game has ante; ensure ante is OFF)`);
+    }
+    // Per-level spin generator: native autoplay batch when the autoplay UI is
+    // registered (one click-to-start → ~targetSpins rounds), else fall back to
+    // K discrete spins. The wlc_v side-channel above captures combos either way.
+    const autoBatch = buildAutoplayBatch(this.registry, {
+      targetSpins,
+      reason: "payout calibration: autoplay batch",
+    });
+    const spinBatch = (): import("../step7-testcase-gen/case-action-translator.js").CaseAction[] =>
+      autoBatch
+        ? autoBatch.actions.map((a) => ({ ...a }))
+        : Array.from({ length: K }, () => [{ kind: "spin" as const }, { kind: "wait_ms" as const, ms: 2500 }]).flat();
+    const spinMode = autoBatch ? `native autoplay tile=${autoBatch.tile}` : `${K} discrete spins`;
+
     const actions: import("../step7-testcase-gen/case-action-translator.js").CaseAction[] = [];
+    // Force ante OFF first. Ante ON (PP `sInfo=an`) inflates the wager AND
+    // shifts the bet ladder, so set_bet_to_min / the bet chips no longer land
+    // on the base values they were discovered at — the second-level chip click
+    // then silently fails to change the coin, leaving BOTH levels at the same
+    // coin (one distinct coin → model can never be `trusted`, needs >=2).
+    // No-op at runtime when the game has no anteButton.
+    if (this.registry.anteButton) {
+      actions.push({ kind: "ensure_ante_off", reason: "calibration: base wager, stable bet ladder for 2 coin levels" });
+      actions.push({ kind: "wait_ms", ms: 500 });
+    }
     if (betMinus) {
       actions.push({ kind: "set_bet_to_min" });
       actions.push({ kind: "wait_ms", ms: 800 });
     } else {
       console.warn(`[calibrate-payout] ${this.gameSlug}: betMinus not in registry — skipping set_bet_to_min and using current bet for level-1 spins`);
     }
-    for (let i = 0; i < K; i++) { actions.push({ kind: "spin" }); actions.push({ kind: "wait_ms", ms: 2500 }); }
+    actions.push(...spinBatch());
     if (higherBet != null && betMinus && betPlus) {
       actions.push({ kind: "set_bet_to_value", value: higherBet, reason: "calibration: second coin level" });
       actions.push({ kind: "wait_ms", ms: 800 });
-      for (let i = 0; i < K; i++) { actions.push({ kind: "spin" }); actions.push({ kind: "wait_ms", ms: 2500 }); }
+      actions.push(...spinBatch());
     } else if (higherBet != null) {
       console.warn(`[calibrate-payout] ${this.gameSlug}: second-level calibration skipped (needs both betMinus + betPlus in registry)`);
     }
@@ -4872,7 +4961,7 @@ CHECK_CODE RULES
         gameSlug: this.gameSlug,
         payoutModel: null,
       };
-      console.log(`[calibrate-payout] ${this.gameSlug}: spinning ${K}×${higherBet != null ? 2 : 1} level(s) to capture combos…`);
+      console.log(`[calibrate-payout] ${this.gameSlug}: capturing combos via ${spinMode} × ${higherBet != null ? 2 : 1} level(s)…`);
       // Capture executeCase result so we can distinguish "spins ran but
       // no wins" from "spins never fired" — the former is a volatility
       // issue (genuine), the latter is a setup issue (wrong reason).
@@ -4891,7 +4980,10 @@ CHECK_CODE RULES
 
     const distinctCoins = [...new Set(combos.map((c) => c.coin))];
     const cr = caseResult; // null when executeCase threw (rare — caught by outer)
-    console.log(`[calibrate-payout] ${this.gameSlug}: case status=${cr?.status ?? "errored"} actionsExecuted=${cr?.actionsExecuted ?? 0}/${actions.length} captured=${combos.length} combos across coins [${distinctCoins.join(", ")}]`);
+    console.log(`[calibrate-payout] ${this.gameSlug}: case status=${cr?.status ?? "errored"} actionsExecuted=${cr?.actionsExecuted ?? 0}/${actions.length} spinResponsesSeen=${spinRespsSeen} captured=${combos.length} base combos across coins [${distinctCoins.join(", ")}] (skipped ${fsFramesSkipped} free-spin/bonus frame(s))`);
+    if (combos.length > 0 && distinctCoins.length < 2 && higherBet != null) {
+      console.warn(`[calibrate-payout] ${this.gameSlug}: only ${distinctCoins.length} distinct coin level captured (level-2 set_bet_to_value=${higherBet} did NOT change the coin — chip click likely cancelled on close, or bet UI didn't commit). Model will derive but stay UNTRUSTED (needs >=2 coin levels). Check the bet-chip close behaviour for this game.`);
+    }
     if (combos.length === 0) {
       // Disambiguate root cause:
       //   - executeCase fail with skipReason → bet/spin setup broke
@@ -4910,10 +5002,17 @@ CHECK_CODE RULES
           reason: `calibration aborted after only ${executed}/${actions.length} actions — spins never reliably fired. Check the game is on the MAIN screen (not stuck on a popup) and that spinButton coord is correct.`,
         };
       }
-      // True "spins ran but no wins" case — this is the original message.
+      // Spins fired but no winning combos. Distinguish two sub-cases with the
+      // side-channel diagnostic counter:
+      if (spinRespsSeen === 0) {
+        return {
+          ok: false,
+          reason: `executed ${executed}/${actions.length} actions but the side-channel captured 0 spin responses — autoplay/spin likely didn't fire, or the spin endpoint URL wasn't recognized. Verify the autoplay UI (autoButton/tile/start) coords + that the game actually spun.`,
+        };
+      }
       return {
         ok: false,
-        reason: `spun ${executed}/${actions.length} actions but no winning combos captured. Try more spins via QA_CALIBRATE_SPINS env, or pick a higher-volatility bet level (current betMin may be too low).`,
+        reason: `saw ${spinRespsSeen} spin response(s) but none carried a winning combo (wlc_v) — genuine volatility/no-win run. Re-run (more spins) or pick a higher-volatility bet level.`,
       };
     }
 
@@ -5263,6 +5362,17 @@ CHECK_CODE RULES
     // Pull win from response body (PP `tw` field). Default to 0 if absent.
     const twMatch = body.match(/(?:^|&)tw=([\d.]+)/);
     const win = twMatch ? Number(twMatch[1]) : 0;
+
+    // Derive ONLY from a LOSING spin (no win). On a losing spin the balance
+    // drop IS the stake exactly — there is no win term that could desync. On
+    // tumble/cascade games a WINNING frame reports `tw` (running win) BEFORE
+    // it's credited to balance, so deducted = stake + uncredited-win → a garbage
+    // multiplier (the vs20fruitsw=41 / vswaysrsm=47 bug) that then mis-stamps
+    // bet on every spin. Losing spins dominate real slot play; we don't cache
+    // on skip, so this simply retries on the next spin until a clean loss lands.
+    // Works for every mechanic — lines/ways/cluster/ante all bill the full stake
+    // on a losing spin.
+    if (!Number.isFinite(win) || win > 0) return;
 
     // Outlier guard: if observed deduction is wildly larger than the request's
     // nominal stake (`c*bl` or `c*l`), this sample is likely polluted by a

@@ -7,6 +7,10 @@
 
 import { test, expect } from "@playwright/test";
 import type { CaseAction } from "../../src/pipeline/step7-testcase-gen/case-action-translator.ts";
+import { findBetChip } from "../../src/pipeline/step8-run-scenarios/case-executor.ts";
+import type { UiRegistry } from "../../src/pipeline/registry/types.ts";
+
+const el = (x = 1, y = 1) => ({ x, y, strategy: "coord" }) as unknown as UiRegistry[string];
 
 test("CaseAction includes set_bet_to_value variant", () => {
   const a: CaseAction = { kind: "set_bet_to_value", value: 0.5 };
@@ -61,6 +65,29 @@ test("decision tree: tolerance 0.01 catches small floating-point drift", () => {
   const currentBet = 0.5001;  // OCR returned slightly different float
   const tolerance = 0.01;
   expect(Math.abs(currentBet - target) <= tolerance).toBe(true);
+});
+
+// findBetChip — direct-chip fast path. Discovery names the same chip either
+// `__bet-<n>` OR `__betAmount-<n>`; BOTH must match or the fast path silently
+// dies and set_bet falls to the slow 30-click OCR ladder.
+test("findBetChip matches `__bet-<n>` chip keys", () => {
+  const reg = { betPlus: el(), "betPlus__bet-2.00": el(5, 5) } as unknown as UiRegistry;
+  const m = findBetChip(reg, 2.0, 0.01);
+  expect(m?.chipKey).toBe("betPlus__bet-2.00");
+});
+
+test("findBetChip matches `__betAmount-<n>` chip keys (the vs20fruitsw shape)", () => {
+  const reg = {
+    betPlus: el(), betMinus: el(),
+    "betPlus__betAmount-0.20": el(), "betPlus__betAmount-1.40": el(7, 7), "betPlus__betAmount-10.00": el(),
+  } as unknown as UiRegistry;
+  const m = findBetChip(reg, 1.4, 0.01);
+  expect(m?.chipKey).toBe("betPlus__betAmount-1.40");
+});
+
+test("findBetChip returns null when no chip is within tolerance (→ OCR fallback)", () => {
+  const reg = { betPlus: el(), "betPlus__betAmount-6.00": el() } as unknown as UiRegistry;
+  expect(findBetChip(reg, 6.25, 0.01)).toBeNull(); // 6.25 (ante rung) not a real chip
 });
 
 test("regression for hardcoded count bug: user's example case", () => {

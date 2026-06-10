@@ -58,7 +58,7 @@ function buildRoundId(
  *        else   → c × l
  *      Same PP convention as #1.
  */
-function ppBetFromRequest(
+export function ppBetFromRequest(
   parsedRequest: Record<string, unknown> | null,
   opts: { mechanic?: string; betMultiplier?: number } = {},
 ): number {
@@ -78,8 +78,20 @@ function ppBetFromRequest(
     if (l > 0) return c * l;
     return 0;
   }
-  if (typeof opts.betMultiplier === "number" && opts.betMultiplier > 0) {
-    return c * opts.betMultiplier;
+  const M = opts.betMultiplier;
+  if (typeof M === "number" && M > 0) {
+    // ways/cluster: `l` is the ways-count (e.g. 1024), so the stored multiplier
+    // is the ONLY reliable stake source — trust it. For "unknown", which is
+    // where polluted calibration samples land, only trust M when it's
+    // structurally plausible: a ways-style fixed mult (M <= l) or lines-equivalent
+    // (M ≈ bl). A multiplier that's neither (e.g. 41 when l=20) is a poisoned
+    // sample → ignore it and fall back to the request structure (c × l). This
+    // SELF-HEALS an already-stored bad game-mechanics.json without re-onboarding.
+    const trust =
+      mechanic === "ways" || mechanic === "cluster"
+        ? true
+        : (l > 0 && M <= l + 1e-6) || (bl > 0 && Math.abs(M - bl) < 0.5);
+    if (trust) return c * M;
   }
   if (bl > 0) return c * bl;
   if (l > 0) return c * l;

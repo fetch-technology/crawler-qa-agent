@@ -296,6 +296,7 @@
       <button id="btnRunFailed" style="background: #d9534f; float: right; font-size: 11px; padding: 4px 8px; margin-left: 6px;" title="Run only cases whose last verdict is FAIL — uses the active session">Run Failed</button>
       <button id="btnRunUnrun" style="background: #1f9d57; float: right; font-size: 11px; padding: 4px 8px; margin-left: 6px;" title="Run only cases with NO pass/fail verdict yet (unrun or skipped) — uses the active session">Run Unrun</button>
       <button id="btnRunAllCases" style="background: #29b673; float: right; font-size: 11px; padding: 4px 8px;" title="Run ALL runnable cases one by one — uses the active session">Run All cases</button>
+      <button id="btnViewPayoutModel" style="background: #5b4bb5; float: right; font-size: 11px; padding: 4px 8px; margin-left: 6px;" title="Show the stored payout-model.json — human-readable per-symbol table + raw JSON.">View Model</button>
       <button id="btnCalibratePayout" style="background: #7c5cff; float: right; font-size: 11px; padding: 4px 8px; margin-left: 6px;" title="Spin at >=2 bet levels to derive + self-validate the payout model (used by the payout-integrity case). One-time per game.">Calibrate Payout</button>
       <button id="btnAddCase" style="background: #16a34a; float: right; font-size: 11px; padding: 4px 8px; margin-left: 6px;" title="Add a new test case manually or via AI. Persisted to test-cases.json.">+ Add Case</button>
     </h2>
@@ -304,6 +305,7 @@
       <strong>Preview</strong> executes one case's actions on the live Playwright browser so QA can visually verify each step.
     </p>
     <div id="payoutModelStatus" style="display: none; background: #1f1a33; border: 1px solid #3a2f63; padding: 8px 12px; border-radius: 4px; margin-bottom: 10px; font-size: 12px;"></div>
+    <div id="payoutModelDetail" style="display: none; background: #181426; border: 1px solid #3a2f63; padding: 10px 12px; border-radius: 4px; margin-bottom: 10px; font-size: 12px;"></div>
     <div id="runAllBanner" style="display: none; background: #2a3852; padding: 8px 12px; border-radius: 4px; margin-bottom: 10px; font-size: 12px;"></div>
     <div id="runProgressTable" style="display: none; margin-bottom: 10px; max-height: 340px; overflow: auto; border: 1px solid #232a35; border-radius: 4px;"></div>
     <div class="row" style="background: #161a22; padding: 8px 12px; border-radius: 4px; margin-bottom: 8px; font-size: 12px; gap: 12px;">
@@ -2340,6 +2342,93 @@
         + ((r.notes && r.notes.length) ? `<br><span style="color:#8b939c;">${r.notes.join(" · ")}</span>` : "");
     }
 
+    // Render the FULL stored model: human-readable per-symbol table + raw JSON.
+    function renderPayoutModelDetail(model) {
+      const el = $("#payoutModelDetail");
+      if (!el) return;
+      if (!model) { el.style.display = "none"; el.innerHTML = ""; return; }
+      const cal = model.calibration || {};
+      const trustedBadge = model.trusted
+        ? `<span style="color:#29b673;font-weight:600;">TRUSTED</span>`
+        : `<span style="color:#d9a441;font-weight:600;">NOT trusted</span>`;
+      const yn = (b) => b ? `<span style="color:#29b673;">yes</span>` : `<span style="color:#d9a441;">no</span>`;
+      const meta = `
+        <div style="display:flex;flex-wrap:wrap;gap:6px 16px;margin-bottom:8px;">
+          <span><strong>${trustedBadge}</strong></span>
+          <span>mechanic: <code>${escapeHtml(String(model.mechanic ?? "?"))}</code></span>
+          <span>derivedBy: <code>${escapeHtml(String(cal.derivedBy ?? "?"))}</code></span>
+          <span>coin levels: <code>[${(cal.coinLevels || []).join(", ")}]</code></span>
+          <span>spins used: ${cal.spinsUsed ?? "?"}</span>
+          <span>combos: ${cal.combosMatched ?? "?"}/${cal.combosTotal ?? "?"}</span>
+          <span>reproduced all: ${yn(cal.reproducedAll)}</span>
+          <span>paytable agreement: ${yn(cal.paytableAgreement)}</span>
+          <span style="color:#8b939c;">generated: ${escapeHtml(String(model.generatedAt ?? "?"))}</span>
+        </div>`;
+      const curves = model.symbolCurves || {};
+      const rows = Object.keys(curves)
+        .sort((a, b) => (Number(a) || 0) - (Number(b) || 0))
+        .map((idx) => {
+          const sc = curves[idx] || {};
+          const curve = sc.curve || {};
+          const cells = Object.keys(curve)
+            .sort((a, b) => (Number(a) || 0) - (Number(b) || 0))
+            .map((cnt) => `<code style="margin-right:8px;">${escapeHtml(cnt)}×→${curve[cnt]}</code>`)
+            .join("");
+          const names = (sc.names || []).map((n) => `<code>${escapeHtml(String(n))}</code>`).join(", ") || "<span style='color:#8b939c;'>—</span>";
+          return `<tr style="border-top:1px solid #2a2440;">
+            <td style="padding:3px 8px;font-weight:600;">${escapeHtml(idx)}</td>
+            <td style="padding:3px 8px;">${names}</td>
+            <td style="padding:3px 8px;">${cells || "<span style='color:#8b939c;'>—</span>"}</td>
+            <td style="padding:3px 8px;text-align:center;">${sc.paytableAgreement ? "✓" : "—"}</td>
+          </tr>`;
+        }).join("");
+      const table = rows
+        ? `<table style="border-collapse:collapse;width:100%;font-size:11px;margin-bottom:8px;">
+             <thead><tr style="color:#8b939c;text-align:left;">
+               <th style="padding:3px 8px;">Symbol</th><th style="padding:3px 8px;">Paytable names</th>
+               <th style="padding:3px 8px;">Curve (count → unit rate)</th><th style="padding:3px 8px;">✓</th>
+             </tr></thead><tbody>${rows}</tbody></table>`
+        : `<div style="color:#8b939c;margin-bottom:8px;">No symbol curves modeled.</div>`;
+      const notes = (model.notes && model.notes.length)
+        ? `<div style="color:#8b939c;margin-bottom:8px;">notes: ${model.notes.map((n) => escapeHtml(String(n))).join(" · ")}</div>` : "";
+      const raw = escapeHtml(JSON.stringify(model, null, 2));
+      el.style.display = "block";
+      el.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+          <strong>Payout model</strong>
+          <span>
+            <button id="btnTogglePayoutRaw" style="font-size:10px;padding:2px 8px;background:#2a2440;">Toggle raw JSON</button>
+            <button id="btnCopyPayoutRaw" style="font-size:10px;padding:2px 8px;background:#2a2440;margin-left:4px;">Copy JSON</button>
+            <button id="btnHidePayoutDetail" style="font-size:10px;padding:2px 8px;background:#2a2440;margin-left:4px;">Hide</button>
+          </span>
+        </div>
+        ${meta}${table}${notes}
+        <pre id="payoutRawJson" style="display:none;background:#0e0b18;border:1px solid #2a2440;border-radius:4px;padding:8px;overflow:auto;max-height:360px;font-size:11px;margin:0;">${raw}</pre>`;
+      $("#btnTogglePayoutRaw").onclick = () => {
+        const pre = $("#payoutRawJson");
+        pre.style.display = pre.style.display === "none" ? "block" : "none";
+      };
+      $("#btnCopyPayoutRaw").onclick = async () => {
+        try { await navigator.clipboard.writeText(JSON.stringify(model, null, 2)); toast("Model JSON copied"); }
+        catch (e) { toast("Copy failed: " + e, true); }
+      };
+      $("#btnHidePayoutDetail").onclick = () => { el.style.display = "none"; };
+    }
+
+    async function fetchAndShowPayoutModel(slug, opts) {
+      opts = opts || {};
+      if (!slug) { if (!opts.silent) toast("Open a game session first", true); return; }
+      try {
+        const r = await api("/api/qa/manual/payout-model?game=" + encodeURIComponent(slug), { method: "GET" });
+        if (r && r.ok && r.model) { renderPayoutModelDetail(r.model); }
+        else if (!opts.silent) toast(r?.reason || "No payout model found — run Calibrate Payout first", true);
+      } catch (e) {
+        if (!opts.silent) toast("Failed to load payout model: " + e, true);
+      }
+    }
+
+    $("#btnViewPayoutModel").onclick = () => fetchAndShowPayoutModel(currentStatus?.gameSlug);
+
     $("#btnCalibratePayout").onclick = async () => {
       const slug = currentStatus?.gameSlug;
       if (!slug) return toast("Open a game session first (Open on a game row)", true);
@@ -2350,6 +2439,7 @@
       try {
         const r = await api("/api/qa/manual/calibrate-payout", { method: "POST", body: {} });
         renderPayoutModelStatus(r);
+        if (r.ok) fetchAndShowPayoutModel(slug, { silent: true });
         toast(r.ok ? (r.trusted ? "Payout model calibrated (trusted)" : "Calibrated, but not trusted — see status") : ("Calibration failed: " + (r.reason || "")), !r.ok || !r.trusted);
       } catch (e) {
         toast("Calibration error: " + e, true);

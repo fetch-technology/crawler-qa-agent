@@ -77,14 +77,39 @@ export function deriveGameMechanics(args: {
     }
   }
 
-  if (bl > 0 && closeTo(multiplier, bl)) mechanic = "lines"; // bet-level mode
-  else if (closeTo(multiplier, l)) mechanic = "lines";       // c × paylines
-  else if (l > multiplier * 3) mechanic = "ways";            // l is ways count, M is fixed
-  else mechanic = "unknown";
+  // Classify against the request's STRUCTURAL fields and snap betMultiplier to
+  // the exact structural value. A multiplier that matches NONE of them is
+  // almost certainly a polluted sample (e.g. a mid-tumble frame where `tw` is
+  // counted before being credited → deducted = stake + uncredited-win →
+  // multiplier 41 when l=20 / 47 when l=20). Persisting that mis-stamps bet on
+  // EVERY future spin, so we REJECT (return null) and let the caller retry on a
+  // cleaner spin instead of trusting garbage.
+  let betMultiplier: number;
+  // Clean ways multiplier: an integer-ish fixed stake (e.g. 20, 25) while `l`
+  // is the large ways-count (1024, 32768, …). Require l >> M AND M near-integer
+  // so a desynced non-integer (or M comparable to l) can't sneak in as "ways".
+  const isCleanWaysMult = l > 0 && multiplier < l / 3 && Math.abs(multiplier - Math.round(multiplier)) < 0.05;
+  if (bl > 0 && closeTo(multiplier, bl)) {
+    mechanic = "lines"; // bet-level mode
+    betMultiplier = bl;
+  } else if (closeTo(multiplier, l)) {
+    mechanic = "lines"; // c × paylines
+    betMultiplier = l;
+  } else if (isCleanWaysMult) {
+    mechanic = "ways"; // l is ways count, M is the fixed stake mult
+    betMultiplier = Math.round(multiplier);
+  } else {
+    console.warn(
+      `[game-mechanics] REJECT sample: multiplier=${multiplier} fits neither lines `
+      + `(l=${l}), bet-level (bl=${bl}), nor a clean ways multiplier — almost certainly a `
+      + `mid-tumble win desync. Not persisting; will retry on the next clean (losing) spin.`,
+    );
+    return null;
+  }
 
   return {
     mechanic,
-    betMultiplier: multiplier,
+    betMultiplier,
     waysOrLines: l,
     detectedAt: new Date().toISOString(),
     detectionMethod: "balance_derived",

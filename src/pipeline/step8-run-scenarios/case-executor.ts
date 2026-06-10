@@ -512,7 +512,13 @@ export async function executeCase(
   // ffmpeg compose; 5fps suffices for slot UI debugging.
   let videoRecorder: CaseVideoRecorder | null = null;
   let videoPath: string | undefined = undefined;
-  if (process.env.QA_RECORD_VIDEO === "1" && ctx.gameSlug) {
+  // Skip recording the synthetic payout-calibration run. It's purely
+  // network-driven (reads wlc_v combos) and now spins ~100×2 rounds via native
+  // autoplay — a long MP4 nobody reviews, just wasted screenshot frames +
+  // ffmpeg compose CPU (matters on the CPU-capped Mac mini). Real QA cases
+  // still record normally.
+  const recordVideo = process.env.QA_RECORD_VIDEO === "1" && input.id !== "payout-calibration";
+  if (recordVideo && ctx.gameSlug) {
     if (await CaseVideoRecorder.ffmpegAvailable()) {
       const evidenceDir = path.join(dirForGame(ctx.gameSlug), "case-evidence");
       await mkdir(evidenceDir, { recursive: true });
@@ -2405,7 +2411,7 @@ export async function waitUntilNoSpinResponse(
  *
  *  Returns null when no chip matches OR the parent key isn't in registry
  *  (corrupt registry — caller should fall back to ladder strategy). */
-function findBetChip(
+export function findBetChip(
   registry: import("../registry/types.js").UiRegistry,
   target: number,
   tolerance: number,
@@ -2417,9 +2423,11 @@ function findBetChip(
   closeKey?: string;
   closeButton?: import("../registry/types.js").UiElement;
 } | null {
-  // Collect all chips: key shape `<prefix>__bet-<number>` where number
-  // is a valid float. Ignore deeper nesting (e.g. tab-inside-popup chips).
-  const chipPattern = /^(.+)__bet-(\d+(?:\.\d+)?)$/;
+  // Collect all chips: key shape `<prefix>__bet-<number>` OR the equivalent
+  // `<prefix>__betAmount-<number>` (discovery names the same chip either way —
+  // see graph-explorer note "bet-0.40 vs betAmount-0.40 for the same chip").
+  // number is a valid float. Ignore deeper nesting (e.g. tab-inside-popup chips).
+  const chipPattern = /^(.+)__bet(?:Amount)?-(\d+(?:\.\d+)?)$/;
   const candidates: Array<{ parentKey: string; chipKey: string; value: number; parent?: import("../registry/types.js").UiElement; chip: import("../registry/types.js").UiElement }> = [];
   for (const [key, el] of Object.entries(registry)) {
     if (!el) continue;

@@ -2,7 +2,7 @@
 // the game's native autoplay (deterministic post-process), so re-translate
 // reliably produces autoplay without manual editing.
 import { test, expect } from "@playwright/test";
-import { maybeConvertToAutoplay } from "../../src/pipeline/step7-testcase-gen/case-action-translator.ts";
+import { maybeConvertToAutoplay, buildAutoplayBatch } from "../../src/pipeline/step7-testcase-gen/case-action-translator.ts";
 import type { CaseAction } from "../../src/pipeline/step7-testcase-gen/case-action-translator.ts";
 import type { UiRegistry } from "../../src/pipeline/registry/types.ts";
 
@@ -65,6 +65,29 @@ test("non-uniform run (bet change interspersed) is NOT converted", () => {
   ];
   const out = maybeConvertToAutoplay(actions, { category: "base_game", spinCount: 27, uiMap: REG_WITH_AUTOPLAY });
   expect(out).toEqual(actions); // has set_bet between spins → leave discrete
+});
+
+// buildAutoplayBatch — reused by payout calibration to run a per-level batch
+// as one native autoplay instead of N discrete spins.
+test("buildAutoplayBatch picks smallest tile >= target and emits start+wait", () => {
+  const b = buildAutoplayBatch(REG_WITH_AUTOPLAY, { targetSpins: 100 });
+  expect(b).not.toBeNull();
+  expect(b!.tile).toBe(100); // smallest preset >= 100
+  expect(b!.actions[0]).toMatchObject({ kind: "click", uiKey: "autoButton" });
+  expect(b!.actions.some((a) => a.kind === "click" && (a as { uiKey: string }).uiKey === "autoButton__autoCountSlide-100")).toBe(true);
+  expect(b!.actions.some((a) => a.kind === "click" && (a as { uiKey: string }).uiKey === "autoButton__startAutoplayButton")).toBe(true);
+  expect(b!.actions.at(-1)!.kind).toBe("wait_until_no_spin_response");
+  expect(b!.actions.some((a) => a.kind === "spin")).toBe(false); // never discrete
+});
+
+test("buildAutoplayBatch falls back to highest tile when target exceeds all presets", () => {
+  const b = buildAutoplayBatch(REG_WITH_AUTOPLAY, { targetSpins: 5000 });
+  expect(b!.tile).toBe(1000); // highest available
+});
+
+test("buildAutoplayBatch returns null when no autoplay UI in registry", () => {
+  const reg = { spinButton: el() } as unknown as UiRegistry;
+  expect(buildAutoplayBatch(reg, { targetSpins: 100 })).toBeNull();
 });
 
 test("already-autoplay actions (no discrete spins) are left unchanged", () => {

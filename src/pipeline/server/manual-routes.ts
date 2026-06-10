@@ -647,6 +647,15 @@ export async function handleManualRoute(
       return sendJson(res, r.ok ? 200 : 400, r), true;
     }
 
+    // GET /api/qa/manual/payout-model?game=<slug> — read stored payout-model.json
+    // for the dashboard's human + raw views. Read-only file lookup; no session.
+    if (url.startsWith("/api/qa/manual/payout-model") && method === "GET") {
+      const slugMatch = url.match(/[?&]game=([^&]+)/);
+      const slug = slugMatch ? decodeURIComponent(slugMatch[1]!) : undefined;
+      const r = await resolveSession(req, null, url).getPayoutModel(slug);
+      return sendJson(res, r.ok ? 200 : 404, r), true;
+    }
+
     // POST /api/qa/manual/calibrate-payout { spinsPerLevel? }
     // Spins live at >=2 bet levels, derives + self-validates the per-game payout
     // model (Layer 2 of payout verification), stores payout-model.json.

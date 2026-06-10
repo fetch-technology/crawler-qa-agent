@@ -363,6 +363,17 @@ export const STANDARD_CASE_TEMPLATES: CaseTemplate[] = [
     custom_assertions: [
       { id: "fs-no-bet-deduction", description: "free-spin rounds don't deduct bet", check_code: "collector.spins.filter(s => s.isFreeSpin === true).every(s => s.startingBalance == null || s.endingBalance >= s.startingBalance - 0.001)" },
       { id: "fs-shape", description: "free-spin rounds have valid id + non-negative win", check_code: "collector.spins.filter(s => s.isFreeSpin === true).every(s => typeof s.id === 'string' && s.id.length > 0 && typeof s.winAmount === 'number' && s.winAmount >= 0)" },
+      // Trigger-threshold check — game-agnostic + self-deriving via CONTRAST
+      // (no symbol-name guessing, no per-game config, no paytable dependency).
+      // Counts symbols by NUMERIC matrix code. The scatter is the symbol that
+      // appears ≥3× on EVERY spin that triggers FS (isFreeSpin false→true) but
+      // NEVER ≥3× on a non-triggering base spin — i.e. ≥3 of it ⟺ a trigger.
+      // Regular high-frequency symbols (≥3 on ordinary spins too) are excluded
+      // by the contrast, so a busy 30-cell grid can't false-pass. Needs some
+      // non-trigger base spins for the contrast (long autoplay provides them).
+      // Returns false if a base spin shows ≥3 of the scatter WITHOUT triggering
+      // (a real rule violation). Vacuous-pass when no trigger observed.
+      { id: "fs-trigger-scatter-contrast", description: "≥3 of a scatter-like symbol coincides with EVERY FS trigger and never appears on a non-triggering spin (self-derived, numeric)", check_code: "(() => { const spins = collector.spins; const tIdx = new Set(); for (let i = 1; i < spins.length; i++) { const p = spins[i-1], c = spins[i]; if (p && c && p.isFreeSpin !== true && c.isFreeSpin === true) tIdx.add(i-1); } if (tIdx.size === 0) return true; const cnt = (s) => { const m = {}; if (Array.isArray(s.matrix)) s.matrix.forEach(r => Array.isArray(r) && r.forEach(cell => { const k = String(cell && (cell.symbol != null ? cell.symbol : cell.code != null ? cell.code : cell.id != null ? cell.id : cell)); m[k] = (m[k] || 0) + 1; })); return m; }; const trig = [...tIdx].map(i => cnt(spins[i])); const base = spins.filter((s, i) => s.isFreeSpin !== true && !tIdx.has(i) && Array.isArray(s.matrix)).map(cnt); const syms = new Set(); trig.forEach(m => Object.keys(m).forEach(k => syms.add(k))); for (const sym of syms) { if (trig.every(m => (m[sym] || 0) >= 3) && !base.some(m => (m[sym] || 0) >= 3)) return true; } return false; })()" },
     ],
   },
 ];

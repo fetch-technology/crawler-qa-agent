@@ -620,6 +620,38 @@ export function maybeConvertToAutoplay(
   return [...before, ...autoplaySeq, ...after];
 }
 
+/** Build a native autoplay batch action sequence for ~targetSpins rounds.
+ *  Returns null when the registry lacks the autoplay UI (caller falls back to
+ *  discrete spins). Picks the smallest preset tile >= targetSpins (fallback
+ *  to the highest preset). Exported + reused by payout calibration so a
+ *  100-spin calibration batch runs as one native autoplay instead of 100
+ *  per-click discrete spins (much faster wall-clock, same captured combos). */
+export function buildAutoplayBatch(
+  uiMap: UiRegistry,
+  opts: { targetSpins: number; reason?: string },
+): { actions: CaseAction[]; tile: number } | null {
+  const reg = uiMap as Record<string, UiElement | undefined>;
+  if (!reg.autoButton || !reg["autoButton__startAutoplayButton"]) return null;
+  const presets = Object.keys(reg)
+    .map((k) => /^autoButton__autoCountSlide-(\d+)$/.exec(k))
+    .filter((m): m is RegExpExecArray => m != null)
+    .map((m) => Number(m[1]))
+    .filter((n) => Number.isFinite(n) && n > 0)
+    .sort((a, b) => a - b);
+  if (presets.length === 0) return null;
+  const tile = presets.find((n) => n >= opts.targetSpins) ?? presets[presets.length - 1]!;
+  const maxMs = Math.min(900_000, tile * 3000 + 120_000);
+  const actions: CaseAction[] = [
+    { kind: "click", uiKey: "autoButton", reason: opts.reason ?? "open autoplay panel" },
+    { kind: "wait_ms", ms: 1500 },
+    { kind: "click", uiKey: `autoButton__autoCountSlide-${tile}`, reason: `select ${tile}-spin autoplay batch` },
+    { kind: "wait_ms", ms: 500 },
+    { kind: "click", uiKey: "autoButton__startAutoplayButton", reason: "start autoplay batch" },
+    { kind: "wait_until_no_spin_response", quietMs: 5000, maxMs, reason: `wait autoplay batch of ${tile} to finish` },
+  ];
+  return { actions, tile };
+}
+
 /** Returns `[{kind:"ensure_ante_off"}]` when the registry has an
  *  anteButton; otherwise empty. Inserted as the first action of every
  *  translated case so bet-level assertions hold (ante ON inflates the
