@@ -1157,7 +1157,7 @@
         const rows = missing.map((k) => `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid #1a1f2a;">
           <code style="flex:1;color:#f0a39e;">${escapeHtml(k)}</code>
           <button class="purple" style="font-size:11px;padding:3px 8px;" onclick="doAiRecover('${k}')" title="AI vision searches the current screen for this element">AI Recover</button>
-          <button style="background:#6366f1;font-size:11px;padding:3px 8px;" onclick="doPickScreenshot('${k}')" title="Pick coord by clicking on a fresh screenshot in this dashboard">Pick</button>
+          <button style="background:#6366f1;font-size:11px;padding:3px 8px;" onclick="doPickElement('${k}')" title="Pick coord by clicking on a fresh screenshot in this dashboard">Pick</button>
         </div>`).join("");
         html += `<div style="margin-top:12px;padding:8px 12px;background:#241318;border:1px solid #3a1f26;border-radius:6px;">
           <div style="color:#f0a39e;font-weight:600;font-size:12px;margin-bottom:4px;">⚠ Missing expected elements (${missing.length}/${expected.length})</div>
@@ -1175,7 +1175,7 @@
             <span style="color:#5e6772;font-size:10px;">(${s.x},${s.y}) · conf ${(s.confidence ?? 0).toFixed(2)}</span>
             ${s.note ? `<div style="color:#8b939c;font-size:10px;">${escapeHtml(s.note)}</div>` : ""}
           </div>
-          <button style="background:#6366f1;font-size:11px;padding:3px 8px;" onclick="doPickScreenshot('${escapeHtml(s.key)}')" title="Re-pick on a fresh dashboard screenshot">Re-pick</button>
+          <button style="background:#6366f1;font-size:11px;padding:3px 8px;" onclick="doPickElement('${escapeHtml(s.key)}')" title="Re-pick on a fresh dashboard screenshot">Re-pick</button>
         </div>`).join("");
         html += `<div style="margin-top:10px;padding:8px 12px;background:#13202b;border:1px solid #1f3245;border-radius:6px;">
           <div style="color:#7da3d8;font-weight:600;font-size:12px;margin-bottom:4px;">🤖 AI auto-added extras (${autoAdded.length})</div>
@@ -1226,7 +1226,7 @@
           <button class="green" onclick="doConfirm('${key}')">✓ Verify</button>
           ${hasChildren ? `<button class="green" title="Verify ALL ${children.length} child element(s) under ${key}" onclick="doConfirmChildren('${key}')">✓ All (${children.length})</button>` : ""}
           ${hasChildren ? `<button class="gray" title="View discover-time screenshot + child markers" onclick="viewChildrenSnapshot('${key.replace(/'/g, "\\'")}')">View</button>` : ""}
-          <button style="background: #6366f1;" onclick="doPickScreenshot('${key}')" title="Pick by clicking on a fresh screenshot in this dashboard">Pick</button>
+          <button style="background: #6366f1;" onclick="doPickElement('${key}')" title="Pick by clicking on a fresh screenshot in this dashboard">Pick</button>
           <button class="purple" onclick="doDiscoverFromButton('${key}')">Discover</button>
           <button class="green" title="Add child element under this key (prefills '${key}__' in form)" onclick="doAddChild('${key}')">+</button>
           <button class="gray" title="Copy key to Add Element form (edit & repick)" onclick="doCopyKey('${key}')">⧉</button>
@@ -1317,12 +1317,16 @@
           <img id="snapImg" src="${imgUrl}" style="display:block;max-width:100%;" />
           <svg id="snapSvg" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;" preserveAspectRatio="xMidYMid meet"></svg>
         </div>
-        <div style="margin-top:6px;font-size:11px;color:#8b939c;">Markers — green=verified · yellow=pending/missing · red=rejected · 🤖 probe · 👤 QA. Hover marker for details.</div>
+        <div id="snapHint" style="margin-top:6px;font-size:11px;color:#8b939c;">Click a marker, then click directly on the image to set its coord (Esc to cancel). green=verified · yellow=pending/missing · red=rejected · 🤖 probe · 👤 QA.</div>
       `;
-      $("#btnCloseSnapshot").onclick = () => { viewer.style.display = "none"; };
       const img = $("#snapImg");
-      img.onload = () => {
+      const hintEl = $("#snapHint");
+      const DEFAULT_HINT = hintEl ? hintEl.textContent : "";
+      let pickModeKey = null;
+      const setHint = (t) => { if (hintEl) hintEl.textContent = t; };
+      const renderSnapMarkers = () => {
         const svg = $("#snapSvg");
+        if (!svg || !img.naturalWidth) return;
         svg.setAttribute("viewBox", `0 0 ${img.naturalWidth} ${img.naturalHeight}`);
         const reg = currentStatus?.registry || {};
         // Prefer REGISTRY coord (source of truth — may have been corrected by
@@ -1338,8 +1342,8 @@
           const tag = verifiedBy === "probe" ? "🤖" : verifiedBy === "QA" ? "👤" : "";
           const short = e.key.split("__").pop();
           const box = 44, half = box / 2;
-          const tooltip = `${e.key} (${cx},${cy})${moved ? ` [moved from AI (${e.x},${e.y})]` : ""}\nstatus=${cur?.status || 'missing'}${verifiedBy ? ' by ' + verifiedBy : ''}${cur?.probeSignal ? '\nsignal=' + cur.probeSignal : ''}\nClick marker → re-pick from screenshot.`;
-          return `<g pointer-events="visible" style="cursor:pointer;" onclick="doPickScreenshot('${e.key.replace(/'/g, "\\'")}')">
+          const tooltip = `${e.key} (${cx},${cy})${moved ? ` [moved from AI (${e.x},${e.y})]` : ""}\nstatus=${cur?.status || 'missing'}${verifiedBy ? ' by ' + verifiedBy : ''}${cur?.probeSignal ? '\nsignal=' + cur.probeSignal : ''}\nClick marker → pick on this image.`;
+          return `<g pointer-events="visible" style="cursor:pointer;" onclick="window.__inlinePick('${e.key.replace(/'/g, "\\'")}')">
             <title>${tooltip.replace(/</g, '&lt;')}</title>
             <rect x="${cx - half}" y="${cy - half}" width="${box}" height="${box}" fill="none" stroke="${color}" stroke-width="3" rx="6" />
             <circle cx="${cx}" cy="${cy}" r="4" fill="${color}" />
@@ -1350,6 +1354,55 @@
         // Re-enable pointer-events on the SVG (parent had pointer-events:none).
         svg.style.pointerEvents = "auto";
       };
+      img.onload = renderSnapMarkers;
+      if (img.complete) renderSnapMarkers();
+
+      // Inline pick on THIS panel's image — no popup.
+      const naturalCoord = (ev) => {
+        if (!img.naturalWidth || !img.clientWidth || !img.clientHeight) return null;
+        const rect = img.getBoundingClientRect();
+        return {
+          x: Math.round((ev.clientX - rect.left) * (img.naturalWidth / img.clientWidth)),
+          y: Math.round((ev.clientY - rect.top) * (img.naturalHeight / img.clientHeight)),
+        };
+      };
+      const cancelPick = () => { if (!pickModeKey) return; pickModeKey = null; img.style.cursor = ""; setHint(DEFAULT_HINT); };
+      const escHandler = (e) => { if (e.key === "Escape") cancelPick(); };
+      document.addEventListener("keydown", escHandler);
+      const prevInlinePick = window.__inlinePick;
+      window.__inlinePick = (k) => {
+        pickModeKey = k; img.style.cursor = "crosshair";
+        setHint(`Pick mode: click on the image to set ${k} · Esc to cancel`);
+      };
+      // Capture-phase on the wrapper — the SVG overlay (pointer-events:auto)
+      // covers the image, so a handler on <img> never fires. Capture runs
+      // before the marker <g> onclick, so arming (marker click, pickModeKey
+      // null) isn't also consumed as a commit; the next click commits + stops.
+      const wrap = img.parentElement;
+      const onCommitCapture = async (ev) => {
+        if (!pickModeKey) return;
+        ev.stopPropagation();
+        ev.preventDefault();
+        const p = naturalCoord(ev);
+        if (!p) return;
+        const k = pickModeKey;
+        setHint(`Saving ${k} at (${p.x}, ${p.y})…`);
+        try {
+          await api("/api/qa/manual/update", { method: "POST", body: { uiKey: k, x: p.x, y: p.y } });
+          const s = await api("/api/qa/manual/status").catch(() => null);
+          if (s) currentStatus = s;
+          pickModeKey = null; img.style.cursor = ""; setHint(DEFAULT_HINT);
+          renderSnapMarkers();
+          toast(`Picked ${k} at (${p.x}, ${p.y}) — saved as verified`);
+        } catch (err) { setHint(DEFAULT_HINT); toast(`Pick failed: ${err.message}`, true); }
+      };
+      wrap.addEventListener("click", onCommitCapture, true);
+      const endInlinePick = () => {
+        document.removeEventListener("keydown", escHandler);
+        wrap.removeEventListener("click", onCommitCapture, true);
+        window.__inlinePick = prevInlinePick;
+      };
+      $("#btnCloseSnapshot").onclick = () => { endInlinePick(); viewer.style.display = "none"; };
     };
 
     function directChildrenOf(parentKey, registry) {
@@ -1407,11 +1460,13 @@
             </div>
             <div id="childSnapList" style="width:360px;border-left:1px solid #273142;padding:8px 10px;overflow:auto;"></div>
           </div>
-          <div style="padding:8px 12px;border-top:1px solid #273142;color:#90a0b5;font-size:11px;">Markers: green=verified, yellow=pending, red=rejected. Click marker or Re-pick to update coord.</div>
+          <div id="childSnapFooter" style="padding:8px 12px;border-top:1px solid #273142;color:#90a0b5;font-size:11px;">Click a marker or Re-pick, then click directly on the image to set its coord.</div>
         </div>`;
       document.body.appendChild(modal);
 
+      let __endInlinePick = () => {};
       const close = () => {
+        __endInlinePick();
         modal.remove();
         if (window.__refreshChildrenSnapshotModal) delete window.__refreshChildrenSnapshotModal;
       };
@@ -1429,7 +1484,7 @@
               <div style="color:#dbe5f0;font-size:11px;"><code>${escapeHtml(k)}</code></div>
               <div style="font-size:10px;color:${color};">${status} · ${xy}</div>
             </div>
-            <button style="background:#1f2937;color:#cde3ff;font-size:10px;padding:2px 8px;border:1px solid #334155;border-radius:4px;" onclick="doPickScreenshot('${k.replace(/'/g, "\\'")}')">Re-pick</button>
+            <button style="background:#1f2937;color:#cde3ff;font-size:10px;padding:2px 8px;border:1px solid #334155;border-radius:4px;" onclick="window.__inlinePick('${k.replace(/'/g, "\\'")}')">Re-pick</button>
           </div>`;
         }).join("");
         modal.querySelector("#childSnapList").innerHTML = rows;
@@ -1449,7 +1504,7 @@
           const tooltip = `${k}\nstatus=${el.status || "pending"}${el.verifiedBy ? ` by ${el.verifiedBy}` : ""}`;
           const box = 44;
           const half = box / 2;
-          return `<g pointer-events="visible" style="cursor:pointer;" onclick="doPickScreenshot('${k.replace(/'/g, "\\'")}')">
+          return `<g pointer-events="visible" style="cursor:pointer;" onclick="window.__inlinePick('${k.replace(/'/g, "\\'")}')">
             <title>${tooltip.replace(/</g, "&lt;")}</title>
             <rect x="${el.x - half}" y="${el.y - half}" width="${box}" height="${box}" fill="none" stroke="${color}" stroke-width="3" rx="6" />
             <circle cx="${el.x}" cy="${el.y}" r="4" fill="${color}" />
@@ -1485,6 +1540,73 @@
         renderChildList();
         drawMarkers();
       }
+
+      // === Inline pick (no popup) — click marker/Re-pick, then click on THIS
+      // parent-snapshot image to set the child's coord. The parent snapshot is
+      // exactly the view the child element lives in. ===
+      const footer = modal.querySelector("#childSnapFooter");
+      const DEFAULT_FOOTER = footer ? footer.textContent : "";
+      let pickModeKey = null;
+      const setFooter = (t) => { if (footer) footer.textContent = t; };
+      const naturalCoord = (ev) => {
+        if (!img.naturalWidth || !img.clientWidth || !img.clientHeight) return null;
+        const rect = img.getBoundingClientRect();
+        return {
+          x: Math.round((ev.clientX - rect.left) * (img.naturalWidth / img.clientWidth)),
+          y: Math.round((ev.clientY - rect.top) * (img.naturalHeight / img.clientHeight)),
+        };
+      };
+      const startPick = (k) => {
+        pickModeKey = k;
+        img.style.cursor = "crosshair";
+        setFooter(`Pick mode: click on the image to set ${k} · Esc to cancel`);
+      };
+      const cancelPick = () => {
+        if (!pickModeKey) return;
+        pickModeKey = null;
+        img.style.cursor = "";
+        setFooter(DEFAULT_FOOTER);
+      };
+      const escHandler = (e) => { if (e.key === "Escape") cancelPick(); };
+      document.addEventListener("keydown", escHandler);
+      // The SVG marker overlay sits ON TOP of the image with pointer-events:auto,
+      // so a click handler on <img> never fires. Attach to the WRAPPER in the
+      // CAPTURE phase instead: it fires before the marker <g> onclick, so the
+      // click that ARMS pick (marker click while pickModeKey is null) is not
+      // also consumed as a commit; the NEXT click commits + stops the marker.
+      const wrap = img.parentElement;
+      const onCommitCapture = async (ev) => {
+        if (!pickModeKey) return; // not picking → let the marker onclick arm
+        ev.stopPropagation();
+        ev.preventDefault();
+        const p = naturalCoord(ev);
+        if (!p) return;
+        const k = pickModeKey;
+        setFooter(`Saving ${k} at (${p.x}, ${p.y})…`);
+        try {
+          await api("/api/qa/manual/update", { method: "POST", body: { uiKey: k, x: p.x, y: p.y } });
+          const s = await api("/api/qa/manual/status").catch(() => null);
+          if (s) currentStatus = s;
+          pickModeKey = null;
+          img.style.cursor = "";
+          setFooter(DEFAULT_FOOTER);
+          renderChildList();
+          drawMarkers();
+          toast(`Picked ${k} at (${p.x}, ${p.y}) — saved as verified`);
+        } catch (err) {
+          setFooter(DEFAULT_FOOTER);
+          toast(`Pick failed: ${err.message}`, true);
+        }
+      };
+      wrap.addEventListener("click", onCommitCapture, true);
+      // Route this modal's markers/Re-pick to inline picking while it's open.
+      const prevInlinePick = window.__inlinePick;
+      window.__inlinePick = startPick;
+      __endInlinePick = () => {
+        document.removeEventListener("keydown", escHandler);
+        wrap.removeEventListener("click", onCommitCapture, true);
+        window.__inlinePick = prevInlinePick;
+      };
     };
 
     document.addEventListener("DOMContentLoaded", () => {
@@ -2533,35 +2655,36 @@
       try {
         const r = await api(`/api/qa/manual/cases?game=${encodeURIComponent(slug)}`);
         window.__lastCasesSlug = slug;
-        // Restore cached run results from localStorage (fastest, browser-only)
+        // Seed from localStorage for instant first paint (browser-only cache).
         window.__caseResults = loadCaseResults(slug);
-        // SERVER fallback: for any case WITHOUT a cached result, OR with a
-        // cached entry that's missing ranAt (older cache from before the
-        // server-mtime injection), refetch from disk to pick up the server's
-        // mtime-based ranAt. Without the ranAt check, a stale cache entry
-        // sticks forever and the dashboard shows "—" for the timestamp on
-        // every reload.
-        const missing = (r.cases || []).filter((c) => {
-          const cached = window.__caseResults[c.id];
-          if (!cached) return true;
-          if (!cached.ranAt) return true;
-          const t = new Date(cached.ranAt).getTime();
-          return !Number.isFinite(t);
-        });
-        if (missing.length > 0) {
-          await Promise.all(missing.map(async (c) => {
-            try {
-              const res = await fetch(`/api/qa/manual/case-result?game=${encodeURIComponent(slug)}&caseId=${encodeURIComponent(c.id)}`);
-              if (res.ok) {
-                const data = await res.json();
-                if (data?.result) window.__caseResults[c.id] = data.result;
-              }
-            } catch { /* silent: no server result yet for this case */ }
-          }));
+        // DISK IS AUTHORITATIVE: every run path — single Run AND server-side
+        // Run All/Failed/Unrun — persists case-evidence/<id>.result.json via
+        // executeCase. localStorage is only a convenience cache and CAN go
+        // stale: a server-side run updates disk but never touches THIS
+        // browser's localStorage. So always refetch disk for every case and
+        // let it win; fall back to the cached entry only when disk has no
+        // result yet (404). This is why "Clear Results + reload" used to be
+        // needed to see server-run verdicts — now a plain reload reconciles.
+        const before = JSON.stringify(window.__caseResults);
+        await Promise.all((r.cases || []).map(async (c) => {
+          try {
+            const res = await fetch(`/api/qa/manual/case-result?game=${encodeURIComponent(slug)}&caseId=${encodeURIComponent(c.id)}`);
+            if (res.ok) {
+              const data = await res.json();
+              if (data?.result) window.__caseResults[c.id] = data.result;
+            }
+          } catch { /* silent: keep cached value for this case */ }
+        }));
+        if (JSON.stringify(window.__caseResults) !== before) {
           saveCaseResults(slug, window.__caseResults);
         }
         // Gap C — fetch per-case stats (passRate + flakyScore) for badges
         await loadCaseStatsForSlug(slug, (r.cases || []).map((c) => c.id));
+        // Phase 4 — parser-overlay status (payout itemization verified/unverified/base)
+        try {
+          const ovr = await api(`/api/qa/manual/parser-overlay?game=${encodeURIComponent(slug)}`);
+          window.__parserOverlay = ovr?.overlay ?? null;
+        } catch { window.__parserOverlay = null; }
         renderCases(r.cases || [], slug);
         if (opts.scrollToTop !== false) {
           document.querySelector("#casesList").scrollIntoView({ behavior: "smooth", block: "start" });
@@ -2618,6 +2741,14 @@
         totalAssertionsTotal += r.assertionsTotal ?? 0;
       }
       const ratio = totalAssertionsTotal > 0 ? ((totalAssertionsPass / totalAssertionsTotal) * 100).toFixed(0) : "—";
+      // Phase 4 — payout-itemization verify status (from parser-overlay.json).
+      const ov = window.__parserOverlay;
+      const wi = ov && ov.winItemization;
+      const payoutBadge = wi
+        ? (wi.trusted
+            ? `<span class="pill verified" title="Win itemization '${wi.value}' verified by replay-gate — payout-integrity assertions are checked for real.">payout: verified (${wi.value})</span>`
+            : `<span class="pill rejected" title="Win itemization UNVERIFIED (parser-overlay not trusted) — payout-integrity assertions report INCONCLUSIVE, not FAIL.">payout: unverified</span>`)
+        : `<span class="pill pending" title="No per-game parser-overlay — using provider-base itemization. Run Calibrate to learn + verify it for this game.">payout: base</span>`;
       const statsBar = `<div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 0 0 10px; padding: 8px 12px; background: #0b0e13; border: 1px solid #232a35; border-radius: 5px; font-size: 12px;">
         <strong style="color: #e8eaed;">${cases.length} cases for <code>${slug ?? '?'}</code></strong>
         <span><span class="pill verified">${pass} pass</span></span>
@@ -2628,6 +2759,8 @@
         <span style="color: #8b939c;">not run: ${notRun}</span>
         <span style="color: #5e6772;">·</span>
         <span style="color: #8b939c;">assertions: ${totalAssertionsPass}/${totalAssertionsTotal} (${ratio}%)</span>
+        <span style="color: #5e6772;">·</span>
+        ${payoutBadge}
       </div>`;
       const header = statsBar;
       const byCategory = new Map();
@@ -2844,11 +2977,19 @@
         : "";
 
       const assertionRows = (r.assertions || []).map((a, idx) => {
-        const okPill = a.pass ? "verified" : "rejected";
+        // INCONCLUSIVE (e.g. payout itemization unverified) is neither PASS nor
+        // FAIL — render a neutral pill + gray detail so it doesn't read as a
+        // false red/green. Backend sets pass=true for these (not a failure).
+        const isInconclusive = a.outcome === "INCONCLUSIVE";
+        const okPill = isInconclusive ? "pending" : (a.pass ? "verified" : "rejected");
+        const pillLabel = isInconclusive ? "INCONC" : (a.pass ? "PASS" : "FAIL");
         const isPrecheck = a.id.startsWith("_precheck_");
         const labelPrefix = isPrecheck ? "🔧 PRECHECK " : "";
+        const detailColor = isInconclusive ? "#8b939c" : "#f0a39e";
+        const detailBg = isInconclusive ? "#1a1d24" : (isPrecheck ? '#3a2010' : '#2a1414');
+        const detailBorder = isInconclusive ? "#5e6772" : (isPrecheck ? '#d97706' : '#d9534f');
         const detailHtml = a.detail
-          ? `<div style="color: #f0a39e; font-size: 11px; margin-top: 3px; padding: 4px 8px; background: ${isPrecheck ? '#3a2010' : '#2a1414'}; border-left: 3px solid ${isPrecheck ? '#d97706' : '#d9534f'}; font-family: ui-monospace, monospace; white-space: pre-wrap;">${escapeHtml(a.detail).replace(/ \| /g, '<br>')}</div>`
+          ? `<div style="color: ${detailColor}; font-size: 11px; margin-top: 3px; padding: 4px 8px; background: ${detailBg}; border-left: 3px solid ${detailBorder}; font-family: ui-monospace, monospace; white-space: pre-wrap;">${escapeHtml(a.detail).replace(/ \| /g, '<br>')}</div>`
           : "";
         // Per-assertion outcome badge + confidence % REMOVED 2026-05-25.
         // Signal Roll-up above is the primary verdict; case-level outcome /
@@ -2861,7 +3002,7 @@
         // already shown in case-level Signal Roll-up above. AssertionResult.signals
         // data is still computed + persisted for AI Review / audit, just not
         // rendered here.
-        return `<li style="margin-bottom: 6px;"><span class="pill ${okPill}">${a.pass ? "PASS" : "FAIL"}</span>${outcomeBadge} <strong>${labelPrefix}${escapeHtml(a.id)}</strong> ${escapeHtml(a.description)}${detailHtml}</li>`;
+        return `<li style="margin-bottom: 6px;"><span class="pill ${okPill}">${pillLabel}</span>${outcomeBadge} <strong>${labelPrefix}${escapeHtml(a.id)}</strong> ${escapeHtml(a.description)}${detailHtml}</li>`;
       }).join("");
       const assertionsHtml = assertionRows
         ? `<ul style="margin: 6px 0 0; padding-left: 20px; font-size: 11px; line-height: 1.7;">${assertionRows}</ul>`
@@ -4232,7 +4373,7 @@
       return getMainExpectedPickKeys(status).filter((key) => !skipped.has(key) && registry[key]?.verifiedBy !== "QA");
     }
 
-    async function maybeRunLevel1QaPicker(status) {
+    async function maybeRunLevel1QaPicker(status, opts = {}) {
       if (!status?.active) return;
       const mainPickKeys = getMainExpectedPickKeys(status);
       const pendingElements = getLevel1NeedsQaPick(status);
@@ -4248,16 +4389,28 @@
       const allMainSteps = mainPickKeys.map((key) => ({ kind: "element", key }));
       const allOcrSteps = REQUIRED_ONBOARD_OCR_KEYS.map((key) => ({ kind: "ocr", key }));
       const allSteps = [...allMainSteps, ...allOcrSteps];
-      const queue = [
-        ...pendingElements.map((key) => ({ kind: "element", key })),
-        ...missingOcr.map((key) => ({ kind: "ocr", key })),
-      ];
+      // Manual mode (opts.startKey): open the SAME continuous wizard as the
+      // first run — full step list over every main element + OCR region — and
+      // jump to the clicked key, so QA re-picks element-after-element on ONE
+      // persistent screenshot (no per-element popup + image reload). Auto mode
+      // (first run): only the still-pending steps.
+      const manualMode = !!(opts && opts.startKey);
+      const queue = manualMode
+        ? [...allSteps]
+        : [
+            ...pendingElements.map((key) => ({ kind: "element", key })),
+            ...missingOcr.map((key) => ({ kind: "ocr", key })),
+          ];
       if (queue.length === 0) return;
 
       const existing = document.getElementById("level1QaPickerModal");
       if (existing) existing.remove();
 
       let index = 0;
+      if (manualMode) {
+        const si = queue.findIndex((s) => s.key === opts.startKey);
+        if (si !== -1) index = si;
+      }
       const skipped = [];
       let saving = false;
       let drawFirstPoint = null;
@@ -4982,6 +5135,27 @@
     //     state's discovery snapshot (autoButton.png), where the popup was
     //     captured during discovery. Falls back to live if not available.
     //   - Canonical key (e.g. spinButton) → use a fresh live screenshot.
+    // Inline pick hook. Snapshot/marker views (which ALREADY show the relevant
+    // screenshot) override this so a marker/Re-pick click lets QA pick DIRECTLY
+    // on that visible image — no popup. Default (no on-image view active) falls
+    // back to the picker/wizard.
+    window.__inlinePick = (key) => window.doPickElement(key);
+
+    // Unified entry for manual element picking. Main-screen elements open the
+    // SAME continuous wizard as first-run onboarding (pick element after
+    // element on one persistent screenshot). Sub-state elements (key contains
+    // "__") genuinely need their PARENT SNAPSHOT image, which the wizard (live
+    // main screenshot only) can't show — those keep the single-shot picker.
+    window.doPickElement = (uiKey) => {
+      if (typeof uiKey !== "string") return;
+      if (uiKey.includes("__")) return window.doPickScreenshot(uiKey);
+      if (level1PickerRunning) return;
+      level1PickerRunning = true;
+      Promise.resolve(maybeRunLevel1QaPicker(currentStatus, { startKey: uiKey }))
+        .catch((err) => console.warn("element picker failed:", err))
+        .finally(() => { level1PickerRunning = false; });
+    };
+
     window.doPickScreenshot = async (uiKey) => {
       const existing = document.getElementById("pickScreenshotModal");
       if (existing) existing.remove();

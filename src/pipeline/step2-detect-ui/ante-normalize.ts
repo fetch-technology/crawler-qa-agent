@@ -142,7 +142,7 @@ async function readTotalBet(
   }
   if (!box) return null;
   try {
-    const { text } = await ocrRegion(page, box);
+    const { text } = await ocrRegion(page, box, { numeric: true });
     return parseNumericFromOcr(text);
   } catch {
     return null;

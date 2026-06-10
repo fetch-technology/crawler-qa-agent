@@ -39,6 +39,16 @@ test("NO-OP: request bet already conserved (normal ante-off spin)", () => {
   }))).toBeNull();
 });
 
+test("NO-OP: tumble round captured BEFORE win credited (drop == bet, serverWin pending) — bet NOT inflated", () => {
+  // vs20olympx Gates of Olympus: bet 1.00 (c0.05×l20), tumble win 5.60 NOT yet
+  // credited at capture (PP credits on doCollect) → balance moved only by the
+  // bet (drop = 1.00). Old behavior folded the pending win into bet (1.00→6.60)
+  // and broke `betAmount == 1.00`. drop == request bet → leave bet alone.
+  expect(reconcileBetFromBalance(spin({
+    bet: 1.0, win: 0, balanceBefore: 1000003.41, balanceAfter: 1000002.41, serverTotalWin: 5.6,
+  }))).toBeNull();
+});
+
 test("NO-OP: settled tumble round (bet 0.40, win 0.42, net +0.02) — conserved, untouched", () => {
   // Regression: a per-frame check fired on the tumble START frame (win pending,
   // not yet credited) and inflated bet by the pending win (0.40→0.50). Run on

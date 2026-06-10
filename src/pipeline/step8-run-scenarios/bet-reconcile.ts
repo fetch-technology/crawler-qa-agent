@@ -45,6 +45,16 @@ export function reconcileBetFromBalance(spin: ReconcileInput, tol = 0.01): { bet
   if (typeof serverTotalWin !== "number" || !Number.isFinite(serverTotalWin)) return null;
 
   const drop = (balanceBefore as number) - (balanceAfter as number);
+
+  // Wallet moved by EXACTLY the request bet → that bet is correct and any
+  // serverTotalWin is simply NOT YET credited. PP credits tumble / round wins
+  // on a later `doCollect`; a frame captured before that shows drop = bet with
+  // the win still pending. `impliedBet = drop + serverTotalWin` would then fold
+  // the uncredited win INTO bet (observed: 1.00 → 6.60 on a 5.60 tumble win).
+  // Only a deduction that DIFFERS from the request bet signals a hidden
+  // surcharge (ante / Double-Chance) worth reconciling.
+  if (Math.abs(drop - spin.bet) <= tol) return null;
+
   const impliedBet = Math.round((drop + serverTotalWin) * 100) / 100;
 
   // Already conserved (drop = bet − win) → request bet is correct, leave it.

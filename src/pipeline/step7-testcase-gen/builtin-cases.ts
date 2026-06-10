@@ -63,6 +63,16 @@ export function buildPayoutIntegrityCase(): TestCase {
           "Each winning combo's win matches the calibrated paytable rate (no-op until a trusted payout model exists)",
         check_code: "getRoundEndSpins(collector.spins).every(s => payoutModelCheck(s).ok)",
       },
+      {
+        // Phase 6 — robust, mechanic-agnostic combo shape check. Every itemized
+        // winning combo must be well-formed: finite non-negative win, ≥1
+        // position, and count (reels/cluster-size) ≤ positions. Vacuously true
+        // when a round has no combos, so it's safe for any mechanic.
+        id: "payout-l1-combos-well-formed",
+        description: "Every itemized winning combo is structurally sound (win ≥ 0, has positions, count ≤ positions)",
+        check_code:
+          "getRoundEndSpins(collector.spins).every(s => (s.winBreakdown || []).every(c => comboWellFormed(c)))",
+      },
     ],
     // Free-spin / big-win interruptions are expected during a 40-spin run.
     allowed_interruptions: ["FREE_SPIN_TRIGGERED", "BIG_WIN_POPUP", "BONUS_POPUP"],

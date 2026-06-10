@@ -649,7 +649,12 @@ export function buildAutoplayBatch(
     .sort((a, b) => a - b);
   if (presets.length === 0) return null;
   const tile = presets.find((n) => n >= opts.targetSpins) ?? presets[presets.length - 1]!;
-  const maxMs = Math.min(900_000, tile * 3000 + 120_000);
+  // Budget ~6s/spin (not 3s): real batches run slower — ante ON, cascade
+  // animations, win-celebration gaps. A too-tight cap times out MID-batch,
+  // which leaves autoplay STILL RUNNING; the next phase's autoButton click then
+  // TOGGLES it off instead of opening the panel → that phase never spins. Fast
+  // games still exit early via the 5s quiet gap, so a generous cap is free.
+  const maxMs = Math.min(900_000, tile * 6000 + 120_000);
   const actions: CaseAction[] = [
     { kind: "click", uiKey: "autoButton", reason: opts.reason ?? "open autoplay panel" },
     { kind: "wait_ms", ms: 1500 },

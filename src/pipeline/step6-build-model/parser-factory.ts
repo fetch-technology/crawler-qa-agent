@@ -40,6 +40,16 @@ function supportsMechanic(parser: BaseParser): parser is WithMechanic {
   return typeof (parser as { setMechanic?: unknown }).setMechanic === "function";
 }
 
+/** Parser exposing the per-game overlay hook (SpecDrivenParser). Legacy
+ *  hardcoded parsers don't, so overlay application is a no-op for them. */
+type WithSpecOverlay = BaseParser & {
+  applySpecOverlay(overlay: import("./providers/spec-types.js").ParserOverlay | null): void;
+};
+
+function supportsSpecOverlay(parser: BaseParser): parser is WithSpecOverlay {
+  return typeof (parser as { applySpecOverlay?: unknown }).applySpecOverlay === "function";
+}
+
 export type ParserFactoryOptions = {
   /** Override parser kind (skip loading parser.json). Used by tests + paths
    *  where parser kind is already known. */
@@ -103,6 +113,18 @@ export async function createParserForGame(
       if (supportsMechanic(parser) && mechanics.mechanic) {
         parser.setMechanic(mechanics.mechanic);
       }
+    }
+  }
+
+  // Per-game parser overlay (Phase 1): layer the game-specific spec delta
+  // (e.g. win itemization) on top of the provider base. Only TRUSTED aspects
+  // override; absent overlay → base spec unchanged. No-op for legacy parsers.
+  if (supportsSpecOverlay(parser)) {
+    const { loadOverlay } = await import("./providers/spec-loader.js");
+    const overlay = await loadOverlay(gameSlug);
+    if (overlay) {
+      parser.applySpecOverlay(overlay);
+      console.log(`[parser-factory] applied parser-overlay for "${gameSlug}" (winItemization=${overlay.winItemization?.trusted ? overlay.winItemization.value : "untrusted→base"})`);
     }
   }
 

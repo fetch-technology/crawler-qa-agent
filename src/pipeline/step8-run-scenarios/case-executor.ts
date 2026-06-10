@@ -23,6 +23,11 @@ import {
   sumWinBreakdown as sumWinBreakdownImpl,
   payoutModelCheck as payoutModelCheckImpl,
 } from "./assertion-helpers.js";
+import {
+  comboWellFormed as comboWellFormedImpl,
+  distinctReels as distinctReelsImpl,
+  clusterConnected as clusterConnectedImpl,
+} from "./mechanic-invariants.js";
 import { detectAssertionSignals, signalsFromRefs } from "./assertion-signals.js";
 import { detectUiOnlyCase, isOpenUiKey } from "./ui-case-detect.js";
 import { calcConfidence, buildSignalEvidence } from "./evidence/confidence.js";
@@ -1208,6 +1213,14 @@ export async function executeCase(
       // 10s default settle is too aggressive and can terminate capture early.
       settleMs = Math.max(settleMs, 25_000);
     }
+    // A purchase premium deducts many× the base bet (buy-respins ≈ 20×,
+    // buy-free-spins ≈ 100×). When the case is explicitly a buy_feature, any
+    // deduction past the ante/Double-Chance ceiling (~1.9×) is already a buy;
+    // for non-buy cases stay conservative and only treat a very large
+    // deduction as a buy signature. The 50× cutoff alone used to miss 20×
+    // respin buys → they were mis-scored as "UI-only, 0 spins".
+    const isBuyFeatureCaseRun = /buy/i.test(input.category);
+    const buyRatioThreshold = isBuyFeatureCaseRun ? 3 : 50;
     let buyFeatureDetected = false;
     if (collectedSpins.length >= 1) {
       const first = collectedSpins[0]!;
@@ -1215,7 +1228,7 @@ export async function executeCase(
         ? (first.balanceBefore - first.balanceAfter)
         : 0;
       const ratio = first.bet > 0 ? drop / first.bet : 0;
-      if (ratio >= 50) {
+      if (ratio >= buyRatioThreshold) {
         buyFeatureDetected = true;
         settleMs = 45_000;
         warnings.push(`buy-feature detected (deduction ratio ${ratio.toFixed(1)}×) — extending settle window to ${settleMs}ms for FS chain`);
@@ -1237,7 +1250,7 @@ export async function executeCase(
             ? (first.balanceBefore - first.balanceAfter)
             : 0;
           const ratio = first.bet > 0 ? drop / first.bet : 0;
-          if (ratio >= 50) {
+          if (ratio >= buyRatioThreshold) {
             buyFeatureDetected = true;
             settleMs = 45_000;
             warnings.push(`buy-feature detected (deduction ratio ${ratio.toFixed(1)}×) — extending settle window to ${settleMs}ms for FS chain`);
@@ -1497,7 +1510,7 @@ export async function executeCase(
         snapshotLabel: OcrSnapshot["region"],
         region: { x: number; y: number; width: number; height: number },
       ): Promise<number | undefined> => {
-        const ocr = await ocrRegion(ctx.page, { x: region.x, y: region.y, w: region.width, h: region.height });
+        const ocr = await ocrRegion(ctx.page, { x: region.x, y: region.y, w: region.width, h: region.height }, { numeric: true });
         const parsed = parseNumericFromOcr(ocr.text);
         // Persist the crop PNG so dashboard can show what Tesseract saw.
         let bboxScreenshotPath: string | undefined;
@@ -1603,9 +1616,23 @@ export async function executeCase(
     console.log(`[case-action] synthesized state timeline entries (pre-assertion): FS chain captured → injected synthetic states`);
   }
 
+  // Phase 4 — is the parser's win itemization VERIFIED for this game? Read the
+  // per-game parser-overlay's trusted flag. No overlay → legacy/spec-default
+  // itemization (treated as verified). Untrusted overlay → itemization-
+  // dependent payout assertions become INCONCLUSIVE (not false fail/pass).
+  let winItemizationVerified = true;
+  if (ctx.gameSlug) {
+    try {
+      const { loadOverlay } = await import("../step6-build-model/providers/spec-loader.js");
+      const ov = await loadOverlay(ctx.gameSlug);
+      if (ov) winItemizationVerified = ov.winItemization?.trusted === true;
+    } catch { /* no overlay → default verified */ }
+  }
+
   // Evaluate assertions with ALL collected spins (autoplay/cascade) in
   // collector. Single-spin cases work too (collector has 1 entry).
   const userAssertions = evaluateAssertions(spin, collectedSpins, input.custom_assertions ?? [], {
+    winItemizationVerified,
     minimumEvidence: input.minimum_evidence,
     ocrBalance,
     ocrBet,
@@ -2019,6 +2046,7 @@ export async function executeCase(
     warnings,
     stateTimeline,
     allowedInterrupts: effectiveAllowedInterrupts,
+    category: input.category,
   });
 
   // Phase 8 FLAKY auto-detection. Aggregate per-assertion outcomes → case
@@ -2689,7 +2717,7 @@ async function executeAction(
         const ocr = await ocrRegion(ctx.page, {
           x: regions.betArea!.x, y: regions.betArea!.y,
           w: regions.betArea!.width, h: regions.betArea!.height,
-        });
+        }, { numeric: true });
         return parseNumericFromOcr(ocr.text);
       } catch { return null; }
     };
@@ -2998,7 +3026,7 @@ function extractExpectedBetFromAssertions(
   return null;
 }
 
-function evaluateAssertions(
+export function evaluateAssertions(
   spin: NormalizedSpinResult | null,
   allSpins: NormalizedSpinResult[],
   assertions: Array<{ id: string; description: string; check_code: string }>,
@@ -3029,6 +3057,12 @@ function evaluateAssertions(
     balanceBefore?: number | null;
     /** Self-calibrated payout model — bound into `payoutModelCheck(spin)`. */
     payoutModel?: import("../registry/types.js").PayoutModel | null;
+    /** Whether the parser's win itemization is VERIFIED for this game (trusted
+     *  parser-overlay). When false, itemization-dependent payout assertions are
+     *  marked INCONCLUSIVE instead of producing a false FAIL (empty winBreakdown
+     *  → phantom-win) or false PASS (vacuous). Default true: legacy/no-overlay
+     *  games itemize via the hardcoded parser. */
+    winItemizationVerified?: boolean;
   } = {},
 ): AssertionResult[] {
   const results: AssertionResult[] = [];
@@ -3059,6 +3093,15 @@ function evaluateAssertions(
   const balanceBefore = opts.balanceBefore ?? null;
   const networkBalance = typeof opts.networkBalance === "number" ? opts.networkBalance : null;
   const spinIndex = collector.spins.length > 0 ? collector.spins.length - 1 : 0;
+  // Phase 6 — grid dimensions (column-major: reels[reel][row]) for the geometry
+  // crown-jewels (clusterConnected / distinctReels). Null when no reels were
+  // captured or the shape is unknown; assertions MUST null-guard. Megaways has
+  // variable reel height — treat dims as a hint there.
+  const gridReels = adapted && Array.isArray((adapted as { reels?: unknown }).reels)
+    ? (adapted as unknown as { reels: string[][] }).reels
+    : null;
+  const gridWidth = gridReels ? gridReels.length : null;
+  const gridHeight = gridReels && Array.isArray(gridReels[0]) ? gridReels[0]!.length : null;
 
   // Lazy-load multi-signal helpers (avoid hot path for unrelated assertions)
   let multiSignalCache: import("./evidence/balance-multi-signal.js").BalanceSignalsInput | null = null;
@@ -3083,6 +3126,11 @@ function evaluateAssertions(
         "spinIndex",
         "sumWinBreakdown",
         "payoutModelCheck",
+        "comboWellFormed",
+        "distinctReels",
+        "clusterConnected",
+        "gridWidth",
+        "gridHeight",
         `"use strict"; return (${a.check_code});`,
       );
       const value = fn(
@@ -3101,6 +3149,11 @@ function evaluateAssertions(
         spinIndex,
         sumWinBreakdownImpl,
         (s: Record<string, unknown>) => payoutModelCheckImpl(s, opts.payoutModel),
+        comboWellFormedImpl,
+        distinctReelsImpl,
+        clusterConnectedImpl,
+        gridWidth,
+        gridHeight,
       );
       const pass = Boolean(value);
 
@@ -3169,15 +3222,35 @@ function evaluateAssertions(
         });
       }
 
-      results.push({
-        id: a.id,
-        description: a.description,
-        pass,
-        detail: pass ? undefined : explainFailure(a.check_code, adapted, collector),
-        outcome,
-        confidence,
-        signals,
-      });
+      // Phase 4 — itemization-dependent payout assertions can be neither a
+      // PASS nor a FAIL when the parser's win itemization is UNVERIFIED for
+      // this game (no trusted parser-overlay): an empty winBreakdown would
+      // fail no-phantom-win, and an absent serverTotalWin would vacuously pass
+      // breakdown-sums — both dishonest. Mark INCONCLUSIVE + pass=true (not a
+      // failure) so the case surfaces "couldn't verify" instead of red/green.
+      // When itemization IS verified, real payout failures stand.
+      const itemizationDependent = /winBreakdown|sumWinBreakdown/.test(a.check_code);
+      if (itemizationDependent && opts.winItemizationVerified === false) {
+        results.push({
+          id: a.id,
+          description: a.description,
+          pass: true,
+          detail: "itemization unverified (no trusted parser-overlay for this game) — payout integrity cannot be checked; neither pass nor fail",
+          outcome: "INCONCLUSIVE",
+          confidence: 0,
+          signals,
+        });
+      } else {
+        results.push({
+          id: a.id,
+          description: a.description,
+          pass,
+          detail: pass ? undefined : explainFailure(a.check_code, adapted, collector),
+          outcome,
+          confidence,
+          signals,
+        });
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       // Helpers not in our sandbox → skip-as-pass with note (out of scope).
@@ -3480,9 +3553,20 @@ function buildSignalRollup(opts: {
   warnings: string[];
   stateTimeline: Array<{ from?: string; to: string; via?: string }>;
   allowedInterrupts: string[];
+  category: string;
 }): SignalRollup[] {
   const out: SignalRollup[] = [];
   const TOL = 0.05;
+  // Buy-feature cases ("buy respins", "buy free spins", …) deduct a PURCHASE
+  // premium (20×–500× base bet), not the bet. Two knock-on effects the signal
+  // checks below must account for:
+  //   1. The balance-derived `win` (balanceAfter − balanceBefore + bet) folds
+  //      the premium in and legitimately goes negative — it encodes net-of-cost,
+  //      not the feature payout. Check serverTotalWin (the round's real win)
+  //      for non-negativity instead.
+  //   2. The buy click implicitly triggers spins, so a captured spin is
+  //      EXPECTED — not the "UI-only, 0 spins" shape.
+  const isBuyFeatureCase = /buy/i.test(opts.category);
 
   // ─── 1. API ────────────────────────────────────────────────────────────
   const apiChecks: SignalCheck[] = [];
@@ -3509,13 +3593,29 @@ function buildSignalRollup(opts: {
         : typeof s.bet === "number" && s.bet > 0,
       source: "parser/spin.bet",
     });
-    apiChecks.push({
-      field: "win",
-      expected: ">= 0 (non-negative)",
-      actual: s.win,
-      match: typeof s.win === "number" && Number.isFinite(s.win) && s.win >= 0,
-      source: "parser/spin.win",
-    });
+    if (isBuyFeatureCase) {
+      // Buy round: `win` is balance-derived and nets the purchase cost, so it
+      // is allowed to be negative. Verify the SERVER round win instead (the
+      // real feature payout, always >= 0); fall back to "finite" when the
+      // provider didn't report a per-round total.
+      const sv = s.serverTotalWin;
+      const hasServerWin = typeof sv === "number" && Number.isFinite(sv);
+      apiChecks.push({
+        field: "win",
+        expected: hasServerWin ? ">= 0 (buy-feature: server round win)" : "finite (buy-feature net-of-cost)",
+        actual: hasServerWin ? sv : s.win,
+        match: hasServerWin ? sv >= 0 : (typeof s.win === "number" && Number.isFinite(s.win)),
+        source: hasServerWin ? "parser/serverTotalWin" : "parser/spin.win",
+      });
+    } else {
+      apiChecks.push({
+        field: "win",
+        expected: ">= 0 (non-negative)",
+        actual: s.win,
+        match: typeof s.win === "number" && Number.isFinite(s.win) && s.win >= 0,
+        source: "parser/spin.win",
+      });
+    }
     apiChecks.push({
       field: "balanceAfter",
       expected: "finite number",
@@ -3611,7 +3711,7 @@ function buildSignalRollup(opts: {
   // buy click triggers spins implicitly). 2026-05-26: detect via the warning
   // emitted by the post-action settle code when ratio >= 50. When detected,
   // expect spins ≥ 1 instead of the (wrong) "UI-only" classification.
-  const hasBuyFeature = opts.warnings.some((w) => /buy-feature detected/i.test(w));
+  const hasBuyFeature = isBuyFeatureCase || opts.warnings.some((w) => /buy-feature detected/i.test(w));
   // 2026-05-26: autoplay/UI-driven multi-spin cases (PATH 2) have 0 explicit
   // `spin` actions but DO expect spins — caller now passes the derived count.
   // Only label as "UI-only" when truly zero spins expected.

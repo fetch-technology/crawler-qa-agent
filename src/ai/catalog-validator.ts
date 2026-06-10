@@ -34,6 +34,11 @@ const ALLOWED_TOP_LEVEL_IDENTIFIERS = new Set<string>([
   "getCurrentBalance",
   "sumWinBreakdown",
   "payoutModelCheck",
+  "comboWellFormed",
+  "distinctReels",
+  "clusterConnected",
+  "gridWidth",
+  "gridHeight",
   "Math",
   "Number",
   "Array",
@@ -401,10 +406,27 @@ const KNOWN_STATE_LITERALS = new Set([
  */
 export function validateStatusStateLiterals(code: string): string[] {
   const out: string[] = [];
-  const re = /(?:\.(status|state)\s*===?\s*['"]([^'"]+)['"])|(?:['"]([^'"]+)['"]\s*===?\s*[\w.]*\.(status|state)\b)/g;
+  // Match `<expr>.status|state === "literal"` (and the reversed order). The
+  // optional leading `typeof` distinguishes a TYPE check from a VALUE compare:
+  //   - `typeof spin.state === "string"` → valid (state/status ARE strings) → ok
+  //   - `typeof spin.state === "object"` (or any non-"string") → always false,
+  //     since the field is a string enum → flag (this is the real bug, not the
+  //     misleading "compares to literal" reason the value-path would report)
+  //   - `spin.state === "<literal>"` → value compare → flag if not a real state
+  const re = /(typeof\s+)?[\w.]*\.(status|state)\s*===?\s*['"]([^'"]+)['"]|['"]([^'"]+)['"]\s*===?\s*(typeof\s+)?[\w.]*\.(status|state)\b/g;
   for (const m of code.matchAll(re)) {
-    const field = (m[1] ?? m[4])!;
-    const literal = (m[2] ?? m[3])!;
+    const isTypeof = !!(m[1] || m[5]);
+    const field = (m[2] ?? m[6])!;
+    const literal = (m[3] ?? m[4])!;
+    if (isTypeof) {
+      // A string-enum field can only ever be `typeof === "string"`.
+      if (literal === "string") continue; // legit type check — not an error
+      out.push(
+        `type-checks spin.${field} with \`typeof === "${literal}"\`, but spin.${field} ` +
+        `is always a string — this is always false. Drop it or compare to "string".`,
+      );
+      continue;
+    }
     const allowed = field === "status" ? KNOWN_STATUS_LITERALS : KNOWN_STATE_LITERALS;
     if (!allowed.has(literal)) {
       out.push(

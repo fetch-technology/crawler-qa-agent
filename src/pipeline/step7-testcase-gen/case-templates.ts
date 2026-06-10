@@ -228,6 +228,33 @@ export const STANDARD_CASE_TEMPLATES: CaseTemplate[] = [
     ],
   },
   {
+    id: "history-free-spin-rows-distinguishable",
+    name: "History — free-spin rows distinguishable from bet rows",
+    description:
+      "Autoplay enough rounds to organically trigger free spins, then the engine auto-opens game history (category=history) and matches rows to captured spins. Verifies the recorded rounds the history panel shows are FUNCTIONALLY distinct: free-spin rounds carry ZERO stake (and can still win), normal rounds carry a positive stake — that zero-vs-staked contrast is exactly what makes a free-spin row tell-apart-able from a bet row. INCONCLUSIVE (assertions vacuous-pass) on a run where free spins never trigger; autoplay at the highest tile maximises the chance.",
+    category: "history",
+    severity: "minor",
+    requiresFeature: ["freeSpin", "history"],
+    setup_instructions:
+      "Leave the bet at its default value. Spin a large batch via autoplay (the engine converts this to the game's native autoplay at its highest preset) to try to trigger free spins; if they start, let the whole bonus play out. The engine then auto-opens the game history / rounds panel and reconciles the rows against the captured spins.",
+    spin_count: 1000,
+    allowed_interruptions: ["FREE_SPIN_TRIGGERED", "BIG_WIN_POPUP"],
+    custom_assertions: [
+      {
+        id: "fs-rows-distinguishable",
+        description: "free-spin rounds carry ZERO stake while normal rounds carry a positive stake (the contrast that makes FS rows distinguishable in history); vacuous-pass when no free spins triggered this run",
+        check_code:
+          "(() => { const fs = collector.spins.filter(s => s.isFreeSpin === true); if (fs.length === 0) return true; const normal = collector.spins.filter(s => s.isFreeSpin !== true); return fs.every(s => (s.betAmount ?? 0) === 0) && normal.length > 0 && normal.every(s => (s.betAmount ?? 0) > 0); })()",
+      },
+      {
+        id: "fs-rows-shaped-zero-stake",
+        description: "every free-spin round is a well-formed history row: non-empty id, non-negative win, zero stake; vacuous-pass when no free spins triggered",
+        check_code:
+          "collector.spins.filter(s => s.isFreeSpin === true).every(s => typeof s.id === 'string' && s.id.length > 0 && typeof s.winAmount === 'number' && s.winAmount >= 0 && (s.betAmount ?? 0) === 0)",
+      },
+    ],
+  },
+  {
     id: "paytable-opens",
     name: "Paytable — opens and shows payouts",
     description: "Open the paytable / info screen; verify it displays.",

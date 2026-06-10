@@ -20,9 +20,10 @@ import {
   computeBetBySpec,
   buildRoundIdBySpec,
   applyNestedExtractions,
+  mergeSpec,
 } from "../../src/pipeline/step6-build-model/providers/spec-driven-parser.ts";
 import { loadProviderSpec } from "../../src/pipeline/step6-build-model/providers/spec-loader.ts";
-import type { ProviderSpec } from "../../src/pipeline/step6-build-model/providers/spec-types.ts";
+import type { ProviderSpec, ParserOverlay } from "../../src/pipeline/step6-build-model/providers/spec-types.ts";
 
 function ppSpec(): ProviderSpec {
   return {
@@ -62,6 +63,97 @@ function ppSpec(): ProviderSpec {
     },
   };
 }
+
+// === winBreakdown / serverTotalWin (Phase 0 — payout-integrity inputs) ===
+// Regression: SpecDrivenParser used to leave winBreakdown=[] + serverTotalWin
+// undefined, silently disabling every payout-integrity assertion on
+// spec-driven games (the legacy PragmaticParser set both). Real frames below
+// are from vswaysrsm (tumble ways game) — wlc_v itemization present.
+
+test("SpecDrivenParser populates winBreakdown from wlc_v + serverTotalWin from tw", () => {
+  const parser = new SpecDrivenParser(ppSpec(), "PragmaticParser");
+  const res = "tw=0.04&wlc_v=12~0.04~1~3~6,8,19~l&na=s&rs=tumbling&bb=996049.2&ba=996048.8&index=1";
+  const req = "action=doSpin&c=0.02&l=20&index=13&counter=4";
+  const s = parser.parseSpinPair(req, res);
+  expect(s.serverTotalWin).toBeCloseTo(0.04, 2);
+  expect(s.winBreakdown).toHaveLength(1);
+  expect(s.winBreakdown![0]!.symbol).toBe("12");
+  expect(s.winBreakdown![0]!.win).toBeCloseTo(0.04, 2);
+});
+
+test("winBreakdown Σ-of-combos equals serverTotalWin (no phantom win)", () => {
+  const parser = new SpecDrivenParser(ppSpec(), "PragmaticParser");
+  // multi-combo frame: 0.16 + 0.20 = 0.36 itemized, tw cumulative 2.32
+  const res = "tw=0.36&wlc_v=8~0.16~2~3~0,7,8,19~l;11~0.20~2~4~6,13,14,20,21~l&bb=996048.08&ba=996048.44&index=1";
+  const s = parser.parseSpinPair("action=doSpin&c=0.02&l=20&index=22&counter=2", res);
+  const sum = (s.winBreakdown ?? []).reduce((a, c) => a + c.win, 0);
+  expect(s.winBreakdown).toHaveLength(2);
+  expect(sum).toBeCloseTo(0.36, 2);
+});
+
+test("winItemization='none' opts out → winBreakdown empty (provider truly has no itemization)", () => {
+  const spec = ppSpec();
+  spec.response.winItemization = "none";
+  const parser = new SpecDrivenParser(spec, "PragmaticParser");
+  const res = "tw=0.04&wlc_v=12~0.04~1~3~6,8,19~l&bb=996049.2&ba=996048.8&index=1";
+  const s = parser.parseSpinPair("action=doSpin&c=0.02&l=20&index=13&counter=4", res);
+  expect(s.winBreakdown).toEqual([]);
+});
+
+test("non-winning frame → empty winBreakdown, serverTotalWin 0", () => {
+  const parser = new SpecDrivenParser(ppSpec(), "PragmaticParser");
+  const res = "tw=0.00&na=s&bb=996052&ba=996051.6&index=1";
+  const s = parser.parseSpinPair("action=doSpin&c=0.02&l=20&index=30&counter=2", res);
+  expect(s.winBreakdown).toEqual([]);
+  expect(s.serverTotalWin).toBe(0);
+});
+
+// === per-game parser overlay (Phase 1 — base ⊕ overlay, trusted per-aspect) ===
+
+test("mergeSpec: TRUSTED winItemization overrides base, base untouched", () => {
+  const base = ppSpec();
+  base.response.winItemization = "auto";
+  const overlay: ParserOverlay = {
+    schemaVersion: 1, basedOnProvider: "pragmatic",
+    winItemization: { value: "cluster", trusted: true },
+  };
+  const merged = mergeSpec(base, overlay);
+  expect(merged.response.winItemization).toBe("cluster");
+  expect(base.response.winItemization).toBe("auto"); // base not mutated
+  expect(merged).not.toBe(base);
+});
+
+test("mergeSpec: UNTRUSTED aspect is ignored → falls back to base", () => {
+  const base = ppSpec();
+  base.response.winItemization = "wlc_v";
+  const overlay: ParserOverlay = {
+    schemaVersion: 1, basedOnProvider: "pragmatic",
+    winItemization: { value: "none", trusted: false }, // unverified guess
+  };
+  const merged = mergeSpec(base, overlay);
+  expect(merged.response.winItemization).toBe("wlc_v"); // base wins
+});
+
+test("applySpecOverlay changes parse behavior: trusted 'none' → empty winBreakdown", () => {
+  const parser = new SpecDrivenParser(ppSpec(), "PragmaticParser");
+  const res = "tw=0.04&wlc_v=12~0.04~1~3~6,8,19~l&bb=996049.2&ba=996048.8&index=1";
+  const req = "action=doSpin&c=0.02&l=20&index=13&counter=4";
+  // before overlay: default (auto/wlc_v) → itemized
+  expect(parser.parseSpinPair(req, res).winBreakdown).toHaveLength(1);
+  // apply trusted overlay forcing "none" → opts out
+  parser.applySpecOverlay({
+    schemaVersion: 1, basedOnProvider: "pragmatic",
+    winItemization: { value: "none", trusted: true },
+  });
+  expect(parser.parseSpinPair(req, res).winBreakdown).toEqual([]);
+});
+
+test("applySpecOverlay(null) is a no-op", () => {
+  const parser = new SpecDrivenParser(ppSpec(), "PragmaticParser");
+  const before = parser.spec.response.winItemization;
+  parser.applySpecOverlay(null);
+  expect(parser.spec.response.winItemization).toBe(before);
+});
 
 // === parseBodyBySpec ===
 

@@ -45,3 +45,19 @@ test("mixed real + bad → only the bad literal is flagged", () => {
   expect(msgs.length).toBe(1);
   expect(msgs[0]).toContain('"finished"');
 });
+
+// Phase fix #2 — typeof type-checks vs value compares.
+test("typeof state === 'string' is a VALID type check (not flagged)", () => {
+  expect(validateStatusStateLiterals('typeof spin.state === "string"')).toEqual([]);
+  expect(validateStatusStateLiterals('typeof spin.status === "string"')).toEqual([]);
+});
+
+test("typeof state === 'object' is flagged (string-enum can never be object → always false)", () => {
+  const msgs = validateStatusStateLiterals('typeof spin.state === "object"');
+  expect(msgs.length).toBe(1);
+  expect(msgs[0]).toContain("always false");
+});
+
+test("typeof state === 'number' is flagged too", () => {
+  expect(validateStatusStateLiterals('typeof spin.status === "number"').length).toBe(1);
+});

@@ -306,6 +306,20 @@ HELPERS (always bound, pure):
 - detectBuyFeatureDeduction(spins, startIndex, balanceBefore):
   returns { deduction, baseBet, ratio, spin } or null. Use for buy-feature cost checks.
   Example: \`(() => { const d = detectBuyFeatureDeduction(collector.spins, 0, balanceBefore); return d != null && d.ratio >= 50; })()\`
+- sumWinBreakdown(spin): Σ of the spin's per-combo wins (winBreakdown). Pair with
+  s.serverTotalWin for payout-integrity. Example: \`Math.abs(sumWinBreakdown(spin) - spin.serverTotalWin) <= 0.01\`
+- comboWellFormed(combo): true if a winBreakdown combo is structurally sound
+  (finite win ≥ 0, ≥1 position, count ≤ positions). Mechanic-agnostic.
+  Example: \`(spin.winBreakdown||[]).every(c => comboWellFormed(c))\`
+- distinctReels(positions, gridHeight): # distinct reel columns the positions
+  touch (column-major). For a WAYS combo this should equal combo.count.
+  Example (ways): \`(spin.winBreakdown||[]).every(c => distinctReels(c.positions, gridHeight) === c.count)\`
+- clusterConnected(positions, gridWidth, gridHeight): true if positions form ONE
+  4-connected region — the defining property of a CLUSTER pay. (Uniform reel
+  height; treat as a hint on Megaways.)
+  Example (cluster): \`(spin.winBreakdown||[]).filter(c => c.type === 'cluster').every(c => clusterConnected(c.positions, gridWidth, gridHeight))\`
+- gridWidth / gridHeight: reel grid dimensions for the captured spin (null if
+  unknown — always null-guard before passing to the geometry helpers above).
 
 UI / OCR (Phase 11.2 — bound for ALL categories, not just ui_consistency):
 - screen: { balance: number|null, bet: number|null, last_win: number|null, total_win: number|null }.
@@ -978,14 +992,65 @@ Output ONLY the JSON.`;
     }
   }
   console.log(`[catalog] Step 3/3 validation:\n${formatValidationReport(report)}`);
+
+  // Graceful degrade: a single AI-generated assertion the repair retry can't
+  // fix used to ABORT the entire catalog (all 30 cases discarded). Instead,
+  // DROP only the offending assertion(s) — they're per-assertion, additive
+  // checks — keep the case + the rest, log loudly, and re-validate. Abort only
+  // if STRUCTURAL errors remain (catalog-level / category / dup-id) or dropping
+  // didn't clear the errors. Assertion-scoped errors use rule `assertion-*` and
+  // embed `assertion "<id>"` in the message.
+  const droppedAssertions: string[] = [];
+  if (!report.ok) {
+    const aidOf = (msg: string): string | null => msg.match(/assertion "([^"]+)"/)?.[1] ?? null;
+    const isDroppable = (e: typeof report.errors[number]) =>
+      Boolean(e.case_id) && /^assertion-/.test(e.rule) && aidOf(e.message) != null;
+    const fatal = report.errors.filter((e) => !isDroppable(e));
+    const droppable = report.errors.filter(isDroppable);
+    if (fatal.length === 0 && droppable.length > 0) {
+      const dropByCase = new Map<string, Set<string>>();
+      for (const e of droppable) {
+        const aid = aidOf(e.message)!;
+        if (!dropByCase.has(e.case_id!)) dropByCase.set(e.case_id!, new Set());
+        dropByCase.get(e.case_id!)!.add(aid);
+        console.warn(`[catalog] DROPPING invalid assertion ${e.case_id}/${aid} [${e.rule}]: ${e.message}`);
+      }
+      cases = cases.map((c) => {
+        const drop = dropByCase.get(c.id);
+        if (!drop) return c;
+        return { ...c, custom_assertions: (c.custom_assertions ?? []).filter((a) => !drop.has(a.id)) };
+      });
+      for (const [cid, ids] of dropByCase) for (const aid of ids) droppedAssertions.push(`${cid}/${aid}`);
+      report = runFullValidation({
+        cases,
+        gameSpec,
+        optionsJson: args.optionsJson,
+        coverageNotes: plan.coverage_notes ?? [],
+      });
+      console.log(`[catalog] dropped ${droppedAssertions.length} un-repairable assertion(s); re-validation:\n${formatValidationReport(report)}`);
+    }
+  }
+
   if (!report.ok) {
     throw new Error(
-      `generateTestCaseCatalog: validation failed after retry — ${report.errors.length} error(s):\n${formatValidationReport(report)}`,
+      `generateTestCaseCatalog: validation failed after retry${droppedAssertions.length ? " + assertion-drop" : ""} — ${report.errors.length} error(s):\n${formatValidationReport(report)}`,
     );
   }
 
   const elapsed = Date.now() - t0;
   if (meta) meta.elapsed_ms = elapsed;
+
+  // Surface dropped assertions so QA knows which checks were removed (fail-loud,
+  // not silent truncation).
+  const coverageNotes = [
+    ...(plan.coverage_notes ?? []),
+    ...(droppedAssertions.length
+      ? [`⚠ Dropped ${droppedAssertions.length} un-repairable AI assertion(s) during generation: ${droppedAssertions.join(", ")}`]
+      : []),
+  ];
+  if (meta && droppedAssertions.length) {
+    (meta as Record<string, unknown>).dropped_assertions = droppedAssertions;
+  }
 
   return {
     game_slug: gameSpec.game_code,
@@ -993,7 +1058,7 @@ Output ONLY the JSON.`;
     generated_at: new Date().toISOString(),
     total_cases: cases.length,
     cases,
-    coverage_notes: plan.coverage_notes ?? [],
+    coverage_notes: coverageNotes,
     generation_meta: meta,
   };
 }

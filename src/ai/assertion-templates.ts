@@ -118,12 +118,22 @@ export const ASSERTION_TEMPLATES_BY_CATEGORY: Record<string, AssertionTemplate[]
   buy_feature: [
     {
       id: "buy-feature-cost-deducted",
-      description: "Buy cost is a large multiple of base bet (ratio ≥ 50× typical)",
-      check_code: "(() => { const d = detectBuyFeatureDeduction(collector.spins, 0, balanceBefore); return d != null && d.ratio >= 50; })()",
+      description: "Buy cost is a large multiple of base bet (buy-respins ≈ 20×, buy-free-spins ≈ 100×)",
+      check_code: "(() => { const d = detectBuyFeatureDeduction(collector.spins, 0, balanceBefore); return d != null && d.ratio >= 5; })()",
+    },
+    {
+      // IMPORTANT: on a buy round, `winAmount` is BALANCE-DERIVED
+      // (endingBalance − startingBalance + betAmount) and nets the purchase
+      // PREMIUM in, so it legitimately goes NEGATIVE — never assert
+      // `winAmount >= 0` for buy_feature cases. Use `serverTotalWin`, the
+      // server-reported real feature payout, which is always >= 0.
+      id: "buy-feature-win-non-negative",
+      description: "Round win is non-negative — use serverTotalWin (NOT winAmount; winAmount nets the buy cost and can be negative)",
+      check_code: "collector.spins.every(s => typeof s.serverTotalWin !== 'number' || s.serverTotalWin >= 0)",
     },
     {
       id: "buy-feature-free-spins-triggered",
-      description: "Free-spin frames observed after buy purchase",
+      description: "Free-spin frames observed after buy purchase (free-spin buys only — skip for respin buys)",
       check_code: "collector.spins.filter(s => s.isFreeSpin === true).every(s => typeof s.id === 'string' && s.id.length > 0)",
     },
     {

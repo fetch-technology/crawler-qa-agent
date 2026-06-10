@@ -65,6 +65,10 @@ export type ShapeScoreConfig = {
   minScore: number;
 };
 
+/** How a provider itemizes per-combo wins (drives `winBreakdown`).
+ *  "auto" = try wlc_v then cluster fallback (legacy PragmaticParser behavior). */
+export type WinItemization = "auto" | "wlc_v" | "cluster" | "lines" | "none";
+
 /** Round ID construction recipe. */
 export type RoundIdConfig = {
   /** Source: "request" reads from parsed request fields; "response" reads from response. */
@@ -97,6 +101,17 @@ export type ProviderSpec = {
     /** Default reel dimensions if response doesn't specify. */
     defaultReelDimensions?: { width: number; height: number };
     shapeScore: ShapeScoreConfig;
+    /** How this provider itemizes per-combo wins, so the parser can populate
+     *  `winBreakdown` (Σ-of-combos == total-win, no-phantom-win, per-combo
+     *  paytable checks all depend on it). Omitted ⇒ "auto": try `wlc_v`
+     *  (PP ways/lines) then fall back to cluster `l0,l1,…` — matches the
+     *  legacy PragmaticParser, so existing specs without this field still
+     *  populate winBreakdown instead of silently leaving it empty.
+     *    "wlc_v"   — PP `wlc_v=sym~win~ways~count~positions` itemization
+     *    "cluster" — pays-anywhere `l0,l1,…` cluster itemization
+     *    "lines"   — per-payline itemization (future)
+     *    "none"    — provider genuinely does not itemize (only total-win) */
+    winItemization?: WinItemization;
     /** Post-parse extractions from nested string-valued fields. Each entry
      *  reads a top-level field (e.g. PP's `g={gp:{s:"..."}}` blob) and pulls
      *  a substring out via regex into a new top-level key. Lets data-driven
@@ -134,4 +149,36 @@ export type ProviderSpec = {
     urlPattern: string;
     bodyPattern?: string;
   }>;
+};
+
+/** One learned/overridden aspect of a per-game parser overlay. `trusted`
+ *  gates whether it is allowed to override the provider base at runtime — set
+ *  true only after the replay-gate (Phase 2) reconciles it on captured
+ *  samples. An untrusted aspect is recorded for audit but NOT applied, so the
+ *  game falls back to the provider base instead of using an unverified guess. */
+export type ParserOverlayAspect<T> = {
+  value: T;
+  trusted: boolean;
+};
+
+/** Per-game parser overlay: the thin, game-specific delta on top of the
+ *  provider base spec (the parts that genuinely vary between games of the same
+ *  provider — win itemization, and later tumble/free-spin shape). Lives at
+ *  `fixtures/registry/<slug>/parser-overlay.json`. Written by the spec-learner
+ *  (Phase 3) after the replay-gate validates it; can also be hand-authored.
+ *  `trusted` is PER-ASPECT: a game can certify itemization while leaving
+ *  another aspect unverified, instead of an all-or-nothing flag. */
+export type ParserOverlay = {
+  schemaVersion: number;
+  /** Provider base this overlay layers on (e.g. "pragmatic"). */
+  basedOnProvider: string;
+  /** How wins are itemized for THIS game (overrides base when trusted). */
+  winItemization?: ParserOverlayAspect<WinItemization>;
+  /** Audit trail from the replay-gate that certified this overlay. */
+  validation?: {
+    validatedAt?: string;
+    samplesReplayed?: number;
+    reconciled?: number;
+    invariants?: string[];
+  };
 };

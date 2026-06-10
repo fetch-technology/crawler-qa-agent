@@ -67,7 +67,7 @@ async function main(): Promise<void> {
         continue;
       }
       try {
-        const ocr = await ocrRegion(session.page, { x: r.x, y: r.y, w: r.width, h: r.height });
+        const ocr = await ocrRegion(session.page, { x: r.x, y: r.y, w: r.width, h: r.height }, { numeric: true });
         const parsed = parseNumericFromOcr(ocr.text);
         reports.push({
           region: String(key),

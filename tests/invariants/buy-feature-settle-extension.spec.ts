@@ -65,3 +65,45 @@ test("user-reported case math: vswaysmahwin2 buy-free-spins at 0.2", () => {
   expect(ratio).toBeCloseTo(88, 0);  // 88× base bet — classic PP buy-FS price
   expect(ratio).toBeGreaterThanOrEqual(50);  // triggers buy-feature settle extension
 });
+
+// 2026-06-10 — lower-multiple buys (e.g. "Buy Respins for 20×") sat BELOW the
+// flat 50× cutoff and were mis-scored as "UI-only, 0 spins". Engine now lowers
+// the detection threshold for cases the catalog already tags `buy_feature`:
+//   const isBuyFeatureCaseRun = /buy/i.test(input.category);
+//   const buyRatioThreshold  = isBuyFeatureCaseRun ? 3 : 50;
+function buyRatioThreshold(category: string): number {
+  return /buy/i.test(category) ? 3 : 50;
+}
+
+test("buy-respins 20× on a buy_feature case IS detected (threshold lowered to 3)", () => {
+  // Reported case: bet=0.40, balanceBefore=996057.82, balanceAfter=996049.82
+  const drop = 996057.82 - 996049.82;        // 8.00 = 20× base bet
+  const ratio = drop / 0.4;                   // 20
+  expect(ratio).toBeCloseTo(20, 0);
+  expect(ratio).toBeGreaterThanOrEqual(buyRatioThreshold("buy_feature")); // 20 ≥ 3 → detected
+  expect(ratio).toBeLessThan(50);             // would have been MISSED by the old flat cutoff
+});
+
+test("non-buy category keeps the conservative 50× cutoff (no false buy detection)", () => {
+  // A big organic win on a base_game spin must NOT be mistaken for a buy.
+  expect(buyRatioThreshold("base_game")).toBe(50);
+  const ratio = 20; // 20× swing on a normal spin
+  expect(ratio).toBeLessThan(buyRatioThreshold("base_game")); // stays in normal mode
+});
+
+// 2026-06-10 — buy-round win-non-negativity must read serverTotalWin, NOT the
+// balance-derived `win`. On a buy round `win = balanceAfter − balanceBefore +
+// bet` folds the purchase premium in and legitimately goes negative.
+test("buy-round API win check uses serverTotalWin, not balance-derived win", () => {
+  // Reported round: bet=0.4, bb=996057.82, ba=996049.82, serverTotalWin=0
+  const bet = 0.4, bb = 996057.82, ba = 996049.82, serverTotalWin = 0;
+  const balanceDerivedWin = Math.round((ba - bb + bet) * 100) / 100; // -7.6
+  expect(balanceDerivedWin).toBeCloseTo(-7.6, 2);
+
+  // OLD check (balance-derived >= 0) wrongly fails:
+  expect(balanceDerivedWin >= 0).toBe(false);
+  // NEW buy-aware check (serverTotalWin >= 0) passes:
+  const hasServerWin = typeof serverTotalWin === "number" && Number.isFinite(serverTotalWin);
+  const match = hasServerWin ? serverTotalWin >= 0 : Number.isFinite(balanceDerivedWin);
+  expect(match).toBe(true);
+});

@@ -7,6 +7,7 @@
 import type { BaseParser, ParserKind } from "../base-parser.js";
 import type { NormalizedSpinResult, SpinState } from "../normalized.js";
 import type { ProviderSpec, ReelsDecoder } from "./spec-types.js";
+import { parseWlcV, parseClusterWins } from "../win-breakdown.js";
 
 /** Resolve a field-spec string into a list of candidate field names.
  *  Accepts plain "ba" or pipe-separated "ba|balance|balance_cash" for cases
@@ -27,6 +28,46 @@ function pickField(parsed: Record<string, unknown>, spec: string | undefined): u
 /** True if ANY alias of `spec` is present in parsed. */
 function fieldPresent(parsed: Record<string, unknown>, spec: string | undefined): boolean {
   return fieldAliases(spec).some((n) => n in parsed);
+}
+
+/** Itemize per-combo wins per the spec's `winItemization` mode. Default
+ *  ("auto"/undefined) matches the legacy PragmaticParser: parseWlcV, which
+ *  itself falls back to cluster `l0,l1,…` when no `wlc_v` is present — so PP
+ *  ways/lines AND cluster games both populate winBreakdown without per-game
+ *  config. "none" opts out (provider truly reports only a total). */
+function parseWinItemization(
+  parsedRes: Record<string, unknown>,
+  mode: ProviderSpec["response"]["winItemization"],
+): import("../win-breakdown.js").WinCombo[] {
+  switch (mode) {
+    case "none":
+      return [];
+    case "cluster":
+      return parseClusterWins(parsedRes);
+    case "lines":
+    case "wlc_v":
+    case "auto":
+    case undefined:
+    default:
+      return parseWlcV(parsedRes); // wlc_v with internal cluster fallback
+  }
+}
+
+/** Merge a per-game overlay onto a provider base spec → a NEW effective spec
+ *  (base is never mutated). Each overlay aspect overrides the base ONLY when
+ *  `trusted` — an unverified aspect is ignored so the game safely falls back
+ *  to the provider default. Pure; exported for tests + parser-factory. */
+export function mergeSpec(
+  base: ProviderSpec,
+  overlay: import("./spec-types.js").ParserOverlay,
+): ProviderSpec {
+  // Shallow clone is enough: the only fields overlay touches live under
+  // `response`, so clone spec + response and override there.
+  const merged: ProviderSpec = { ...base, response: { ...base.response } };
+  if (overlay.winItemization?.trusted) {
+    merged.response.winItemization = overlay.winItemization.value;
+  }
+  return merged;
 }
 
 /** Mutates `parsed` in place: for each extraction, read the source field as
@@ -244,13 +285,24 @@ export class SpecDrivenParser implements BaseParser {
   readonly providerCode: string;
   private betMultiplier: number | undefined;
 
-  constructor(public readonly spec: ProviderSpec, kind: ParserKind = "PragmaticParser") {
+  // Not readonly: applyOverlay() swaps in a per-game MERGED spec. mergeSpec
+  // returns a fresh object, so the provider-base spec (shared across games via
+  // the parser factory closure) is never mutated — only this instance's
+  // pointer moves.
+  constructor(public spec: ProviderSpec, kind: ParserKind = "PragmaticParser") {
     this.kind = kind;
     this.providerCode = spec.name.toUpperCase().slice(0, 4);
   }
 
   setBetMultiplier(m: number | undefined): void {
     this.betMultiplier = m && m > 0 ? m : undefined;
+  }
+
+  /** Apply a per-game parser overlay on top of the provider base spec. Only
+   *  aspects marked `trusted` override the base (fail-loud: an unverified
+   *  guess is ignored, falling back to base). No-op when overlay is null. */
+  applySpecOverlay(overlay: import("./spec-types.js").ParserOverlay | null | undefined): void {
+    if (overlay) this.spec = mergeSpec(this.spec, overlay);
   }
 
   canParseResponse(raw: string, url?: string): boolean {
@@ -327,6 +379,14 @@ export class SpecDrivenParser implements BaseParser {
     // pragmatic-parser.ts toNormalized for full rationale.
     const requestBet = computeBetBySpec(parsedReq, this.spec.request, this.betMultiplier);
     const bet = isFreeSpin ? 0 : requestBet;
+    // Payout-integrity inputs. Without these the spec-driven path left
+    // winBreakdown empty + serverTotalWin undefined, which silently disabled
+    // every payout-integrity assertion (Σcombos==tw, no-phantom-win) — the
+    // legacy PragmaticParser set both, so spec-driven games regressed. The
+    // values come straight from the already-parsed response; cascade-dedup
+    // accumulates winBreakdown across tumble frames downstream.
+    const twVal = pickField(parsedRes, fields.totalWin);
+    const twNum = twVal != null ? Number(twVal) : NaN;
     return {
       roundId: buildRoundIdBySpec(parsedReq, parsedRes, this.spec.roundId),
       bet,
@@ -340,6 +400,8 @@ export class SpecDrivenParser implements BaseParser {
       isFreeSpin,
       hasBonus: state === "BONUS",
       raw: parsedRes,
+      winBreakdown: parseWinItemization(parsedRes, this.spec.response.winItemization),
+      serverTotalWin: Number.isFinite(twNum) ? twNum : undefined,
     };
   }
 }

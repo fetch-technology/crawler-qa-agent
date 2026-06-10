@@ -24,6 +24,10 @@ import {
 import { executeCase, type CaseResult } from "../step8-run-scenarios/case-executor.js";
 import "../step6-build-model/index.js";
 import { createParserForGame } from "../step6-build-model/parser-factory.js";
+import { tryLoadProviderSpec } from "../step6-build-model/providers/spec-loader.js";
+import { learnParserOverlayWithAi } from "../step8-run-scenarios/spec-learner.js";
+import { aiProposeWinItemization } from "../../ai/itemization-classifier.js";
+import type { ReplaySample } from "../step8-run-scenarios/spec-replay-gate.js";
 import { parserCache } from "../registry/parser-cache.js";
 import { uiRegistry } from "../registry/ui-registry.js";
 import { initMeta, meta } from "../registry/meta.js";
@@ -3200,7 +3204,7 @@ export class ManualSessionManager {
         y: region.y,
         w: region.width,
         h: region.height,
-      });
+      }, { numeric: true });
       return {
         ok: true,
         text: ocr.text,
@@ -4840,6 +4844,10 @@ CHECK_CODE RULES
     // response (initial + cascade frames) — independent of executeCase's own
     // dedup listener, and robust to set_bet not landing an exact coin.
     const combos: CalibrationCombo[] = [];
+    // Phase 3 — raw {request,response} pairs for the spec-learner. Captured
+    // from the SAME spins (no extra cost), BEFORE the FS-skip gate so tumble /
+    // free-spin frames are included (the replay-gate dedups them itself).
+    const learnerSamples: ReplaySample[] = [];
     let fsFramesSkipped = 0;
     let spinRespsSeen = 0; // PP spin responses the side-channel actually parsed (diagnostic)
     const onResp = async (res: import("playwright").Response) => {
@@ -4859,6 +4867,11 @@ CHECK_CODE RULES
         const body = await res.text();
         const parsed = pragmaticProvider.parseBody(body);
         if (!parsed) return;
+        // Capture the raw pair for the spec-learner (bounded). Includes FS /
+        // tumble frames on purpose — the gate's dedup needs them.
+        if (learnerSamples.length < 400) {
+          learnerSamples.push({ request: res.request().postData() ?? null, response: body, url });
+        }
         // Skip FREE-SPIN / bonus frames. With native autoplay over ~100 rounds
         // (below) the run WILL trigger free spins; FS frames have bet=0 and
         // different combo economics (retrigger awards, multipliers) so their
@@ -4916,11 +4929,18 @@ CHECK_CODE RULES
       targetSpins,
       reason: "payout calibration: autoplay batch",
     });
-    const spinBatch = (): import("../step7-testcase-gen/case-action-translator.js").CaseAction[] =>
-      autoBatch
-        ? autoBatch.actions.map((a) => ({ ...a }))
-        : Array.from({ length: K }, () => [{ kind: "spin" as const }, { kind: "wait_ms" as const, ms: 2500 }]).flat();
-    const spinMode = autoBatch ? `native autoplay tile=${autoBatch.tile}` : `${K} discrete spins`;
+    const discreteBatch = (): import("../step7-testcase-gen/case-action-translator.js").CaseAction[] =>
+      Array.from({ length: K }, () => [{ kind: "spin" as const }, { kind: "wait_ms" as const, ms: 2500 }]).flat();
+    // Level-1 uses the native autoplay batch (high volume → more winning combos)
+    // when the UI exposes it. Level-2 ALWAYS uses discrete spins: re-opening the
+    // autoplay panel for a 2nd batch is fragile — if level-1 autoplay hasn't
+    // fully wound down, the autoButton click STOPS it (toggle) instead of
+    // opening the panel, so level-2 never spins (observed: 0 doSpin, balance
+    // frozen). Discrete spinButton clicks have no toggle/panel dependency, and
+    // level-2 only needs a few combos to establish the 2nd coin level.
+    const level1Batch = (): import("../step7-testcase-gen/case-action-translator.js").CaseAction[] =>
+      autoBatch ? autoBatch.actions.map((a) => ({ ...a })) : discreteBatch();
+    const spinMode = autoBatch ? `L1 native autoplay tile=${autoBatch.tile} + L2 ${K} discrete` : `${K} discrete spins/level`;
 
     const actions: import("../step7-testcase-gen/case-action-translator.js").CaseAction[] = [];
     // Force ante OFF first. Ante ON (PP `sInfo=an`) inflates the wager AND
@@ -4939,11 +4959,11 @@ CHECK_CODE RULES
     } else {
       console.warn(`[calibrate-payout] ${this.gameSlug}: betMinus not in registry — skipping set_bet_to_min and using current bet for level-1 spins`);
     }
-    actions.push(...spinBatch());
+    actions.push(...level1Batch());
     if (higherBet != null && betMinus && betPlus) {
       actions.push({ kind: "set_bet_to_value", value: higherBet, reason: "calibration: second coin level" });
       actions.push({ kind: "wait_ms", ms: 800 });
-      actions.push(...spinBatch());
+      actions.push(...discreteBatch()); // discrete (not autoplay) — see level1Batch note
     } else if (higherBet != null) {
       console.warn(`[calibrate-payout] ${this.gameSlug}: second-level calibration skipped (needs both betMinus + betPlus in registry)`);
     }
@@ -5025,6 +5045,39 @@ CHECK_CODE RULES
     });
     await payoutModel.save(this.gameSlug, model);
     console.log(`[calibrate-payout] ${this.gameSlug}: model trusted=${model.trusted} reproduced=${model.calibration.combosMatched}/${model.calibration.combosTotal} coins=${model.calibration.coinLevels.length} paytableAgreement=${model.calibration.paytableAgreement}`);
+
+    // Phase 3 — learn the per-game parser-overlay from the captured samples.
+    // Only meaningful when a provider spec exists (SpecDrivenParser path); the
+    // legacy hardcoded parser already populates winBreakdown, so skip. The
+    // detector proposes winItemization; the replay-gate validates it on these
+    // real samples before `trusted` is set. Non-fatal: a failure here must not
+    // break calibration (payout-model is already saved above).
+    try {
+      const baseSpec = await tryLoadProviderSpec("pragmatic");
+      if (baseSpec && learnerSamples.length > 0) {
+        // Deterministic detector → gate; AI tail (Phase 5) only fires when the
+        // deterministic path can't reconcile despite enough wins. The gate
+        // re-validates the AI's pick, so trust never rests on the model.
+        const learned = await learnParserOverlayWithAi(baseSpec, learnerSamples, {
+          minWinningRounds: 5,
+          aiPropose: aiProposeWinItemization,
+        });
+        const overlay = {
+          ...learned.overlay,
+          validation: { ...learned.overlay.validation, validatedAt: new Date().toISOString() },
+        };
+        const overlayFile = path.join(dirForGame(this.gameSlug), "parser-overlay.json");
+        await writeFile(overlayFile, JSON.stringify(overlay, null, 2) + "\n", "utf8");
+        console.log(
+          `[calibrate-payout] ${this.gameSlug}: parser-overlay → winItemization=${overlay.winItemization?.value} trusted=${overlay.winItemization?.trusted} ` +
+          `(gate: ${learned.gate.itemization.winningRounds} win round(s), reconciled=${learned.gate.itemization.reconciled})` +
+          `${learned.aiUsed ? ` — AI tail used (${learned.aiReasoning ?? ""})` : ""}` +
+          `${learned.needsAi ? " — still unrecognized (manual review)" : ""}${learned.needMoreSamples ? " — needMoreSamples" : ""}`,
+        );
+      }
+    } catch (err) {
+      console.warn(`[calibrate-payout] ${this.gameSlug}: parser-overlay learn failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+    }
 
     return {
       ok: true,

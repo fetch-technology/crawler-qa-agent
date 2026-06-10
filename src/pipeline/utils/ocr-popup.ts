@@ -10,12 +10,58 @@ import type { Page } from "playwright";
 
 // Lazy import of tesseract.js — avoid 30MB import cost when feature not used.
 let worker: import("tesseract.js").Worker | null = null;
+// Separate worker tuned for NUMERIC widgets (bet/balance/win). The shared text
+// worker MUST stay general (popup keywords / error text need letters), so we
+// can't globally restrict it to digits. A dedicated worker with PSM=SINGLE_LINE
+// + a digit whitelist makes small number crops MUCH more reliable — vanilla
+// Tesseract (PSM=AUTO, no whitelist) is flaky on tiny single-line numbers,
+// returning "" or garbage on borderline crops (observed: bet "0.20" reads but
+// "0.40" returns "").
+let numericWorker: import("tesseract.js").Worker | null = null;
 
 async function getWorker(): Promise<import("tesseract.js").Worker> {
   if (worker) return worker;
   const { createWorker } = await import("tesseract.js");
   worker = await createWorker("eng");
   return worker;
+}
+
+async function getNumericWorker(): Promise<import("tesseract.js").Worker> {
+  if (numericWorker) return numericWorker;
+  const { createWorker, PSM } = await import("tesseract.js");
+  const w = await createWorker("eng");
+  await w.setParameters({
+    tessedit_pageseg_mode: PSM.SINGLE_LINE,
+    tessedit_char_whitelist: "0123456789.,:$€£¥₫",
+  });
+  numericWorker = w;
+  return w;
+}
+
+/** Nearest-neighbour integer upscale of a PNG buffer. Small number crops sit
+ *  below Tesseract's sweet spot; enlarging the glyphs (no new detail, but
+ *  larger) markedly improves recognition. Pure + sync via pngjs. */
+async function upscalePng(buf: Buffer, factor: number): Promise<Buffer> {
+  if (factor <= 1) return buf;
+  const mod = await import("pngjs");
+  const PNG = (mod as { PNG?: typeof import("pngjs").PNG }).PNG
+    ?? (mod as { default?: { PNG: typeof import("pngjs").PNG } }).default!.PNG;
+  const src = PNG.sync.read(buf);
+  const f = Math.round(factor);
+  const dst = new PNG({ width: src.width * f, height: src.height * f });
+  for (let y = 0; y < dst.height; y++) {
+    const sy = Math.floor(y / f);
+    for (let x = 0; x < dst.width; x++) {
+      const sx = Math.floor(x / f);
+      const si = (sy * src.width + sx) << 2;
+      const di = (y * dst.width + x) << 2;
+      dst.data[di] = src.data[si];
+      dst.data[di + 1] = src.data[si + 1];
+      dst.data[di + 2] = src.data[si + 2];
+      dst.data[di + 3] = src.data[si + 3];
+    }
+  }
+  return PNG.sync.write(dst);
 }
 
 /**
@@ -34,13 +80,23 @@ async function getWorker(): Promise<import("tesseract.js").Worker> {
 export async function ocrRegion(
   page: import("playwright").Page,
   region: { x: number; y: number; w: number; h: number },
+  opts: { numeric?: boolean } = {},
 ): Promise<{ text: string; durationMs: number; imageBuf: Buffer }> {
   const start = Date.now();
-  const imageBuf = await page.screenshot({
+  const raw = await page.screenshot({
     type: "png",
     clip: { x: region.x, y: region.y, width: region.w, height: region.h },
   });
-  const w = await getWorker();
+  // Upscale small crops (target ~120px tall, 2–4×) — vanilla Tesseract is
+  // unreliable on tiny glyphs. Falls back to the raw buffer if upscale fails.
+  const factor = Math.max(1, Math.min(4, Math.round(120 / Math.max(1, region.h))));
+  let imageBuf = raw;
+  if (factor > 1) {
+    try { imageBuf = await upscalePng(raw, factor); } catch { imageBuf = raw; }
+  }
+  // Numeric widgets use the digit-whitelisted single-line worker; everything
+  // else (popup keywords, error/paytable text) uses the general text worker.
+  const w = opts.numeric ? await getNumericWorker() : await getWorker();
   const result = await w.recognize(imageBuf);
   return {
     text: (result.data.text ?? "").trim(),
@@ -93,6 +149,10 @@ export async function terminateOcr(): Promise<void> {
   if (worker) {
     await worker.terminate().catch(() => undefined);
     worker = null;
+  }
+  if (numericWorker) {
+    await numericWorker.terminate().catch(() => undefined);
+    numericWorker = null;
   }
 }
 

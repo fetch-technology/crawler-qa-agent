@@ -436,6 +436,27 @@ export async function handleManualRoute(
       return sendJson(res, 200, r), true;
     }
 
+    // GET /api/qa/manual/parser-overlay?game=<slug>
+    // Returns the per-game parser-overlay.json (learned win-itemization spec +
+    // per-aspect `trusted`), so the dashboard can surface whether payout
+    // itemization is VERIFIED / UNVERIFIED / absent (provider-base fallback).
+    if (url.startsWith("/api/qa/manual/parser-overlay") && method === "GET") {
+      const u = new URL(url, "http://localhost");
+      const slug = u.searchParams.get("game");
+      if (!slug) return sendJson(res, 400, { error: "game required" }), true;
+      const { readFile } = await import("node:fs/promises");
+      const path = await import("node:path");
+      const { dirForGame } = await import("../registry/paths.js");
+      const file = path.join(dirForGame(slug), "parser-overlay.json");
+      try {
+        const overlay = JSON.parse(await readFile(file, "utf8"));
+        return sendJson(res, 200, { ok: true, overlay }), true;
+      } catch {
+        // No overlay → provider-base fallback (legacy/spec-default itemization).
+        return sendJson(res, 200, { ok: true, overlay: null }), true;
+      }
+    }
+
     // GET /api/qa/manual/case-result?game=<slug>&caseId=<id>
     // Returns the full CaseResult JSON from the most recent run, persisted to
     // disk by case-executor. Dashboard uses this as the AUTHORITATIVE source
