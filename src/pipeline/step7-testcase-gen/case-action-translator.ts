@@ -10,7 +10,7 @@ import path from "node:path";
 import { askClaude, extractJsonFromText } from "../../ai/claude.js";
 import { dirForGame } from "../registry/paths.js";
 import { formatRegistryHierarchy } from "../registry/hierarchy.js";
-import type { UiRegistry } from "../registry/types.js";
+import type { UiRegistry, UiElement } from "../registry/types.js";
 
 export type CaseAction =
   | { kind: "click"; uiKey: string; times?: number; reason?: string }
@@ -432,7 +432,16 @@ export async function translateCase(input: {
       // case-executor.ts roundEndCount logic + provider spec roundEndSignals.
       if (i < n - 1) actions.push({ kind: "wait_ms", ms: 2500 });
     }
-    return { caseId: input.caseId, actions, aiCalled: false };
+    // Run the SAME native-autoplay conversion as the AI path below. Without
+    // this, empty-setup FS-watch cases (e.g. free-spins-trigger-watch, 60
+    // spins, no AI) stayed as 60 discrete clicks and never became autoplay-1000
+    // — the short-circuit returned before the post-process safety net.
+    const finalActions = maybeConvertToAutoplay(actions, {
+      category: input.category,
+      spinCount: input.spinCount,
+      uiMap: input.uiMap,
+    });
+    return { caseId: input.caseId, actions: finalActions, aiCalled: false };
   }
 
   const prompt = buildPrompt(input);

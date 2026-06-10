@@ -893,8 +893,42 @@
       if (el) el.style.display = "block";
     }
 
+    // Called once when a server-side Run All transitions to finished. Refetches
+    // the authoritative per-case results from disk for exactly the cases the
+    // server just ran, then writes them into __caseResults + localStorage and
+    // re-renders the testcase table. Without this the bottom table keeps the
+    // stale browser cache (server runs never invalidate localStorage), so even
+    // a page reload shows the old verdicts.
+    async function syncCaseResultsAfterRunAll(rows) {
+      const slug = window.__lastCasesSlug;
+      if (!slug) return;
+      // Only sync cases that reached a terminal verdict this run.
+      const ranIds = (Array.isArray(rows) ? rows : [])
+        .filter((r) => r && ["pass", "fail", "skip", "inconclusive"].includes(r.status))
+        .map((r) => r.caseId)
+        .filter(Boolean);
+      if (ranIds.length === 0) return;
+      if (!window.__caseResults) window.__caseResults = {};
+      let updated = 0;
+      await Promise.all(ranIds.map(async (caseId) => {
+        try {
+          const res = await fetch(`/api/qa/manual/case-result?game=${encodeURIComponent(slug)}&caseId=${encodeURIComponent(caseId)}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data?.result) { window.__caseResults[caseId] = data.result; updated++; }
+          }
+        } catch { /* silent: leave prior value for this case */ }
+      }));
+      if (updated > 0) {
+        saveCaseResults(slug, window.__caseResults);
+        renderCases(window.__cases || [], slug);
+        toast(`Synced ${updated} case result${updated === 1 ? "" : "s"} from server run`);
+      }
+    }
+
     function renderStatus(status) {
       const prevOnboarding = !!currentStatus?.autoOnboardInProgress;
+      const prevRunAll = !!currentStatus?.runAllInProgress;
       currentStatus = status;
       // Game-engine error banner. Set when automation detected a fatal
       // popup ("Internal server error", "session expired", etc) — clicks
@@ -974,6 +1008,15 @@
       if (status.runAllInProgress) startRunAllPolling();
       else stopRunAllPolling();
       renderSharedRunAll(status);
+      // Transition true→false: a server-side Run All just finished. The server
+      // wrote fresh per-case results to disk but never touched this browser's
+      // localStorage cache, so neither the live table nor a reload would pick
+      // them up (loadCasesForSlug trusts cached entries that have a valid
+      // ranAt). Pull the just-run results from disk and overwrite both
+      // __caseResults + localStorage so the testcase table below reflects them.
+      if (prevRunAll && !status.runAllInProgress) {
+        syncCaseResultsAfterRunAll(status.runAllProgress?.rows ?? []).catch(() => {});
+      }
       renderOnboardPhases(status.autoOnboardPhases ?? [], status.autoOnboardCurrentPhase ?? null, onboarding);
       renderGameSpec(status.gameSpec ?? null, status.gameSpecOverride ?? null);
       $("#btnStart").disabled = active;
@@ -1814,6 +1857,10 @@
           const summary = `${label} done · ✓ ${p.passed || 0} · ✗ ${p.failed || 0} · skip ${p.skipped || 0}`;
           appendLog(`[run-all] ${summary}${directOk ? "" : " (detected via polling)"}`);
           toast(summary);
+          // Pull fresh disk results into localStorage BEFORE refresh() — its
+          // loadCasesForSlug re-seeds from localStorage, so syncing first
+          // avoids a race that would re-render the stale cache.
+          await syncCaseResultsAfterRunAll(p.rows ?? []).catch(() => {});
           await refresh().catch(() => {});
           return;
         }
