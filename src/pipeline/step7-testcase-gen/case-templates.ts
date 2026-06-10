@@ -210,6 +210,24 @@ export const STANDARD_CASE_TEMPLATES: CaseTemplate[] = [
     ],
   },
   {
+    id: "history-rows-match-recent-spins",
+    name: "History — rows match the last 5 spins",
+    description: "Spin 5 times at default bet, then open game history. The engine auto-runs the history reconciler (category=history): it clicks the history trigger, follows a NEW TAB if one opens, OCRs the rows, and matches them against the captured spins.",
+    category: "history",
+    severity: "major",
+    requiresFeature: "history",
+    setup_instructions:
+      "Leave the bet at its default value. Spin 5 times, letting each spin fully settle. Then open the game history / rounds panel (it may open in a separate browser tab).",
+    spin_count: 5,
+    custom_assertions: [
+      { id: "five-round-end-recorded", description: "at least 5 round-end spins were captured to back-fill the history panel", check_code: "getRoundEndSpins(collector.spins).length >= 5" },
+      { id: "all-spins-same-bet", description: "all recorded spins were placed at the same configured bet", check_code: "(() => { const b = collector.spins.map(s => s.betAmount).filter(x => typeof x === 'number'); return b.length > 0 && b.every(x => Math.abs(x - b[0]) <= 0.01); })()" },
+      { id: "spin-ids-unique-and-shaped", description: "every spin has a non-empty string id, all unique (history row key)", check_code: "collector.spins.every(s => typeof s.id === 'string' && s.id.length > 0) && new Set(collector.spins.map(s => s.id)).size === collector.spins.length" },
+      { id: "balance-display-trails-last-spin", description: "screen.balance OCR matches the latest spin endingBalance (within 0.01)", check_code: "screen.balance == null || (() => { const last = collector.spins[collector.spins.length - 1]; return last == null || typeof last.endingBalance !== 'number' || Math.abs(screen.balance - last.endingBalance) <= 0.01; })()" },
+      { id: "no-debounced-or-lost-spins", description: "no spins were debounced or lost while opening history", check_code: "warnings.filter(w => /debounced|popup may have blocked|likely debounced/i.test(w)).length === 0" },
+    ],
+  },
+  {
     id: "paytable-opens",
     name: "Paytable — opens and shows payouts",
     description: "Open the paytable / info screen; verify it displays.",
