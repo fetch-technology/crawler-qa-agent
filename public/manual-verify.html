@@ -1390,7 +1390,7 @@
         try {
           await api("/api/qa/manual/update", { method: "POST", body: { uiKey: k, x: p.x, y: p.y } });
           const s = await api("/api/qa/manual/status").catch(() => null);
-          if (s) currentStatus = s;
+          if (s) { currentStatus = s; renderStatus(s); } // refresh registry tree (verified pill)
           pickModeKey = null; img.style.cursor = ""; setHint(DEFAULT_HINT);
           renderSnapMarkers();
           toast(`Picked ${k} at (${p.x}, ${p.y}) — saved as verified`);
@@ -1586,7 +1586,7 @@
         try {
           await api("/api/qa/manual/update", { method: "POST", body: { uiKey: k, x: p.x, y: p.y } });
           const s = await api("/api/qa/manual/status").catch(() => null);
-          if (s) currentStatus = s;
+          if (s) { currentStatus = s; renderStatus(s); } // refresh registry tree (verified pill)
           pickModeKey = null;
           img.style.cursor = "";
           setFooter(DEFAULT_FOOTER);
