@@ -996,6 +996,100 @@ Rules:
   return parsed;
 }
 
+/** Verdict from {@link verifyWinAgainstPaytable}. Advisory by design — vision
+ *  can misread a busy reel, so callers treat "no" as a high-bar fail only when
+ *  confidence is high, otherwise as a warning. */
+export type WinPaytableVerdict = {
+  /** "yes" = win amount is plausibly explained by the visible winning symbols
+   *  and the paytable; "no" = the symbols on screen cannot justify the reported
+   *  win (or there is a win with no winning combination visible); "uncertain" =
+   *  not enough information to judge. */
+  consistent: "yes" | "no" | "uncertain";
+  /** Winning symbols the model could read on the grid (names or codes). */
+  observed_winning_symbols: string[];
+  /** Short note on how the win relates to the paytable (e.g. "5× A pays 10×
+   *  bet = 1.00, matches"). */
+  expected_win_note: string;
+  /** 0..1 confidence in the verdict. */
+  confidence: number;
+  /** Free-text explanation for QA. */
+  detail: string;
+};
+
+/**
+ * Ask the vision model whether a WINNING spin's on-screen result is consistent
+ * with the game's paytable + rules. Issue #2: balance/payout reconciliation
+ * only proves the math `after = before − bet + win`; it does NOT prove the win
+ * is backed by a real winning symbol combination at the right multiplier. This
+ * check looks at the landed grid (ideally with the win lines/clusters
+ * highlighted) and judges that the reported win is explainable by the paytable.
+ *
+ * Advisory: returns "uncertain" rather than throwing on any ambiguity.
+ */
+export async function verifyWinAgainstPaytable(args: {
+  screenshotPath: string;
+  /** Serialized paytable + rules text (symbols, multipliers, special rules). */
+  paytableText: string;
+  /** Reported win for the round being checked (currency units). */
+  reportedWin: number;
+  /** Bet for the round (currency units) — needed to scale multipliers. */
+  bet: number;
+  currency?: string | null;
+}): Promise<WinPaytableVerdict> {
+  const imageBase64 = readFileSync(args.screenshotPath).toString("base64");
+  const cur = args.currency ? ` ${args.currency}` : "";
+  const prompt = `This screenshot shows a slot game immediately after a WINNING spin. The reels show the landed symbols; winning lines/clusters are often highlighted, framed, or animated.
+
+The round reported: bet = ${args.bet}${cur}, win = ${args.reportedWin}${cur}.
+
+Here is the game's PAYTABLE and rules (symbol payouts are multipliers — usually of the total bet, or of the bet-per-line; use whichever the rules state):
+"""
+${args.paytableText.slice(0, 6000)}
+"""
+
+Judge whether the reported win is CONSISTENT with the winning symbols visible on the grid and the paytable. Consider:
+- Which symbols form winning combinations (count / cluster size / ways).
+- The paytable multiplier for those symbols at that count.
+- Any active multiplier (free-spin / tumble / wild multiplier) shown on screen.
+- A reported win > 0 with NO discernible winning combination on the grid is INCONSISTENT.
+- Minor rounding differences (≤ a few %) are fine. Exact arithmetic is not required — judge plausibility.
+
+Return ONLY this JSON:
+{
+  "consistent": "yes" | "no" | "uncertain",
+  "observed_winning_symbols": string[],
+  "expected_win_note": string,
+  "confidence": number,
+  "detail": string
+}
+
+Rules:
+- If you cannot clearly read the grid or the paytable is insufficient, return "uncertain" with low confidence — do NOT guess "no".
+- "no" should be reserved for clear contradictions (e.g. a large win with an empty/non-winning board, or symbols that the paytable says pay far less).
+- Output ONLY the JSON object.`;
+
+  const raw = await askClaudeVision(prompt, imageBase64);
+  const parsed = extractJson<WinPaytableVerdict>(raw);
+  if (!parsed || typeof parsed.consistent !== "string") {
+    return {
+      consistent: "uncertain",
+      observed_winning_symbols: [],
+      expected_win_note: "",
+      confidence: 0,
+      detail: `[win-paytable check failed to parse] raw: ${raw.slice(0, 300)}`,
+    };
+  }
+  return {
+    consistent: parsed.consistent,
+    observed_winning_symbols: Array.isArray(parsed.observed_winning_symbols)
+      ? parsed.observed_winning_symbols
+      : [],
+    expected_win_note: typeof parsed.expected_win_note === "string" ? parsed.expected_win_note : "",
+    confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0,
+    detail: typeof parsed.detail === "string" ? parsed.detail : "",
+  };
+}
+
 export async function decideNextAction(args: {
   screenshotPath: string;
   viewport: { width: number; height: number };

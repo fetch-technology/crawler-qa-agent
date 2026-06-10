@@ -28,6 +28,9 @@ export type TraceRow = {
   closingBalance: number;
   observedClosing: number;
   status: "TRUE" | "FALSE";
+  /** True when this round was part of a free-spin / bonus feature. Surfaces in
+   *  the breakdown so QA can tell base-game vs feature rounds at a glance. */
+  isFreeSpin?: boolean;
   currency?: string;
   env?: string;
   gameUrl?: string;
@@ -40,6 +43,7 @@ export type TraceInput = {
     totalBet: number;
     totalWin: number;
     balanceAfter: number;
+    isFreeSpin?: boolean;
   }>;
   env?: string;
   currency?: string;
@@ -65,6 +69,7 @@ export function buildTrace(input: TraceInput): TraceRow[] {
       closingBalance: expectedClosing,
       observedClosing: observed,
       status,
+      isFreeSpin: s.isFreeSpin,
       env: input.env,
       currency: input.currency,
       gameUrl: input.gameUrl,
@@ -100,6 +105,7 @@ export function traceToCsv(rows: TraceRow[]): string {
 export function traceToMarkdown(rows: TraceRow[]): string {
   const headers = [
     "Spin",
+    "Type",
     "Opening",
     "Bet",
     "Win",
@@ -112,8 +118,9 @@ export function traceToMarkdown(rows: TraceRow[]): string {
   lines.push(`|${headers.map(() => "---").join("|")}|`);
   for (const r of rows) {
     const status = r.status === "TRUE" ? "✓" : "❌";
+    const type = r.isFreeSpin ? "FS" : "base";
     lines.push(
-      `| ${r.spin} | ${r.openingBalance.toFixed(2)} | ${r.bet.toFixed(2)} | ${r.win.toFixed(2)} | ${r.closingBalance.toFixed(2)} | ${r.observedClosing.toFixed(2)} | ${status} |`,
+      `| ${r.spin} | ${type} | ${r.openingBalance.toFixed(2)} | ${r.bet.toFixed(2)} | ${r.win.toFixed(2)} | ${r.closingBalance.toFixed(2)} | ${r.observedClosing.toFixed(2)} | ${status} |`,
     );
   }
   const failures = rows.filter((r) => r.status === "FALSE").length;

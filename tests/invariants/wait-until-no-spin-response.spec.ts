@@ -101,6 +101,55 @@ test("returns 'quiet' after autoplay batch finishes — captures all spins befor
   expect(result.elapsedMs).toBeLessThan(75000);  // not far past 65s
 });
 
+test("FS-aware: does NOT exit 'quiet' while fsActive — waits until the FS chain ends", async () => {
+  // 1 spin lands at t=100, then silence. Without FS-awareness this exits 'quiet'
+  // at ~5s. fsActive stays true until t=20s (FS chain playing) → the wait must
+  // defer the quiet exit past the celebration gap, then exit once the chain
+  // clears. Guards #4 "AI stops before free spins end".
+  const clk = makeFakeClock({ events: [{ atFakeMs: 100 }] });
+  const result = await waitUntilNoSpinResponse({
+    quietMs: 5000,
+    maxMs: 120000,
+    lastSpinResponseAt: clk.lastSpinResponseAt,
+    spinResponseCount: clk.spinResponseCount,
+    sleep: clk.sleep,
+    now: clk.now,
+    fsActive: () => clk.now() < 20000, // FS chain active until 20s
+  });
+  expect(result.exitReason).toBe("quiet");
+  expect(result.elapsedMs).toBeGreaterThanOrEqual(20000); // did NOT cut off at 5s
+});
+
+test("FS-aware: fsActive never clears → 'timeout' at maxMs (no premature quiet)", async () => {
+  const clk = makeFakeClock({ events: [{ atFakeMs: 100 }] });
+  const result = await waitUntilNoSpinResponse({
+    quietMs: 5000,
+    maxMs: 20000,
+    lastSpinResponseAt: clk.lastSpinResponseAt,
+    spinResponseCount: clk.spinResponseCount,
+    sleep: clk.sleep,
+    now: clk.now,
+    fsActive: () => true,
+  });
+  expect(result.exitReason).toBe("timeout");
+  expect(result.elapsedMs).toBeGreaterThanOrEqual(20000);
+});
+
+test("no fsActive provided → unchanged quiet behavior (back-compat)", async () => {
+  const clk = makeFakeClock({ events: [{ atFakeMs: 100 }] });
+  const result = await waitUntilNoSpinResponse({
+    quietMs: 5000,
+    maxMs: 60000,
+    lastSpinResponseAt: clk.lastSpinResponseAt,
+    spinResponseCount: clk.spinResponseCount,
+    sleep: clk.sleep,
+    now: clk.now,
+  });
+  expect(result.exitReason).toBe("quiet");
+  expect(result.elapsedMs).toBeGreaterThanOrEqual(5000);
+  expect(result.elapsedMs).toBeLessThan(8000);
+});
+
 test("returns 'quiet' immediately when no spin in flight (gap >= quietMs from start)", async () => {
   // Last spin was 10s ago, fakeNow=10000, quietMs=5000 → gap already 0... wait that's still 0.
   // Actually since clk.now() starts at 0 and lastSpinResponseAt = 0 → gap = 0 < quietMs.

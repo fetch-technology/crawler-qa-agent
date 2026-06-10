@@ -115,7 +115,15 @@ export function detectBuyFeatureDeduction(
   const afterBalance = first.endingBalance ?? first.balanceAfter ?? first.balance;
   if (before == null || typeof afterBalance !== "number") return null;
 
-  const deduction = before - afterBalance + win;
+  // Add back only a CREDITED (positive) win so a buy spin that ALSO pays a
+  // small line win still measures the full cash outflow. A NEGATIVE winAmount
+  // means the parser folded the buy cost itself into `win` (PP buy spins emit
+  // win = -(buyCost - baseBet)) — that outflow is already captured by
+  // (before - afterBalance), so adding it back would cancel it out and yield
+  // ratio ≈ 1, false-failing the buy-cost assertion. Mirror the executor's
+  // own buy-feature detector, which uses the raw balance drop / bet.
+  const winCredit = win > 0 ? win : 0;
+  const deduction = before - afterBalance + winCredit;
   return {
     deduction,
     baseBet,

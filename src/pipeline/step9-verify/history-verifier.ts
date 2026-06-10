@@ -12,7 +12,7 @@ import {
   transcribeHistoryRows,
   type TranscribedHistoryRow,
 } from "../../ai/vision.js";
-import { snapshot, waitUntilStable } from "../utils/pixel-diff/index.js";
+import { snapshot, waitUntilStable, decodePng, pixelDiff } from "../utils/pixel-diff/index.js";
 import type { NormalizedSpinResult } from "../step6-build-model/normalized.js";
 import type { UiElement, UiRegistry } from "../registry/types.js";
 import { dirForGame } from "../registry/paths.js";
@@ -65,24 +65,150 @@ export async function verifyHistory(
     return mkSkip("no spins to verify against");
   }
 
-  // Locate history button. Prefer top-level "historyButton", fallback to menu__historyButton
-  // (which would require opening menu first — caller should ensure menu opened).
-  const historyEl = pickHistoryTrigger(uiRegistry);
-  if (!historyEl) {
+  // Locate history button + its registry key.
+  const trigger = pickHistoryTrigger(uiRegistry);
+  if (!trigger) {
     return mkSkip("no historyButton or menu__historyButton in registry");
   }
+  const { key: historyKey, el: historyEl } = trigger;
 
-  // Open history popup.
+  // Many games nest History under a menu/burger popup — the trigger is a
+  // namespaced child (e.g. `menuButton__historyButton`). Clicking its coord
+  // with the menu CLOSED lands on empty space (a no-op) → we'd OCR the game
+  // screen and report every row missing. Resolve the parent popup so we can
+  // open it first.
+  const reg = uiRegistry as Record<string, UiElement | undefined>;
+  const parentKey = historyKey.includes("__") ? historyKey.split("__")[0] : null;
+  const parentEl = parentKey ? reg[parentKey] ?? null : null;
+
+  // New-tab/popup awareness (#3): some games open History in a SEPARATE tab
+  // (window.open / target=_blank) instead of an in-page panel. Arm a one-shot
+  // context "page" listener BEFORE clicking so we capture the new tab the
+  // moment it opens; otherwise we'd screenshot/OCR the unchanged game screen
+  // and report every row missing. `historyEl.externalPage` (set by the graph
+  // explorer when it saw a tab open) is a strong hint, but we listen
+  // regardless because discovery doesn't always flag it.
+  const context = page.context();
+  const popupSlot: Page[] = [];
+  const onPopup = (p: Page): void => {
+    if (popupSlot.length === 0) popupSlot.push(p);
+  };
+  context.on("page", onPopup);
+
+  // Clear any leftover popup/menu from the just-run case so the open sequence
+  // starts from a known state (menuButton is typically a TOGGLE — clicking it
+  // while already open would CLOSE it).
   try {
-    await page.mouse.click(historyEl.x, historyEl.y);
-  } catch (err) {
-    return mkSkip(`click history trigger failed: ${String(err)}`);
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(250);
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(400);
+  } catch {
+    // best-effort reset
   }
-  await waitUntilStable(page, {
-    maxIterations: 10,
-    changeThreshold: 0.005,
-    consecutiveStable: 2,
-  });
+
+  // Find a history tab among ALL pages in the context — NOT just ones the
+  // `page` event caught after our click. History often opens a SEPARATE tab,
+  // and that tab may already be open (left over from the case's own action
+  // phase, where clicking historyButton opened it and `history-dismiss` only
+  // ESC'd the game page). The `page` event won't re-fire for an already-open
+  // tab, so screenshotting `page` would capture the game screen → every row
+  // "missing". Scan context.pages() and take the newest non-game tab.
+  const findHistoryTab = (): Page | null => {
+    if (popupSlot[0] && !popupSlot[0].isClosed()) return popupSlot[0];
+    const extras = context.pages().filter((p) => p !== page && !p.isClosed());
+    return extras.length > 0 ? extras[extras.length - 1]! : null;
+  };
+
+  // Capture the clean (post-ESC) main screen as the reference for the in-page
+  // fallback below.
+  let mainBefore: Buffer | null = null;
+  try { mainBefore = await page.screenshot({ type: "png" }); } catch { /* ignore */ }
+
+  // Open History. The trigger is flaky on this provider — the first click on
+  // the tab-opening link is frequently a NO-OP (the user must click again). A
+  // NEW TAB is the ONLY authoritative "opened" signal: a menu toggle / in-page
+  // flicker must NOT count (that produced a false "opened" → we screenshot the
+  // game screen → every row reported "missing"). So click the trigger up to 3×
+  // per attempt and watch context.pages() for a new tab after each click.
+  const tryOpenHistory = async (): Promise<boolean> => {
+    if (parentEl) {
+      await page.mouse.click(parentEl.x, parentEl.y); // open the menu popup first
+      await page.waitForTimeout(800);
+    }
+    for (let click = 0; click < 3; click++) {
+      await page.mouse.click(historyEl.x, historyEl.y);
+      const deadline = Date.now() + 1800;
+      while (Date.now() < deadline) {
+        if (findHistoryTab()) return true; // tab is the real target
+        await page.waitForTimeout(150);
+      }
+    }
+    return findHistoryTab() != null;
+  };
+
+  let openedOk = false;
+  for (let attempt = 1; attempt <= 3 && !openedOk; attempt++) {
+    try {
+      openedOk = await tryOpenHistory();
+    } catch (err) {
+      context.off("page", onPopup);
+      return mkSkip(`click history trigger failed: ${String(err)}`);
+    }
+    if (!openedOk) {
+      console.warn(`[history] open attempt ${attempt}/3 — no new tab after 3 clicks (flaky tab-open link), retrying`);
+      // Reset any toggled menu state before the next attempt.
+      try { await page.keyboard.press("Escape"); await page.waitForTimeout(300); } catch { /* ignore */ }
+    }
+  }
+
+  let inspectPage: Page = findHistoryTab() ?? page;
+  let openedInNewTab = inspectPage !== page;
+
+  // No tab ever opened. Either history is an in-page panel (some games) or the
+  // tab-open click stayed flaky. Distinguish via a STRONG pixel change vs the
+  // pre-open main screen — a real panel covers most of the screen, a leftover
+  // menu does not. If NEITHER, report honestly (indeterminate) rather than
+  // OCR'ing the game screen and emitting bogus "all rows missing" mismatches.
+  if (!openedInNewTab) {
+    let inPagePanel = false;
+    try {
+      if (mainBefore) {
+        const after = await page.screenshot({ type: "png" });
+        inPagePanel = pixelDiff(decodePng(mainBefore), decodePng(after)).ratio > 0.15;
+      }
+    } catch { /* ignore */ }
+    if (!inPagePanel) {
+      context.off("page", onPopup);
+      return mkSkip("history did not open — no new tab and no in-page panel after retries (flaky tab-open click); not reporting rows as missing");
+    }
+  }
+  if (openedInNewTab) {
+    try {
+      await inspectPage.waitForLoadState("domcontentloaded", { timeout: 8000 });
+      await inspectPage.bringToFront();
+      await waitUntilStable(inspectPage, {
+        maxIterations: 10,
+        changeThreshold: 0.005,
+        consecutiveStable: 2,
+      });
+    } catch (err) {
+      console.warn(`[history] new-tab settle failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  // Tear down the listener and close the history tab so the browser doesn't
+  // accumulate handles across cases. Safe to call once on every exit path.
+  const cleanupPopup = async (): Promise<void> => {
+    context.off("page", onPopup);
+    if (openedInNewTab) {
+      try {
+        await inspectPage.close();
+      } catch {
+        // tab already gone — ignore
+      }
+    }
+  };
 
   // Save screenshot for OCR. Default location: per-game folder. Caller may
   // override via options.evidence for per-case evidence co-location.
@@ -102,7 +228,7 @@ export async function verifyHistory(
       const suffix = pageIdx === 0 ? "" : `-p${pageIdx + 1}`;
       p = path.join(dir, `${ts}${suffix}.png`);
     }
-    const buf = await page.screenshot({ type: "png" });
+    const buf = await inspectPage.screenshot({ type: "png" });
     await writeFile(p, buf);
     return p;
   };
@@ -113,7 +239,7 @@ export async function verifyHistory(
   const screenshotRel = path.relative(process.cwd(), screenshotPath);
 
   // Verify popup actually opened (sanity).
-  const after = await snapshot(page);
+  const after = await snapshot(inspectPage);
   void after;
 
   // OCR rows (aggregating across pages when pagination enabled).
@@ -122,7 +248,7 @@ export async function verifyHistory(
   try {
     rows = await transcribeHistoryRows({ screenshotPath });
     if (maxPages > 1) {
-      const viewport = page.viewportSize();
+      const viewport = inspectPage.viewportSize();
       // Scroll the popup region (approx center of viewport) and OCR each
       // additional page. Dedupe rows by round_id when present; otherwise by
       // raw_text exact match. Stop early if a page returns no new rows.
@@ -134,9 +260,9 @@ export async function verifyHistory(
         try {
           const cx = (viewport?.width ?? 1280) / 2;
           const cy = (viewport?.height ?? 720) / 2;
-          await page.mouse.move(cx, cy);
-          await page.mouse.wheel(0, (viewport?.height ?? 720) * 0.6);
-          await waitUntilStable(page, {
+          await inspectPage.mouse.move(cx, cy);
+          await inspectPage.mouse.wheel(0, (viewport?.height ?? 720) * 0.6);
+          await waitUntilStable(inspectPage, {
             maxIterations: 6,
             changeThreshold: 0.005,
             consecutiveStable: 2,
@@ -163,6 +289,7 @@ export async function verifyHistory(
       }
     }
   } catch (err) {
+    await cleanupPopup();
     return {
       ok: false,
       opened: true,
@@ -176,7 +303,29 @@ export async function verifyHistory(
     };
   }
 
+  // Zero rows transcribed almost always means a capture problem (popup didn't
+  // render, screenshot grabbed the wrong page, OCR returned nothing) — NOT that
+  // the server genuinely lost every spin. Reporting all N spins as "missing"
+  // here is misleading. Surface it honestly as indeterminate instead.
+  if (rows.length === 0) {
+    await cleanupPopup();
+    return {
+      ok: false,
+      opened: true,
+      rowsCount: 0,
+      spinsCount: spins.length,
+      matchedCount: 0,
+      mismatches: [],
+      reason: "history opened but 0 rows transcribed — popup render / OCR / wrong-page capture issue (not treating spins as missing)",
+      screenshotPath: screenshotRel,
+      rows: [],
+      pagesScanned,
+    };
+  }
+
   const { mismatches, matchedCount, ordering } = reconcileSpinsWithRows(spins, rows);
+
+  await cleanupPopup();
 
   return {
     ok: mismatches.filter((m) => m.kind !== "extra").length === 0,
@@ -324,14 +473,19 @@ export function checkOrdering(
 
 export const HISTORY_TOLERANCE = TOLERANCE;
 
-function pickHistoryTrigger(uiRegistry: UiRegistry): UiElement | null {
+/** Resolve the history trigger AND its registry key (the key lets the caller
+ *  derive the parent popup for namespaced children like `menuButton__historyButton`).
+ *  Exported for tests. */
+export function pickHistoryTrigger(uiRegistry: UiRegistry): { key: string; el: UiElement } | null {
   const reg = uiRegistry as Record<string, UiElement | undefined>;
-  // Prefer main-screen history button.
-  if (reg["historyButton"]) return reg["historyButton"]!;
-  if (reg["menu__historyButton"]) return reg["menu__historyButton"]!;
-  // Search any element key containing "history".
+  // Prefer an explicit top-level history button, then the common namespaced
+  // variants (menu/burger children), then any key containing "history".
+  const preferred = ["historyButton", "menuButton__historyButton", "menu__historyButton"];
+  for (const k of preferred) {
+    if (reg[k]) return { key: k, el: reg[k]! };
+  }
   for (const [key, el] of Object.entries(reg)) {
-    if (el && /history/i.test(key)) return el;
+    if (el && /history/i.test(key)) return { key, el };
   }
   return null;
 }

@@ -49,6 +49,14 @@ Only use `core_logic_bug` when:
 - `core_logic_bug` — **RESERVE FOR TRUE ENGINE BUGS ONLY** (see criteria above). NO patch — `devNotification` with severity.
 - `transient` — race condition, network blip, intermittent — just rerun. NO patch.
 
+## Reading the evidence — use `perSpin`, not just `lastSpin`
+
+Evidence includes `perSpin[]`: EVERY captured round in order (idx, bet, win, balanceBefore, balanceAfter, state, isFreeSpin). `lastSpin` is only the final round. For multi-spin failures ALWAYS reason over `perSpin`:
+- **Spin-count mismatch** (`spinsCount` ≠ spin actions): scan `perSpin` for cascade/FS frames that should have merged (`wrong_cascade_rule`) vs genuinely missing rounds (`wrong_test_pacing`).
+- **Balance arithmetic**: find the SPECIFIC round where `balanceAfter ≠ balanceBefore − bet + win` (within 0.01). Cite its `idx`/`roundId` in your reason — don't generalize from `lastSpin`.
+- **Free spins**: rows with `isFreeSpin:true` should have `bet:0`; a non-zero bet on an FS row points to a parser/dedup issue, not a real game bug.
+- If `perSpinTruncated:true`, the middle rounds were elided (head+tail kept) — note this if your reasoning needs the omitted span.
+
 ## Output Format
 
 Return JSON only (no prose, no markdown fences):

@@ -13,10 +13,45 @@ import {
   findMatchingRow,
   reconcileSpinsWithRows,
   checkOrdering,
+  pickHistoryTrigger,
   HISTORY_TOLERANCE,
 } from "../../src/pipeline/step9-verify/history-verifier.ts";
 import type { NormalizedSpinResult } from "../../src/pipeline/step6-build-model/normalized.ts";
 import type { TranscribedHistoryRow } from "../../src/ai/vision.ts";
+import type { UiRegistry } from "../../src/pipeline/registry/types.ts";
+
+const el = (x: number, y: number, extra: Record<string, unknown> = {}) =>
+  ({ x, y, strategy: "coord", ...extra }) as unknown as UiRegistry[string];
+
+// === pickHistoryTrigger ===
+
+test("pickHistoryTrigger: prefers top-level historyButton", () => {
+  const reg = { historyButton: el(10, 20), menuButton__historyButton: el(30, 40) } as unknown as UiRegistry;
+  const r = pickHistoryTrigger(reg);
+  expect(r?.key).toBe("historyButton");
+});
+
+test("pickHistoryTrigger: recognizes menuButton__historyButton (nested under menu)", () => {
+  // Regression: old code only checked `menu__historyButton`, so the real
+  // `menuButton__historyButton` key fell through to the loop and the caller
+  // never knew to open the parent menu → clicked empty space → 0/5 matched.
+  const reg = { menuButton: el(5, 5), menuButton__historyButton: el(30, 40) } as unknown as UiRegistry;
+  const r = pickHistoryTrigger(reg);
+  expect(r?.key).toBe("menuButton__historyButton");
+  expect(r?.el.x).toBe(30);
+  // Parent derivation the verifier relies on:
+  expect(r!.key.split("__")[0]).toBe("menuButton");
+});
+
+test("pickHistoryTrigger: falls back to any key containing 'history'", () => {
+  const reg = { someOther__gameHistoryLink: el(7, 8) } as unknown as UiRegistry;
+  expect(pickHistoryTrigger(reg)?.key).toBe("someOther__gameHistoryLink");
+});
+
+test("pickHistoryTrigger: null when no history trigger present", () => {
+  const reg = { spinButton: el(1, 2), betPlus: el(3, 4) } as unknown as UiRegistry;
+  expect(pickHistoryTrigger(reg)).toBeNull();
+});
 
 function mkSpin(over: Partial<NormalizedSpinResult> = {}): NormalizedSpinResult {
   return {

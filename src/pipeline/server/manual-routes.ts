@@ -362,6 +362,18 @@ export async function handleManualRoute(
       return sendJson(res, r.ok ? 200 : 400, r), true;
     }
 
+    // POST /api/qa/manual/apply-templates { gameSlug?, mode?: "merge" | "replace" }
+    // #6 — copy the reusable standard test-case template set onto a game and
+    // rebind actions. merge keeps existing cases; replace swaps them.
+    if (url === "/api/qa/manual/apply-templates" && method === "POST") {
+      const body = await asJsonBody<{ gameSlug?: string; mode?: "merge" | "replace" }>(req);
+      const r = await resolveSession(req, body as any, url).applyTemplates(
+        body.gameSlug,
+        body.mode === "replace" ? "replace" : "merge",
+      );
+      return sendJson(res, r.ok ? 200 : 400, r), true;
+    }
+
     // GET /api/qa/manual/case-actions?caseId=...&game=... — fetch cached
     // actions + available uiKeys for the dashboard QA editor.
     if (url?.startsWith("/api/qa/manual/case-actions") && method === "GET") {
@@ -402,6 +414,16 @@ export async function handleManualRoute(
       const body = await asJsonBody<{ probe?: boolean; autoRecover?: boolean; maxRecoverAttempts?: number }>(req);
       const r = await resolveSession(req, body as any, url).ensureMainScreen(body);
       return sendJson(res, 200, r), true;
+    }
+
+    // POST /api/qa/manual/ensure-ante-off {}
+    // Manual trigger for the runtime `ensure_ante_off` enforcement — runs the
+    // SAME ensureAnteOff used in case-run preambles against the live session so
+    // a QA can verify it actually lands ante OFF (watch the embedded Chrome).
+    if (url === "/api/qa/manual/ensure-ante-off" && method === "POST") {
+      const body = await asJsonBody<{}>(req);
+      const r = await resolveSession(req, body as any, url).testEnsureAnteOff();
+      return sendJson(res, r.ok ? 200 : 400, r), true;
     }
 
     // POST /api/qa/manual/wait-for-main { maxWaitMs?, pollMs? }

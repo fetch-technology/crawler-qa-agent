@@ -27,6 +27,27 @@ export function buildEvidence(input: EvidenceBuilderInput): Evidence {
       detail: a.detail,
     }));
 
+  // Forward the FULL per-round breakdown so the classifier sees every spin's
+  // bet / win / balance — not just lastSpin. Capped to bound prompt size; for
+  // a longer autoplay the head + tail matter most, so keep first and last rows.
+  const PER_SPIN_CAP = 100;
+  const allSpins = result.spins ?? [];
+  const kept = allSpins.length > PER_SPIN_CAP
+    ? [...allSpins.slice(0, PER_SPIN_CAP - 20), ...allSpins.slice(-20)]
+    : allSpins;
+  const perSpinRows = kept.map((s, i) => ({
+    idx: allSpins.length > PER_SPIN_CAP && i >= PER_SPIN_CAP - 20
+      ? allSpins.length - (kept.length - i) + 1
+      : i + 1,
+    bet: s.bet,
+    win: s.win,
+    balanceBefore: s.balanceBefore,
+    balanceAfter: s.balanceAfter,
+    roundId: s.roundId,
+    state: s.state,
+    isFreeSpin: s.isFreeSpin,
+  }));
+
   return {
     caseId: result.caseId,
     caseName: result.name,
@@ -47,6 +68,8 @@ export function buildEvidence(input: EvidenceBuilderInput): Evidence {
         }
       : null,
     spinsCount: result.spinsCount ?? (result.spin ? 1 : 0),
+    perSpin: perSpinRows,
+    perSpinTruncated: (result.spins?.length ?? 0) > PER_SPIN_CAP,
     warnings: result.warnings ?? [],
     actionPlan,
     knowledge: {

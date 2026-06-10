@@ -196,7 +196,7 @@
     <div class="row" style="margin-bottom: 10px;">
       <button id="btnDeepDiscover" disabled style="background: #6366f1; font-size: 11px;" title="Recursive AI exploration: open every safe button, hash each new state, discover its elements, auto-probe. Bounded by depth/AI-calls/states.">Deep Discover (AI)</button>
       <button id="btnProbePending" disabled style="background: #7c5cff; font-size: 11px;" title="Auto-verify pending elements by clicking each + observing the expected signal (network/popup). Replaces most QA Pick work.">Probe Pending</button>
-      <button id="btnAutoOnboard" disabled style="background: #16a34a; font-size: 11px;" title="One-click: deep-discover the UI graph + auto-probe + calibrate the payout model. Can take 30 minutes to over an hour per game depending on UI complexity + AI latency.">Auto-Onboard</button>
+      <button id="btnAutoOnboard" disabled style="background: #16a34a; font-size: 11px;" title="One-click: VERIFY pending elements (behavioral probe at every level — NO deep discovery; QA discovers levels manually) + OCR regions + extract paytable + calibrate payout + generate/run catalog. For UI-graph exploration use Deep Discover (AI).">Auto-Onboard</button>
       <button id="btnPauseOnboard" disabled style="background: #f59e0b; font-size: 11px; display: none;" title="Pause Auto-Onboard after the current phase finishes. Mid-phase pause not supported — phases (e.g. Deep Discover) are atomic. Resume via the Auto-Onboard button.">⏸ Pause</button>
     </div>
     <!-- Game Spec panel — shows captured + overridden bet ladder / min /
@@ -590,6 +590,10 @@
       balanceArea: "Balance widget",
       betArea: "Bet widget",
     };
+    // historyButton intentionally NOT a level-1 expected key — in PP-style
+    // games it lives inside the MENU popup (discover as menuButton__historyButton
+    // via the per-row Discover flow), not on the main screen. Mirrors the
+    // backend EXPECTED_UI_ELEMENTS_DEFAULTS / CANONICAL_PRIORITY_ORDER note.
     const LEVEL1_EXPECTED_KEYS = [
       "spinButton",
       "betPlus",
@@ -598,7 +602,6 @@
       "paytableButton",
       "autoButton",
       "buyBonusButton",
-      "historyButton",
     ];
     const LEVEL1_LABELS = {
       spinButton: "Spin",
@@ -608,7 +611,6 @@
       paytableButton: "Paytable",
       autoButton: "Auto",
       buyBonusButton: "Buy Bonus",
-      historyButton: "History",
     };
     const level1PickerPromptedSlugs = new Set();
     let level1PickerRunning = false;
@@ -724,6 +726,7 @@
     // Panel hides when phases[] is empty (no Auto-Onboard has run on this
     // session yet — keep dashboard uncluttered for first-time use).
     const PHASE_LABELS = {
+      "verify-pending": "Verify Pending Elements",
       "deep-discover": "Deep Discover",
       "ante-normalize": "Ante Normalize (force OFF)",
       "verify-registry": "Verify Registry",
@@ -1485,7 +1488,8 @@
             : `<div style="font-weight:600;color:#e6edf3;font-size:13px;"><code>${g.gameSlug}</code>${activeBadge}</div>${g.provider ? `<div style="font-size:11px;color:#8b939c;margin-top:2px;">${escapeHtml(g.provider)}</div>` : ""}`;
           // Open (when idle) OR Stop & Save (when this row's session is active).
           const openOrStop = isActive
-            ? `<button class="red" onclick="doStopSession()" title="Stop & save the active session for this game">Stop &amp; Save</button>`
+            ? `<button class="red" onclick="doStopSession()" title="Stop & save the active session for this game">Stop &amp; Save</button>
+               <button style="background:#0d9488;" onclick="doTestAnteOff()" title="Run the runtime ensure_ante_off enforcement against the live session — watch the embedded Chrome to confirm ante lands OFF">Test Ante OFF</button>`
             : `<button onclick="doResume('${g.gameSlug}')">Start session</button>`;
           return `<tr ${rowStyle}>
           <td>${nameCell}</td>
@@ -2464,13 +2468,14 @@
       }
       // Compute aggregate stats from __caseResults
       const results = window.__caseResults || {};
-      let pass = 0, fail = 0, skip = 0, notRun = 0;
+      let pass = 0, fail = 0, skip = 0, inconclusive = 0, notRun = 0;
       let totalAssertionsPass = 0, totalAssertionsTotal = 0;
       for (const c of cases) {
         const r = results[c.id];
         if (!r) { notRun++; continue; }
         if (r.status === "pass") pass++;
         else if (r.status === "fail") fail++;
+        else if (r.status === "inconclusive") inconclusive++;
         else skip++;
         totalAssertionsPass += r.assertionsPass ?? 0;
         totalAssertionsTotal += r.assertionsTotal ?? 0;
@@ -2480,6 +2485,7 @@
         <strong style="color: #e8eaed;">${cases.length} cases for <code>${slug ?? '?'}</code></strong>
         <span><span class="pill verified">${pass} pass</span></span>
         <span><span class="pill rejected">${fail} fail</span></span>
+        ${inconclusive > 0 ? `<span><span class="pill pending" title="ran but could not exercise the feature — e.g. free spin never triggered (RNG)">${inconclusive} inconclusive</span></span>` : ""}
         <span><span class="pill pending">${skip} skip</span></span>
         <span style="color: #5e6772;">·</span>
         <span style="color: #8b939c;">not run: ${notRun}</span>
@@ -3058,6 +3064,17 @@
         <div style="font-size: 12px; line-height: 1.6; margin-top: 4px;"></div>
         ${skipHtml}
         ${spinHtml}
+        ${(() => {
+          const w = r.winPaytableCheck;
+          if (!w) return "";
+          const col = w.consistent === "yes" ? "#9be0bc" : w.consistent === "no" ? "#f0a39e" : "#d97706";
+          const icon = w.consistent === "yes" ? "✓" : w.consistent === "no" ? "✗" : "?";
+          const syms = Array.isArray(w.observedSymbols) && w.observedSymbols.length ? ` · symbols: ${escapeHtml(w.observedSymbols.join(", "))}` : "";
+          return `<div style="font-size:12px;line-height:1.5;margin-top:4px;color:${col};">
+            ${icon} Win vs paytable (AI): <strong>${escapeHtml(w.consistent)}</strong> (${Math.round((w.confidence||0)*100)}%)${syms}
+            ${w.detail || w.note ? `<div style="color:#8b939c;font-size:11px;">${escapeHtml(w.detail || w.note)}</div>` : ""}
+          </div>`;
+        })()}
         ${warningsHtml}
         ${rollupHtml}
         <div style="margin-top: 8px;">
@@ -4570,6 +4587,25 @@
         toast(err.message, true);
         $("#btnStart").disabled = false;
       } finally { hideLoading(); }
+    };
+
+    window.doTestAnteOff = async () => {
+      showLoading("Forcing ante OFF…", "Running ensure_ante_off against the live session — watch the embedded Chrome.");
+      try {
+        const r = await api("/api/qa/manual/ensure-ante-off", { method: "POST", body: {} });
+        if (!r?.hasAnteButton) {
+          toast("No anteButton in registry — game has no ante feature (no-op)");
+          appendLog(`ensure_ante_off · SKIP — ${r?.reason ?? "no anteButton"}`);
+        } else if (r?.ok) {
+          const how = r.wasOff ? "already OFF" : `toggled ${r.toggledCount}× back to OFF`;
+          toast(`Ante OFF ✓ — ${how}`);
+          appendLog(`ensure_ante_off · ✅ ${how}`);
+        } else {
+          toast(`ensure_ante_off FAILED — ${r?.reason ?? "unknown"}`, true);
+          appendLog(`ensure_ante_off · ❌ ${r?.reason ?? "unknown"}`);
+        }
+      } catch (err) { toast(err.message, true); }
+      finally { hideLoading(); }
     };
 
     window.doStopSession = async () => {

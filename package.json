@@ -28,6 +28,7 @@
     "validate-ui-registry": "tsx src/pipeline/cli/validate-ui-registry.ts",
     "ai-recover-locator": "tsx src/pipeline/cli/ai-recover-locator.ts",
     "generate-testcases": "tsx src/pipeline/cli/generate-testcases.ts",
+    "apply-template-set": "tsx src/pipeline/cli/apply-template-set.ts",
     "run-scenario": "tsx src/pipeline/cli/run-scenario.ts",
     "verify-ui": "tsx src/pipeline/cli/verify-ui.ts",
     "verify-api": "tsx src/pipeline/cli/verify-api.ts",

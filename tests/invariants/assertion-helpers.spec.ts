@@ -79,6 +79,28 @@ test("detectBuyFeatureDeduction: high-ratio buy detected", () => {
   expect(d!.ratio).toBeCloseTo(100, 1); // 50 / 0.5 = 100×
 });
 
+test("detectBuyFeatureDeduction: negative win (buy cost folded into win) still measures full deduction", () => {
+  // PP buy spins emit winAmount = -(buyCost - baseBet). Balance dropped by the
+  // full $40 buy cost; the parser reports bet=0.4, win=-39.6. The deduction
+  // must measure 40 (ratio 100×), NOT 0.4 (ratio 1× — would false-fail).
+  const spins = [
+    { isEndRound: true, betAmount: 0.4, winAmount: -39.6, endingBalance: 960 }, // 1000 - 40
+  ];
+  const d = detectBuyFeatureDeduction(spins, 0, 1000);
+  expect(d).not.toBeNull();
+  expect(d!.deduction).toBeCloseTo(40, 1);
+  expect(d!.ratio).toBeCloseTo(100, 1);
+});
+
+test("detectBuyFeatureDeduction: positive win on buy spin is added back to deduction", () => {
+  // Buy cost 40, buy spin also pays a 5 line win: after = 1000 - 40 + 5 = 965.
+  // True deduction = 40 (ratio 100×), recovered by adding the credited win back.
+  const spins = [{ isEndRound: true, betAmount: 0.4, winAmount: 5, endingBalance: 965 }];
+  const d = detectBuyFeatureDeduction(spins, 0, 1000);
+  expect(d!.deduction).toBeCloseTo(40, 1);
+  expect(d!.ratio).toBeCloseTo(100, 1);
+});
+
 test("detectBuyFeatureDeduction: null when no end-spins available", () => {
   expect(detectBuyFeatureDeduction([], 0, 100)).toBeNull();
 });

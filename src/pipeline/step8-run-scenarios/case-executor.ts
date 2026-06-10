@@ -15,6 +15,7 @@ import type { CaseAction } from "../step7-testcase-gen/case-action-translator.js
 import { dirForGame } from "../registry/paths.js";
 import { detectAnyPopup, dismissPopupsLoop, ocrRegion, parseNumericFromOcr } from "../utils/ocr-popup.js";
 import { createDedupState, ingestFrame } from "./cascade-dedup.js";
+import { reconcileBetFromBalance } from "./bet-reconcile.js";
 import {
   getRoundEndSpins as getRoundEndSpinsImpl,
   getCurrentBalance as getCurrentBalanceImpl,
@@ -33,6 +34,7 @@ import { resolvePopupKeywords } from "../registry/popup-keywords.js";
 import { evaluateBalanceMultiSignal } from "./evidence/balance-multi-signal.js";
 import { ocrRegions } from "../registry/ocr-regions.js";
 import { verifyHistory, type HistoryVerifyResult } from "../step9-verify/history-verifier.js";
+import { buildTrace, traceToMarkdown, type TraceRow } from "../../runner/balance-trace-export.js";
 
 // Per-process guard for UNKNOWN learner to avoid repeated AI calls across
 // consecutive cases that land on the same transient end-state screen.
@@ -209,7 +211,12 @@ export type CaseResult = {
   name: string;
   category: string;
   severity: "critical" | "major" | "minor";
-  status: "pass" | "fail" | "skip";
+  /** "inconclusive" = the case ran but could not actually exercise what it was
+   *  meant to verify (e.g. a free-spin trigger case where no free spin fired in
+   *  the spin budget — RNG, not a defect). NOT counted as pass or fail; the
+   *  dashboard surfaces it as INCONCLUSIVE so QA re-runs or uses a buy-feature
+   *  path instead of trusting a vacuous "pass". */
+  status: "pass" | "fail" | "skip" | "inconclusive";
   skipReason?: string;
   actionsExecuted: number;
   assertions: AssertionResult[];
@@ -243,6 +250,26 @@ export type CaseResult = {
     roundId: string;
     isFreeSpin?: boolean;
   }>;
+  /** Per-round balance trace (opening / bet / win / expected-closing /
+   *  observed / status) for EVERY round captured this case — built
+   *  unconditionally for multi-spin cases (pass OR fail), so QA / the AI report
+   *  always lists each spin's start balance, end balance, bet and win instead
+   *  of only the last round. `status` per row flags rounds where
+   *  opening − bet + win ≠ observed closing. */
+  spinBreakdown?: TraceRow[];
+  /** Markdown rendering of `spinBreakdown` — ready to drop into a report. */
+  spinBreakdownMarkdown?: string;
+  /** #2 — AI judgement on whether a winning round's on-screen symbols are
+   *  consistent with the paytable (not just that balance math reconciled).
+   *  Present only when the representative round was a win and a paytable was
+   *  available. "no" (high confidence) also fails the case. */
+  winPaytableCheck?: {
+    consistent: "yes" | "no" | "uncertain";
+    confidence: number;
+    observedSymbols: string[];
+    note: string;
+    detail: string;
+  };
   durationMs: number;
   /** Path to a PNG snapshot taken at end of case. Captured for EVERY case
    *  (pass + fail + skip) so QA can verify visual state without re-running.
@@ -406,6 +433,41 @@ export async function executeCase(
 
   if (input.skipReason) {
     return { ...base, skipReason: input.skipReason, durationMs: Date.now() - start };
+  }
+
+  // #4b — auto-enable interrupt handling so free-spin / bonus chains are played
+  // out (and end-of-bonus interstitials dismissed) instead of being cut off
+  // mid-feature. The interrupt observer + free-spin handler only run when
+  // `allowed_interruptions` is non-empty; AI-generated catalog cases don't
+  // reliably set it. Any free-spin/bonus/buy-intent case — or any multi-spin
+  // case (slots can randomly trigger a feature on ANY spin) — gets the default
+  // set unless the catalog EXPLICITLY opted out with `allowed_interruptions: []`.
+  // (The manual-session path may have already injected this; we only fill when
+  // still unset, so we never override an explicit opt-out.)
+  {
+    const spinActionCount = input.actions.filter((a) => a.kind === "spin").length;
+    const isFeatureIntent =
+      /free[_\s-]?spin|bonus|feature|buy/i.test(input.category)
+      || /free[_\s-]?spin|bonus/i.test(`${input.id} ${input.name}`);
+    if (input.allowed_interruptions === undefined && (isFeatureIntent || spinActionCount >= 2)) {
+      // Free-spin/bonus play-through states + the dismissable popup states
+      // (each has a dismiss handler) so a STRAY popup during a generic spin
+      // run is auto-dismissed and tolerated rather than failing the State
+      // signal as an "unexpected non-MAIN transition".
+      input.allowed_interruptions = [
+        "FREE_SPIN_TRIGGERED",
+        "BIG_WIN_POPUP",
+        "BONUS_POPUP",
+        "BUY_FEATURE_POPUP",
+        "AUTOPLAY_POPUP",
+        "PAYTABLE_POPUP",
+        "HISTORY_POPUP",
+        "SETTINGS_POPUP",
+      ];
+      warnings.push(
+        `auto-enabled interrupt handling (no allowed_interruptions set on a ${isFeatureIntent ? "feature-intent" : "multi-spin"} case) — free-spin/bonus + dismissable popups`,
+      );
+    }
   }
 
   // External tab tracking: graph-explorer registers historyButton's children
@@ -763,6 +825,11 @@ export async function executeCase(
             }
           }
         }
+        // NOTE: ante (Double Chance) bet reconciliation runs as a POST-dedup
+        // pass over the merged rounds (see below), NOT per-frame — on a tumble
+        // round's START frame the balance reflects only the bet deduction while
+        // the win (tw) is still pending credit, so conservation transiently
+        // fails and a per-frame correction would inflate bet by the pending win.
         const beforeLen = collectedSpins.length;
         // Strict dedup: merge only when roundId truly matches. Balance
         // continuity fallback can merge distinct autoplay rounds and drop
@@ -880,6 +947,10 @@ export async function executeCase(
           await executeAction(action, ctx, timing, betControls, {
             lastSpinResponseAt: () => lastSpinResponseAt,
             spinResponseCount: () => collectedSpins.length,
+            fsActive: () => {
+              const last = collectedSpins[collectedSpins.length - 1];
+              return !!last && ((last.freeSpinsRemaining ?? 0) > 0 || last.isFreeSpin === true);
+            },
           });
         } catch (err) {
           actionError = err instanceof Error ? err.message : String(err);
@@ -1047,6 +1118,10 @@ export async function executeCase(
           await executeAction(action, ctx, timing, betControls, {
             lastSpinResponseAt: () => lastSpinResponseAt,
             spinResponseCount: () => collectedSpins.length,
+            fsActive: () => {
+              const last = collectedSpins[collectedSpins.length - 1];
+              return !!last && ((last.freeSpinsRemaining ?? 0) > 0 || last.isFreeSpin === true);
+            },
           });
         } catch (err) {
           actionError = err instanceof Error ? err.message : String(err);
@@ -1163,11 +1238,33 @@ export async function executeCase(
             console.log(`[case-action] buy-feature signature detected (drop=${drop.toFixed(2)}, ratio=${ratio.toFixed(1)}×) — extending settle to ${settleMs}ms`);
           }
         }
+        // #4b — FS-chain awareness. While inside a free-spin / bonus chain the
+        // game auto-plays rounds that can be separated by long celebration
+        // animations (> the default 10s settle), which used to terminate
+        // capture mid-bonus. When the latest captured spin is itself a free
+        // spin (or still owes more: freeSpinsRemaining > 0), widen the settle
+        // window so the chain isn't cut short.
+        const latestSpin = collectedSpins[collectedSpins.length - 1]!;
+        const inFsChain =
+          latestSpin.isFreeSpin === true || (latestSpin.freeSpinsRemaining ?? 0) > 0;
+        if (inFsChain) {
+          settleMs = Math.max(settleMs, 30_000);
+        }
         lastCount = collectedSpins.length;
         lastChange = Date.now();
         console.log(`[case-action] spin captured ${collectedSpins.length} (resetting ${settleMs}ms settle window)`);
       }
       if (Date.now() - lastChange >= settleMs) {
+        // #4b — NEVER terminate while the free-spin chain still owes spins.
+        // `freeSpinsRemaining > 0` on the latest spin means the bonus isn't
+        // finished; keep waiting (bounded by the 5-min hard deadline) so the
+        // case captures the WHOLE feature instead of cutting off early and
+        // marking pass on a partial bonus.
+        const latest = collectedSpins[collectedSpins.length - 1];
+        const fsStillOwed = latest != null && (latest.freeSpinsRemaining ?? 0) > 0;
+        if (fsStillOwed) {
+          continue; // re-poll until the next FS spin lands or the hard cap hits
+        }
         // No new spin within settle window — either no spin coming (single-spin case) or
         // autoplay/FS chain completed.
         if (collectedSpins.length > 0) break;
@@ -1448,6 +1545,28 @@ export async function executeCase(
   // pipeline-internal (not from server response).
   if (spin && typeof ocrBalance === "number") {
     (spin.raw as Record<string, unknown>)._ocrBalance = ocrBalance;
+  }
+
+  // Ante (Double Chance) bet reconciliation — POST-dedup, on fully-settled
+  // rounds. PP applies the ante ×1.25/×1.5/×1.9 surcharge SERVER-SIDE (absent
+  // from the doSpin request), so the parser reports only the base / bare-coin
+  // wager on an ante-ON spin. Now that each round is merged — final
+  // balanceAfter reflects the bet AND the full credited win, and
+  // serverTotalWin carries the round total — the balance is authoritative:
+  // bet = (balanceBefore − balanceAfter) + win. Only rewrites a bet that
+  // provably violates conservation, so correct rounds (incl. tumble bl=0 and
+  // genuine bet-level games) are untouched. Running HERE rather than per-frame
+  // avoids the tumble-start trap, where the win is reported (tw) but not yet
+  // credited to balance, so a per-frame check would inflate bet by that win.
+  for (const s of collectedSpins) {
+    const recon = reconcileBetFromBalance(s);
+    if (recon) {
+      if (!quietDiag) {
+        console.log(`[case-exec/net] bet reconciled (settled round): bet ${s.bet}→${recon.bet}, win ${s.win}→${recon.win} (roundId=${s.roundId})`);
+      }
+      s.bet = recon.bet;
+      s.win = recon.win;
+    }
   }
 
   // Synthesize stateTimeline entries for buy-feature → FS chain BEFORE
@@ -1731,6 +1850,58 @@ export async function executeCase(
   // (pass or fail). 2026-05-25 evidence-pkg: previously fail-only.
   const screenshotPath = (await captureCaseScreenshot(ctx.page, ctx.gameSlug, input.id)) ?? undefined;
 
+  // #2 — Win-vs-paytable consistency. Balance reconciliation only proves
+  // `after = before − bet + win`; it does NOT prove the win is backed by a real
+  // winning symbol combination at the paytable's multiplier. When the
+  // representative round is a WIN, ask the vision model whether the symbols
+  // visible on the end-of-case screenshot plausibly explain the reported win
+  // given the paytable. Advisory by default (a clear high-confidence "no"
+  // fails the case; "uncertain"/low-confidence only warns) because vision can
+  // misread a busy reel. Disable with QA_WIN_PAYTABLE_CHECK=0.
+  let winPaytableCheck: CaseResult["winPaytableCheck"];
+  let winPaytableInconsistent = false;
+  if (
+    process.env.QA_WIN_PAYTABLE_CHECK !== "0"
+    && ctx.gameSlug
+    && screenshotPath
+    && spin
+    && spin.win > 0
+  ) {
+    try {
+      const { paytable: paytableStore } = await import("../registry/paytable.js");
+      const pt = await paytableStore.load(ctx.gameSlug).catch(() => null);
+      if (pt && pt.symbols.length > 0) {
+        const paytableText = serializePaytableForPrompt(pt);
+        const { verifyWinAgainstPaytable } = await import("../../ai/vision.js");
+        const verdict = await verifyWinAgainstPaytable({
+          screenshotPath: path.resolve(screenshotPath),
+          paytableText,
+          reportedWin: spin.win,
+          bet: spin.bet,
+        });
+        winPaytableCheck = {
+          consistent: verdict.consistent,
+          confidence: verdict.confidence,
+          observedSymbols: verdict.observed_winning_symbols,
+          note: verdict.expected_win_note,
+          detail: verdict.detail,
+        };
+        if (verdict.consistent === "no" && verdict.confidence >= 0.7) {
+          winPaytableInconsistent = true;
+          warnings.push(
+            `win-vs-paytable INCONSISTENT (confidence ${(verdict.confidence * 100).toFixed(0)}%): ${verdict.detail || verdict.expected_win_note}`,
+          );
+        } else if (verdict.consistent !== "yes") {
+          warnings.push(
+            `win-vs-paytable ${verdict.consistent} (confidence ${(verdict.confidence * 100).toFixed(0)}%): ${verdict.detail || verdict.expected_win_note}`,
+          );
+        }
+      }
+    } catch (err) {
+      console.warn(`[case-exec/win-paytable] check failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   // Evidence: persist network capture to disk as JSONL sibling of screenshot.
   // Also build a compact in-result summary so dashboard renders count + first
   // few rows without fetching the file.
@@ -1788,6 +1959,35 @@ export async function executeCase(
   const hasFsSpins = collectedSpins.some((s) =>
     s.isFreeSpin === true || (s.freeSpinsRemaining ?? 0) > 0,
   );
+
+  // Verdict (#4a) — a free-spin TRIGGER-intent case that never actually
+  // triggered a free spin must NOT report "pass". Its free-spin assertions are
+  // vacuously true (`collector.spins.filter(s => s.isFreeSpin).every(...)` over
+  // an empty array), so allPass was true even though the feature was never
+  // exercised. Mark such a run INCONCLUSIVE instead — RNG didn't cooperate, so
+  // the case verified nothing. Buy-feature cases are EXCLUDED (the purchase
+  // guarantees a trigger, so a missing FS chain there is a real failure that
+  // the assertions catch). Organic free_spins watch cases are exactly the ones
+  // the tester reported as falsely passing.
+  const isFreeSpinTriggerIntent =
+    /free[_\s-]?spin/i.test(input.category) && !/buy/i.test(input.category);
+  const freeSpinNeverTriggered = isFreeSpinTriggerIntent && !hasFsSpins;
+  let caseStatus: CaseResult["status"];
+  let caseStatusReason: string | undefined;
+  if (!allPass) {
+    caseStatus = "fail";
+  } else if (winPaytableInconsistent) {
+    // A win that the paytable cannot justify is a real defect — fail even if
+    // balance math reconciled.
+    caseStatus = "fail";
+    caseStatusReason = `win-vs-paytable inconsistent: ${winPaytableCheck?.detail ?? winPaytableCheck?.note ?? "see winPaytableCheck"}`;
+  } else if (freeSpinNeverTriggered) {
+    caseStatus = "inconclusive";
+    caseStatusReason = `no free spin triggered in ${collectedSpins.length} spin(s) — feature not exercised (RNG); re-run or use a buy-feature case to force the trigger`;
+    warnings.push(`INCONCLUSIVE: ${caseStatusReason}`);
+  } else {
+    caseStatus = "pass";
+  }
 
   // Signal Roll-up — case-level 5-signal view (replaces per-assertion signal
   // decoration as the primary dashboard view). User-driven design 2026-05-25:
@@ -1870,6 +2070,14 @@ export async function executeCase(
     finalOutcome = "PASS_WITH_INTERRUPT";
   }
 
+  // #4a — force INCONCLUSIVE outcome for a free-spin trigger case that never
+  // fired a free spin. This (a) stops it counting as a pass and (b) makes the
+  // default retry policy (which retries INCONCLUSIVE) give RNG more attempts in
+  // the orchestrator before recording an inconclusive result.
+  if (freeSpinNeverTriggered) {
+    finalOutcome = "INCONCLUSIVE";
+  }
+
   // Case-level confidence — derived from Signal Roll-up (2026-05-25 redesign).
   // Old formula was MIN of per-assertion confidences which made cases with
   // narrowly-scoped assertions (e.g. `warnings.filter(...)` = 30%) look like
@@ -1939,12 +2147,16 @@ export async function executeCase(
     try {
       const { appendHistory, loadHistory, maybePromoteToFlaky } = await import("./history/index.js");
       const history = await loadHistory(ctx.gameSlug, input.id);
-      finalOutcome = maybePromoteToFlaky(caseAggregate.outcome, history);
+      // Preserve the #4a INCONCLUSIVE override — only run FLAKY promotion when
+      // the case wasn't already forced inconclusive (no-FS-trigger).
+      finalOutcome = freeSpinNeverTriggered
+        ? "INCONCLUSIVE"
+        : maybePromoteToFlaky(caseAggregate.outcome, history);
       await appendHistory(ctx.gameSlug, input.id, {
         ranAt: new Date().toISOString(),
         outcome: caseAggregate.outcome, // raw (pre-FLAKY promotion) for clean history
         confidence: signalConfidence,
-        status: allPass ? "pass" : "fail",
+        status: caseStatus === "inconclusive" ? "skip" : caseStatus,
         durationMs: Date.now() - start,
         spinsCount: collectedSpins.length,
         reason: !allPass ? assertions.find((a) => !a.pass)?.description : undefined,
@@ -1959,9 +2171,46 @@ export async function executeCase(
   await stopVideo();
     await closeExternalTabs();
 
+  // Per-round balance breakdown — ALWAYS built when ≥1 spin was captured (not
+  // just on failure). Tester feedback: multi-spin cases must list every round's
+  // starting balance, ending balance, bet and win — previously only the last
+  // round survived (in `spin`) and the per-spin table existed only inside the
+  // failure explainer. Each row also carries a per-round reconciliation status
+  // (opening − bet + win vs observed closing) so a single bad round is visible
+  // even when the case passes overall.
+  let spinBreakdown: TraceRow[] | undefined;
+  let spinBreakdownMarkdown: string | undefined;
+  if (collectedSpins.length > 0) {
+    spinBreakdown = buildTrace({
+      spins: collectedSpins.map((s, i) => ({
+        roundIndex: i + 1,
+        balanceBefore: s.balanceBefore,
+        totalBet: s.bet,
+        totalWin: s.win,
+        balanceAfter: s.balanceAfter,
+        isFreeSpin: s.isFreeSpin,
+      })),
+    });
+    spinBreakdownMarkdown = traceToMarkdown(spinBreakdown);
+    const badRounds = spinBreakdown.filter((r) => r.status === "FALSE");
+    if (badRounds.length > 0) {
+      warnings.push(
+        `per-round balance mismatch on ${badRounds.length}/${spinBreakdown.length} round(s): ` +
+          badRounds
+            .slice(0, 10)
+            .map(
+              (r) =>
+                `#${r.spin} open=${r.openingBalance.toFixed(2)} bet=${r.bet.toFixed(2)} win=${r.win.toFixed(2)} expected=${r.closingBalance.toFixed(2)} observed=${r.observedClosing.toFixed(2)}`,
+            )
+            .join(" | "),
+      );
+    }
+  }
+
   const result: CaseResult = {
     ...base,
-    status: allPass ? "pass" : "fail",
+    status: caseStatus,
+    skipReason: caseStatusReason,
     actionsExecuted,
     assertions,
     diagnostics: diagnostics.length > 0 ? diagnostics : undefined,
@@ -1987,6 +2236,9 @@ export async function executeCase(
           isFreeSpin: s.isFreeSpin,
         }))
       : undefined,
+    spinBreakdown,
+    spinBreakdownMarkdown,
+    winPaytableCheck,
     durationMs: Date.now() - start,
     screenshotPath,
     videoPath,
@@ -2084,6 +2336,12 @@ export type WaitUntilNoSpinResponseOpts = {
   sleep: (ms: number) => Promise<void>;
   now: () => number;
   pollIntervalMs?: number;
+  /** Returns true while the latest captured spin is still inside a free-spin /
+   *  bonus chain (freeSpinsRemaining > 0 or isFreeSpin). When provided, the wait
+   *  will NOT declare "quiet" during an active FS chain — a celebration /
+   *  transition gap longer than quietMs mid-chain must not end the wait before
+   *  the feature finishes. Still bounded by maxMs. */
+  fsActive?: () => boolean;
 };
 
 export type WaitUntilNoSpinResponseResult = {
@@ -2100,15 +2358,25 @@ export async function waitUntilNoSpinResponse(
   const start = opts.now();
   const startCount = opts.spinResponseCount();
   let lastLoggedCount = startCount;
+  let fsWaitLoggedAt = 0;
   while (opts.now() - start < opts.maxMs) {
     const gap = opts.now() - opts.lastSpinResponseAt();
     const captured = opts.spinResponseCount() - startCount;
+    // FS-aware: while a free-spin/bonus chain still owes spins, a quiet gap is
+    // a between-spin animation / celebration — NOT batch completion. Defer the
+    // "quiet" exit so we don't cut the run off before the feature finishes
+    // (the #4 "AI stops before free spins end" bug). Still bounded by maxMs.
+    const fsBusy = captured > 0 && gap >= opts.quietMs && opts.fsActive?.() === true;
     // Do not declare "quiet complete" before at least one new spin lands.
     // Otherwise, if action execution before this wait took > quietMs,
     // lastSpinResponseAt can be stale and the wait exits immediately.
-    if (captured > 0 && gap >= opts.quietMs) {
+    if (captured > 0 && gap >= opts.quietMs && !fsBusy) {
       console.log(`[case-action]   quiet for ${gap}ms — captured ${captured} spin response(s) during wait; exiting after ${opts.now() - start}ms`);
       return { exitReason: "quiet", elapsedMs: opts.now() - start, spinsCapturedDuringWait: captured, lastGapMs: gap };
+    }
+    if (fsBusy && opts.now() - fsWaitLoggedAt >= 5000) {
+      console.log(`[case-action]   FS/bonus chain still active (gap ${gap}ms) — extending wait past quietMs until the feature finishes (max ${opts.maxMs}ms)`);
+      fsWaitLoggedAt = opts.now();
     }
     const curCount = opts.spinResponseCount();
     if (curCount - lastLoggedCount >= 5) {
@@ -2210,6 +2478,9 @@ async function executeAction(
     lastSpinResponseAt: () => number;
     /** Returns current count of distinct spin responses captured so far. */
     spinResponseCount: () => number;
+    /** True while the latest captured spin is still inside an FS/bonus chain —
+     *  used to keep wait_until_no_spin_response running through the feature. */
+    fsActive?: () => boolean;
   },
 ): Promise<void> {
   if (action.kind === "wait_ms") {
@@ -2475,11 +2746,42 @@ async function executeAction(
     const start = Date.now();
     console.log(`[case-action] wait_until_state ${action.state}${action.reason ? ` — ${action.reason}` : ""} (max ${max}ms)`);
     const { observeState } = await import("./state-observer.js");
+    const popupKw = await resolvePopupKeywords(ctx.gameSlug ?? null);
+    // End-of-feature celebrations (total-win summary / "PRESS ANYWHERE TO
+    // CONTINUE") block the return to MAIN and only clear on a tap. When the
+    // target is MAIN, actively dismiss these with a center click instead of
+    // polling passively — otherwise the case sits on the celebration until the
+    // game's own idle timeout fires (~2min), inflating run time + video length.
+    // (The FS spin chain itself has already been drained by the spin-collection
+    // settle loop before this action runs, so a click here can't cut it short.)
+    const DISMISSABLE = new Set(["BIG_WIN_POPUP", "FREE_SPIN_TRIGGERED", "BONUS_POPUP"]);
+    // The literal "PRESS ANYWHERE TO CONTINUE" affordance is the most reliable
+    // signal of a tap-to-dismiss celebration — trust it even if `classify`
+    // mapped the screen to MAIN/UNKNOWN (some themes have weak OCR matches).
+    const blockingAffordance = /press anywhere|tap to continue|click to continue|to continue/i;
+    const vp = ctx.page.viewportSize() ?? { width: 1280, height: 720 };
+    const cx = Math.round(vp.width / 2);
+    const cy = Math.round(vp.height / 2);
+    let lastDismissAt = 0;
     while (Date.now() - start < max) {
-      const obs = await observeState(ctx.page);
-      if (obs.state === action.state) {
+      const obs = await observeState(ctx.page, {
+        interstitialKeywords: popupKw.interstitial,
+        substateKeywords: popupKw.substate,
+      });
+      const isCelebration = DISMISSABLE.has(obs.state) || blockingAffordance.test(obs.ocrText ?? "");
+      // Only accept MAIN when no tap-to-continue overlay is still on screen —
+      // a weak MAIN verdict under a live "PRESS ANYWHERE" banner is a false
+      // positive that would end the wait with the celebration still up.
+      if (obs.state === action.state && !(action.state === "MAIN" && blockingAffordance.test(obs.ocrText ?? ""))) {
         console.log(`[case-action] reached state=${action.state} in ${Date.now() - start}ms`);
         return;
+      }
+      if (action.state === "MAIN" && isCelebration && Date.now() - lastDismissAt >= 1200) {
+        console.log(`[case-action] wait_until_state: dismissing ${obs.state} (center click) to reach MAIN`);
+        try { await ctx.page.mouse.click(cx, cy); } catch { /* page navigating — ignore */ }
+        lastDismissAt = Date.now();
+        await ctx.page.waitForTimeout(700);
+        continue;
       }
       await ctx.page.waitForTimeout(500);
     }
@@ -2527,6 +2829,7 @@ async function executeAction(
       maxMs: max,
       lastSpinResponseAt: extras.lastSpinResponseAt,
       spinResponseCount: extras.spinResponseCount,
+      fsActive: extras.fsActive,
       sleep: (ms) => ctx.page.waitForTimeout(ms),
       now: () => Date.now(),
     });
@@ -3040,6 +3343,27 @@ function jsonShort(v: unknown): string {
 // shared spin-adapter (single source of truth for aliases). Kept as a local
 // re-export name to preserve call sites; consider direct import in future.
 const adaptSpinForLegacy = adaptSpinForAssertions;
+
+/** Serialize a Paytable into compact prompt text for the win-vs-paytable AI
+ *  check — one line per symbol (name + per-count multipliers) plus features. */
+function serializePaytableForPrompt(
+  pt: import("../registry/types.js").Paytable,
+): string {
+  const lines: string[] = ["PAYTABLE (symbol: multipliers by N-of-a-kind):"];
+  for (const s of pt.symbols) {
+    const pays = (s.payouts ?? [])
+      .map((p) => `${p.count}→×${p.multiplier}`)
+      .join(", ");
+    lines.push(`- ${s.name || s.symbol}${pays ? `: ${pays}` : " (no payouts listed)"}`);
+  }
+  if (pt.features && pt.features.length > 0) {
+    lines.push("FEATURES:");
+    for (const f of pt.features) {
+      lines.push(`- ${f.name}${f.description ? `: ${f.description}` : ""}`);
+    }
+  }
+  return lines.join("\n");
+}
 
 /** Action log helper: describe what this action targets in 1 short string
  *  for the dashboard column. Distinct from "kind" — e.g. kind=click + target=

@@ -32,7 +32,7 @@ export type RetryLoopResult = {
   attemptHistory: Array<{
     attempt: number;
     outcome?: string;
-    status: "pass" | "fail" | "skip";
+    status: "pass" | "fail" | "skip" | "inconclusive";
     durationMs: number;
   }>;
 };

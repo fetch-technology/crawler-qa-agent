@@ -25,7 +25,7 @@ export type RerunOrchestratorInput = {
   /** Callbacks bound to manualSession — keeps this module pure. */
   callbacks: {
     applyPatch: (patch: SuggestedPatch, review: ReviewResult) => Promise<{ ok: boolean; reason?: string }>;
-    rerunCase: () => Promise<{ ok: boolean; result?: { status: "pass" | "fail" | "skip"; outcome?: string }; reason?: string }>;
+    rerunCase: () => Promise<{ ok: boolean; result?: { status: "pass" | "fail" | "skip" | "inconclusive"; outcome?: string }; reason?: string }>;
     reReview: () => Promise<{ ok: boolean; review?: ReviewResult; reason?: string }>;
   };
   /** Auto-apply confidence threshold (default 0.85). Below this, loop stops + escalates. */

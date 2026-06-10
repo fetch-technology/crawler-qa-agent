@@ -507,10 +507,17 @@ async function openExtractClose(
 
 const STRUCTURED_PROMPTS: Record<string, string> = {
   paytable: `You are extracting a slot-game paytable from a popup screenshot. The paytable may span MULTIPLE PAGES (a "Next >" / arrow / pagination dots, often with a page label like "1/7").
+
+SYMBOLS & MULTIPLIER KEYS — read carefully, games differ:
+- Multiplier KEYS are the SYMBOL COUNT needed for that payout.
+- Classic PAYLINE games: keys are "3","4","5" (3-5 of a kind).
+- "PAYS ANYWHERE" / scatter-pays / cluster games (e.g. Gates of Olympus, Sugar Rush, Sweet Bonanza): payouts are keyed by COUNT THRESHOLDS or RANGES like "8-9","10-11","12-30","12+". Return EXACTLY the thresholds/ranges shown on screen — do NOT force them into 3/4/5.
+- Payout VALUES may be a ×multiplier (e.g. "x50") OR a currency amount at the current bet (e.g. "$50.00") — report the number shown either way.
+- Symbols are often PICTURES with NO text name (crown, hourglass, ring, chalice, colored gems). When there is no label, set "name" to a short visual description ("red crown","green hourglass","blue gem") and "id" to the same.
 Return JSON only:
 {
   "symbols": [
-    { "id": "<short_code_or_name>", "name": "<symbol name>", "multipliers": {"3": <num>, "4": <num>, "5": <num>}, "notes": "<optional>" }
+    { "id": "<short_code_or_visual_desc>", "name": "<symbol name OR visual description>", "multipliers": {"<count_or_range>": <num>}, "notes": "<optional>" }
   ],
   "wild": { "rules": "<text>", "substitutes": ["<symbol names>"] },
   "scatter": { "rules": "<text>" },
@@ -630,8 +637,8 @@ export function convertToRegistryPaytable(src: PaytableStructured): Paytable {
   for (const s of src.symbols ?? []) {
     const payouts: Paytable["symbols"][number]["payouts"] = [];
     for (const [countRaw, valueRaw] of Object.entries(s.multipliers ?? {})) {
-      const count = Number(countRaw);
-      if (!Number.isInteger(count) || count < 2) continue; // skip "3-5" range keys
+      const count = parseCountKey(countRaw);
+      if (count === null) continue;
       const multiplier = parseMultiplier(valueRaw);
       if (multiplier === null) continue;
       payouts.push({ count, multiplier });
@@ -648,6 +655,23 @@ export function convertToRegistryPaytable(src: PaytableStructured): Paytable {
     symbols,
     features: src.features?.map((f) => ({ name: f.name, description: f.description })) ?? [],
   };
+}
+
+/** Parse a paytable multiplier KEY into the symbol-COUNT threshold at which it
+ *  applies. Handles plain counts ("9"), ranges ("8-9", "12-30"), and open
+ *  ranges ("10+", "12 or more"). Classic line games use 3/4/5-of-a-kind, but
+ *  "pays anywhere" / scatter-pays / cluster games (Gates of Olympus, Sugar
+ *  Rush, …) key payouts by count THRESHOLDS/RANGES — previously these were
+ *  dropped (`Number("8-9")` = NaN), zeroing out the whole paytable for those
+ *  games. We keep the LOWER bound (the count at which the payout starts), which
+ *  is the correct tier-lookup key: for an observed N-symbol win, pick the
+ *  highest threshold ≤ N. Returns null when no usable count is present.
+ *  Exported for tests. */
+export function parseCountKey(raw: string): number | null {
+  const m = String(raw).match(/\d+/); // first integer = lower bound of any range
+  if (!m) return null;
+  const n = Number(m[0]);
+  return Number.isInteger(n) && n >= 2 ? n : null;
 }
 
 function parseMultiplier(raw: unknown): number | null {

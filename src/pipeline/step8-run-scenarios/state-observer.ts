@@ -175,7 +175,16 @@ export function classify(signals: ObserverSignals): { state: ObservedState; conf
   const hasCongrats = ocrLower.some((k) => k.includes("congratulations") || k.includes("you have won") || k.includes("you won"));
   const hasContinue = ocrLower.some((k) => k.includes("press anywhere") || k.includes("to continue"));
   const hasPaytable = ocrLower.some((k) => k.includes("paytable") || k.includes("pay table"));
-  const hasAutoplay = ocrLower.some((k) => k.includes("autoplay") || k.includes("auto play") || k.includes("number of spins"));
+  // "autoplay"/"auto play" ALONE is a false positive: many games render a
+  // PERMANENT autoplay button on the MAIN screen (e.g. Gates of Olympus), so a
+  // closed-popup main reads as AUTOPLAY_POPUP and breaks return-to-main checks.
+  // Only treat it as an OPEN popup when corroborated by a phrase that appears
+  // solely inside the autoplay dialog ("number of spins"/"loss limit"/…) OR by
+  // a dark overlay dimming the screen. Mirrors the ensureMainScreen filter.
+  const hasAutoplayPopupPhrase = ocrLower.some((k) =>
+    k.includes("number of spins") || k.includes("loss limit") || k.includes("single win limit"));
+  const hasAutoplayLabel = ocrLower.some((k) => k.includes("autoplay") || k.includes("auto play"));
+  const hasAutoplay = hasAutoplayPopupPhrase || (hasAutoplayLabel && signals.darkOverlay === true);
   const hasBuy = ocrLower.some((k) => k.includes("buy feature") || k.includes("buy bonus") || k.includes("buy free spins"));
   const hasHistory = ocrLower.some((k) => k.includes("history"));
   const hasSettings = ocrLower.some((k) => k.includes("settings"));

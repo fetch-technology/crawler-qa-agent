@@ -253,7 +253,13 @@ export function detectBuyFeatureDeduction(
   const after1 = (first as any).endingBalance ?? (first as any).balance;
   if (before == null || typeof after1 !== "number") return null;
 
-  const deduction = before - after1 + win;
+  // Only add back a CREDITED (positive) win. A negative winAmount means the
+  // parser folded the buy cost into `win` (PP buy spins emit -(buyCost-baseBet));
+  // that outflow is already in (before - after1), so adding it back cancels it
+  // and yields ratio ≈ 1, false-failing buy-cost assertions. Keep in sync with
+  // assertion-helpers.ts detectBuyFeatureDeduction.
+  const winCredit = win > 0 ? win : 0;
+  const deduction = before - after1 + winCredit;
   return {
     deduction,
     baseBet,

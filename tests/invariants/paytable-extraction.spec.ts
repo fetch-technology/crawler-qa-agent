@@ -10,7 +10,7 @@
 // GameSpec.symbols[] is hydrated with concrete OCR data instead of empty.
 
 import { test, expect } from "@playwright/test";
-import { convertToRegistryPaytable, mergePaytables, findPaginationButton } from "../../src/pipeline/step4-feature-discovery/deep-extract.ts";
+import { convertToRegistryPaytable, mergePaytables, findPaginationButton, parseCountKey } from "../../src/pipeline/step4-feature-discovery/deep-extract.ts";
 import { paytableToGameSpecSymbols } from "../../src/pipeline/step7-testcase-gen/build-game-spec.ts";
 import type { Paytable, UiRegistry } from "../../src/pipeline/registry/types.ts";
 
@@ -44,7 +44,11 @@ test("convert: string multipliers with 'x' prefix parsed", () => {
   ]);
 });
 
-test("convert: cluster ranges 'x-y' silently skipped (rule engine handles cluster math)", () => {
+test("convert: count RANGES parsed to lower-bound threshold (pays-anywhere / cluster)", () => {
+  // Pays-anywhere & cluster games key payouts by count thresholds/ranges, not
+  // 3/4/5-of-a-kind. Previously these were dropped (Number("8-9")=NaN), zeroing
+  // out the whole paytable (the vs20olympgate "0 symbols" bug). Now each range
+  // maps to its LOWER bound — the count at which the payout starts.
   const src = {
     symbols: [{
       id: "H1",
@@ -53,8 +57,38 @@ test("convert: cluster ranges 'x-y' silently skipped (rule engine handles cluste
     }],
   };
   const out = convertToRegistryPaytable(src);
-  // Only "9" (integer count) survives; "3-5", "6-8", "10+" are skipped
-  expect(out.symbols[0]!.payouts).toEqual([{ count: 9, multiplier: 25 }]);
+  expect(out.symbols[0]!.payouts).toEqual([
+    { count: 3, multiplier: 5 },
+    { count: 6, multiplier: 10 },
+    { count: 9, multiplier: 25 },
+    { count: 10, multiplier: 100 },
+  ]);
+});
+
+test("convert: Gates of Olympus pays-anywhere tiers (8-9/10-11/12-30) survive", () => {
+  const src = {
+    symbols: [{
+      id: "crown", name: "red crown",
+      multipliers: { "8-9": 15, "10-11": 25, "12-30": 50 } as unknown as Record<string, number>,
+    }],
+  };
+  const out = convertToRegistryPaytable(src);
+  expect(out.symbols[0]!.payouts).toEqual([
+    { count: 8, multiplier: 15 },
+    { count: 10, multiplier: 25 },
+    { count: 12, multiplier: 50 },
+  ]);
+});
+
+test("parseCountKey: plain, range, open-range, junk", () => {
+  expect(parseCountKey("9")).toBe(9);
+  expect(parseCountKey("8-9")).toBe(8);
+  expect(parseCountKey("12-30")).toBe(12);
+  expect(parseCountKey("10+")).toBe(10);
+  expect(parseCountKey("12 or more")).toBe(12);
+  expect(parseCountKey("3 to 5")).toBe(3);
+  expect(parseCountKey("abc")).toBeNull();
+  expect(parseCountKey("1")).toBeNull(); // count < 2 not a valid tier
 });
 
 test("convert: symbol with zero parseable payouts is dropped", () => {

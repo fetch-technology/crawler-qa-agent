@@ -66,6 +66,17 @@ export const CANONICAL_ELEMENT_DESCRIPTIONS: Record<string, string> = {
     "the game history button — clock or rectangular-list icon. " +
     "EXPECTED RESPONSE on click: a history popup opens showing previous " +
     "spin rounds (round IDs, bet, win, timestamp). Often in the menu area.",
+  anteButton:
+    "the ANTE BET / BET+ / Double Chance / Bet Boost toggle — a small toggle " +
+    "or labeled control (often showing 'ANTE BET', 'BET+', '2x', or a " +
+    "percentage like '+25%') usually on the LEFT side of the reels / bet area, " +
+    "on the OPPOSITE side from the spin/buy cluster. Increasing the bet to " +
+    "raise the free-spin trigger chance. " +
+    "EXPECTED RESPONSE on click: the control switches ON/OFF (its highlight " +
+    "or label state flips) and the displayed total bet changes (typically ×1.25 " +
+    "when ON). No spin, no full-screen popup — it may open a small inline " +
+    "panel. If the bet does not change and nothing toggles, the click missed. " +
+    "Returns null if the game has no ante feature.",
 };
 
 /** Return the description for a canonical key, or null if not canonical. */
@@ -131,6 +142,12 @@ export function enrichDescriptionWithSpinAnchor(
       `prominent labeled button (often yellow/orange/red) SEPARATE from the spin/bet cluster. ` +
       `Frequently on the FAR LEFT or FAR RIGHT side of the UI, well away from spinButton ` +
       `(>200px). Do NOT pick a coord inside the spin/bet cluster.`,
+    anteButton:
+      `SPATIAL ANCHOR: the verified spinButton is at (${sx}, ${sy}). The ANTE BET / BET+ toggle ` +
+      `sits SEPARATE from the spin/bet cluster — typically on the FAR LEFT side of the reels/bet ` +
+      `area, often mirroring the buyBonus button on the opposite side (>150px from spinButton). ` +
+      `It is a SMALL toggle/label, not a large round button. Do NOT pick a coord inside the ` +
+      `spin/bet cluster; if a candidate falls within 30px of spinButton, keep searching the far side.`,
   };
 
   const anchor = anchorByKey[uiKey];
@@ -140,6 +157,12 @@ export function enrichDescriptionWithSpinAnchor(
 /** Order in which to localize. Spin is first since it's the most unambiguous
  *  anchor; menu/info etc. follow. Less critical buttons last so a timeout in
  *  the middle doesn't leave the must-haves missing. */
+// historyButton + turboButton are intentionally EXCLUDED — in PP-style games
+// they live INSIDE popups (history → menu popup, turbo → autoplay popup), NOT
+// on the main screen. Localizing them at level 1 makes the AI hallucinate a
+// main-screen coord (false positive). Discover them as nested children via the
+// per-row [Discover] flow on menuButton / autoButton. Mirrors the note in
+// EXPECTED_UI_ELEMENTS_DEFAULTS.
 export const CANONICAL_PRIORITY_ORDER: ReadonlyArray<string> = [
   "spinButton",
   "betPlus",
@@ -148,6 +171,5 @@ export const CANONICAL_PRIORITY_ORDER: ReadonlyArray<string> = [
   "paytableButton",
   "buyBonusButton",
   "autoButton",
-  "historyButton",
-  "turboButton",
+  "anteButton",
 ];

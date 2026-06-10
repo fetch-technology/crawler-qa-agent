@@ -65,8 +65,25 @@ test("OCR 'pay table' (with space) → PAYTABLE_POPUP", () => {
   expect(r.state).toBe("PAYTABLE_POPUP");
 });
 
-test("OCR 'autoplay' → AUTOPLAY_POPUP", () => {
+test("OCR 'autoplay' label ALONE (permanent main-screen button) → NOT AUTOPLAY_POPUP", () => {
+  // False positive on games (Gates of Olympus) that always render an AUTOPLAY
+  // button on main. A bare label with no dialog phrase + no overlay = on main.
   const r = classify({ ocrMatched: ["autoplay"] });
+  expect(r.state).toBe("MAIN");
+});
+
+test("OCR 'autoplay' + dialog phrase 'number of spins' → AUTOPLAY_POPUP", () => {
+  const r = classify({ ocrMatched: ["autoplay", "number of spins"] });
+  expect(r.state).toBe("AUTOPLAY_POPUP");
+});
+
+test("OCR 'autoplay' label + dark overlay → AUTOPLAY_POPUP (overlay corroborates)", () => {
+  const r = classify({ ocrMatched: ["autoplay"], darkOverlay: true });
+  expect(r.state).toBe("AUTOPLAY_POPUP");
+});
+
+test("OCR 'loss limit' (autoplay dialog phrase) → AUTOPLAY_POPUP", () => {
+  const r = classify({ ocrMatched: ["loss limit"] });
   expect(r.state).toBe("AUTOPLAY_POPUP");
 });
 

@@ -40,6 +40,23 @@ export type Evidence = {
   } | null;
   /** Total spins captured (cascade-dedup'd). */
   spinsCount: number;
+  /** Per-round breakdown for EVERY captured spin (bet / win / balance / state),
+   *  in order. Lets the classifier reason over the WHOLE sequence — not just
+   *  lastSpin — so multi-spin failures (spin-count mismatch, a mid-run round
+   *  whose arithmetic breaks, FS frames) are diagnosable instead of the AI only
+   *  seeing the final round. Capped at 100 rows; see perSpinTruncated. */
+  perSpin?: Array<{
+    idx: number;
+    bet: number;
+    win: number;
+    balanceBefore: number | null;
+    balanceAfter: number;
+    roundId: string;
+    state: string;
+    isFreeSpin?: boolean;
+  }>;
+  /** True when more rounds were captured than included in perSpin (capped). */
+  perSpinTruncated?: boolean;
   /** Engine warnings emitted during run (popup retries, etc.). */
   warnings: string[];
   /** Action plan that was executed. */

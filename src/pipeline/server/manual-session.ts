@@ -54,6 +54,11 @@ import { resolveSubStateHints, SUB_STATE_HINTS_DEFAULTS, interpolateSliderStops,
 import { readFile, writeFile } from "node:fs/promises";
 import type { UiRegistry, UiElement } from "../registry/types.js";
 
+// historyButton intentionally EXCLUDED — in PP-style games it lives inside the
+// MENU popup (discover as menuButton__historyButton via per-row Discover), not
+// on the main screen. Listing it here gated Auto-Onboard on a level-1 element
+// that doesn't exist on main. Mirrors EXPECTED_UI_ELEMENTS_DEFAULTS /
+// CANONICAL_PRIORITY_ORDER / the dashboard LEVEL1_EXPECTED_KEYS.
 const LEVEL1_EXPECTED_KEYS = [
   "spinButton",
   "betPlus",
@@ -62,7 +67,6 @@ const LEVEL1_EXPECTED_KEYS = [
   "paytableButton",
   "autoButton",
   "buyBonusButton",
-  "historyButton",
 ] as const;
 
 export type SessionStatus = {
@@ -155,7 +159,7 @@ export type SessionStatus = {
     rows: Array<{
       caseId: string;
       category?: string;
-      status: "pending" | "running" | "pass" | "fail" | "skip";
+      status: "pending" | "running" | "pass" | "fail" | "skip" | "inconclusive";
       detail?: string;
       durationMs?: number;
     }>;
@@ -1618,7 +1622,11 @@ export class ManualSessionManager {
     // normalizeAnteOff runs. Without this, normalize uses raw AI-vision
     // coord (~5-30px drift typical) which can miss the toggle and bail
     // Discover. Probe's offset-retry pattern lands much more reliably.
-    const PRE_EXPLORE_CANONICAL = ["spinButton", "betPlus", "betMinus", "menuButton", "paytableButton", "autoButton", "buyBonusButton", "historyButton", "anteButton"];
+    // historyButton EXCLUDED — it lives inside the menu popup, not on main
+    // (localizing it here yields a hallucinated main-screen coord). Discover it
+    // as menuButton__historyButton via the per-row [Discover] flow. Mirrors the
+    // note in EXPECTED_UI_ELEMENTS_DEFAULTS / CANONICAL_PRIORITY_ORDER.
+    const PRE_EXPLORE_CANONICAL = ["spinButton", "betPlus", "betMinus", "menuButton", "paytableButton", "autoButton", "buyBonusButton", "anteButton"];
     const preProbeKeys = PRE_EXPLORE_CANONICAL.filter((k) => {
       const el = this.registry[k];
       if (!el) return false;
@@ -1954,11 +1962,15 @@ export class ManualSessionManager {
    *  passed to `startPhase()` exactly. */
   private initAutoOnboardPhases(): void {
     const names = [
-      "deep-discover",
-      // Ante normalize tracked separately so QA sees it in the progress
-      // panel. Runs INSIDE deepDiscover (between main-state seed and
-      // sub-state exploration), so its "running" window overlaps with
-      // deep-discover's. Note field shows tier + toggle count.
+      // Auto-onboard no longer deep-discovers the UI graph — QA discovers all
+      // levels manually. This phase only behaviorally VERIFIES the pending
+      // elements (probePendingElements, walks each trigger chain to probe deep
+      // elements too) — NO new discovery. Use the standalone "Deep Discover
+      // (AI)" button for exploration.
+      "verify-pending",
+      // Ante normalize tracked separately so QA sees it in the progress panel.
+      // Runs right before verify-pending (bet assertions + calibration need
+      // ante OFF). Note field shows tier + toggle count.
       "ante-normalize",
       "verify-registry",
       "ocr-auto-detect",
@@ -2000,6 +2012,42 @@ export class ManualSessionManager {
     if (note) p.note = note;
     if (this.autoOnboardCurrentPhase === name) this.autoOnboardCurrentPhase = null;
     this.saveOnboardState().catch(() => undefined);
+  }
+
+  /**
+   * Force the ante bet OFF and capture its OFF baseline (the "ante-normalize"
+   * phase). Extracted so auto-onboard can run it standalone — auto-onboard no
+   * longer deep-discovers, but bet assertions + payout calibration still need
+   * ante OFF before they run. No-op (skip) when the game has no anteButton.
+   * Returns { ok:false, reason } so the caller can abort if normalization fails
+   * (an ante-ON registry would bake inflated bet values).
+   */
+  private async normalizeAntePhase(): Promise<{ ok: boolean; reason?: string }> {
+    if (!this.session || !this.gameSlug || !this.registry) {
+      return { ok: false, reason: "no active session" };
+    }
+    if (!this.registry["anteButton"]) {
+      this.endPhase("ante-normalize", "skip", "no anteButton in registry (game has no ante feature)");
+      return { ok: true };
+    }
+    // Reach main first — a leftover popup would block the anteButton click.
+    await this.waitForMainScreen({ maxWaitMs: 15_000 }).catch(() => undefined);
+    this.startPhase("ante-normalize");
+    const norm = await normalizeAnteOff(this.session.page, this.gameSlug, this.registry);
+    if (!norm.ok) {
+      this.endPhase("ante-normalize", "fail", norm.reason?.slice(0, 80));
+      return { ok: false, reason: `ante normalize failed (tier=${norm.detectionTier}): ${norm.reason ?? "unknown"}` };
+    }
+    if (norm.baselinePath && this.registry["anteButton"]) {
+      this.registry["anteButton"]!.offBaseline = path.relative(dirForGame(this.gameSlug), norm.baselinePath);
+      await uiRegistry.save(this.gameSlug, this.registry);
+    }
+    this.endPhase(
+      "ante-normalize",
+      "ok",
+      `${norm.initialState === "off" ? "already OFF" : `flipped ${norm.initialState}→off`} · tier=${norm.detectionTier} · ${norm.toggledCount} toggle${norm.toggledCount === 1 ? "" : "s"}`,
+    );
+    return { ok: true };
   }
 
   async autoOnboard(
@@ -2129,7 +2177,7 @@ export class ManualSessionManager {
     // starting fresh + the dashboard banner shouldn't persist.
     this.clearGameError();
     try {
-      console.log(`[manual/auto-onboard] ${this.gameSlug}: starting — deep-discover → verify → payout`);
+      console.log(`[manual/auto-onboard] ${this.gameSlug}: starting — verify-pending (no deep-discover) → verify-registry → extract → calibrate → catalog`);
 
       // PARALLEL: kick off OCR-region auto-detection now using a baseline
       // screenshot of the (currently-main) game canvas. The detection chain
@@ -2169,22 +2217,32 @@ export class ManualSessionManager {
         console.log(`[manual/auto-onboard] ${this.gameSlug}: ocr-auto-detect SKIPPED (resumed — already done)`);
       }
 
-      let discover: Awaited<ReturnType<typeof this.deepDiscover>>;
-      if (isPhaseDone("deep-discover")) {
-        console.log(`[manual/auto-onboard] ${this.gameSlug}: deep-discover SKIPPED (resumed — already done)`);
-        discover = { ok: true, addedKeys: [] };
+      // VERIFY-PENDING phase (2026-06 workflow change). Auto-onboard no longer
+      // deep-discovers the UI graph — QA discovers all levels manually. Here we
+      // only force ante OFF, then behaviorally probe the PENDING elements
+      // (probePendingElements walks each trigger chain so deep/sub-state
+      // elements are verified too) — NO new discovery, no deeper-level
+      // exploration. For exploration use the standalone "Deep Discover (AI)"
+      // button. `discover` kept as an empty stub for the return shape.
+      const discover: Awaited<ReturnType<typeof this.deepDiscover>> = { ok: true, addedKeys: [] };
+      if (isPhaseDone("verify-pending")) {
+        console.log(`[manual/auto-onboard] ${this.gameSlug}: verify-pending SKIPPED (resumed — already done)`);
       } else {
-        this.startPhase("deep-discover");
-        discover = await this.deepDiscover(opts.deepDiscover ?? {});
-        if (!discover.ok) {
-          this.endPhase("deep-discover", "fail", discover.reason);
-          // Still await the parallel OCR detection so we don't leave a dangling
-          // Claude call running in the background after we return.
+        // Ante OFF first — bet assertions + payout calibration assume base wager.
+        const ante = await this.normalizeAntePhase();
+        if (!ante.ok) {
           const ocr = await ocrPromise;
           if (!ocrSkipped) this.endPhase("ocr-auto-detect", ocr.ok ? "ok" : "fail", ocr.ok ? `saved=${ocr.saved.length}` : (ocr.reason ?? "failed"));
-          return { ok: false, reason: `deep-discover failed: ${discover.reason ?? "unknown"}`, discover, ocr };
+          return { ok: false, reason: `ante normalize failed: ${ante.reason ?? "unknown"}`, discover, ocr };
         }
-        this.endPhase("deep-discover", "ok", `+${discover.addedKeys?.length ?? 0} elements`);
+        this.startPhase("verify-pending");
+        const vp = await this.probePendingElements({});
+        this.endPhase(
+          "verify-pending",
+          vp.ok ? "ok" : "fail",
+          `verified=${vp.verified}/${vp.probed} failed=${vp.failed} skipped=${vp.skipped}${vp.reason ? ` · ${vp.reason}` : ""}`,
+        );
+        console.log(`[manual/auto-onboard] ${this.gameSlug}: verify-pending — probed=${vp.probed} verified=${vp.verified} failed=${vp.failed} skipped=${vp.skipped}`);
       }
       const ocr = await ocrPromise;
       if (!ocrSkipped) {
@@ -2209,7 +2267,10 @@ export class ManualSessionManager {
         verify = { ok: true, pruned: [], reDiscoveredTriggers: [], mirrored: [] };
       } else {
         this.startPhase("verify-registry");
-        verify = await this.verifyRegistry();
+        // reDiscover:false — QA discovers all levels manually; here we only
+        // prune legacy dups + mirror verified partner pairs, NOT re-discover
+        // missing expected-children.
+        verify = await this.verifyRegistry({ reDiscover: false });
         this.endPhase("verify-registry", "ok", `pruned=${verify.pruned.length} mirrored=${verify.mirrored.length}`);
         console.log(
           `[manual/auto-onboard] ${this.gameSlug}: verify — pruned=${verify.pruned.length} ` +
@@ -2515,9 +2576,15 @@ export class ManualSessionManager {
         const durationMs = runResult.result?.durationMs ?? 0;
         results.push({ caseId: c.id, status, durationMs, skipReason: runResult.result?.skipReason });
         if (status === "pass") passed++;
-        else if (status === "skip") skipped++;
+        // "inconclusive" (e.g. free-spin trigger never fired — RNG) is NOT a
+        // failure; group it with skipped so it never inflates the fail count.
+        else if (status === "skip" || status === "inconclusive") skipped++;
         else failed++;
-        const rowStatus: "pass" | "fail" | "skip" = status === "pass" ? "pass" : (status === "skip" ? "skip" : "fail");
+        const rowStatus: "pass" | "fail" | "skip" | "inconclusive" =
+          status === "pass" ? "pass"
+          : status === "skip" ? "skip"
+          : status === "inconclusive" ? "inconclusive"
+          : "fail";
         if (this.runAllProgress.rows[i]) {
           this.runAllProgress.rows[i]!.status = rowStatus;
           this.runAllProgress.rows[i]!.durationMs = durationMs;
@@ -2559,7 +2626,7 @@ export class ManualSessionManager {
    *
    *  No iterative re-audit — runs each phase once, bounded.
    */
-  async verifyRegistry(): Promise<{
+  async verifyRegistry(opts: { reDiscover?: boolean } = {}): Promise<{
     ok: boolean;
     pruned: string[];
     reDiscoveredTriggers: Array<{ trigger: string; addedKeys: string[]; reason?: string }>;
@@ -2577,13 +2644,18 @@ export class ManualSessionManager {
       for (const k of pruned) delete this.verifyState[k];
     }
 
-    // Phase 2 — find missing required & dynamic-prefix gaps.
+    // Phase 2 — re-discover missing required & dynamic-prefix children.
+    // Skipped when reDiscover === false (auto-onboard's verify-only mode: QA
+    // discovers all levels manually, so we must NOT auto-explore here).
     const audit = auditRegistry(this.registry as Record<string, any>);
-    const triggersToReDiscover = new Set<string>();
-    for (const m of audit.missingRequired) triggersToReDiscover.add(m.trigger);
-    for (const m of audit.missingDynamic) triggersToReDiscover.add(m.trigger);
-
     const reDiscoveredTriggers: Array<{ trigger: string; addedKeys: string[]; reason?: string }> = [];
+    const triggersToReDiscover = new Set<string>();
+    if (opts.reDiscover !== false) {
+      for (const m of audit.missingRequired) triggersToReDiscover.add(m.trigger);
+      for (const m of audit.missingDynamic) triggersToReDiscover.add(m.trigger);
+    } else if (audit.missingRequired.length + audit.missingDynamic.length > 0) {
+      console.log(`[manual/verify] reDiscover=false — NOT auto-discovering ${audit.missingRequired.length + audit.missingDynamic.length} missing expected-children (QA discovers manually)`);
+    }
     for (const trigger of Array.from(triggersToReDiscover)) {
       console.log(`[manual/verify] re-discovering ${trigger} children…`);
       try {
@@ -3157,6 +3229,29 @@ export class ManualSessionManager {
    * @returns onMain: final verdict; details: each layer's result; recovered:
    *          true if was off-main but successfully returned via recovery.
    */
+  /**
+   * Manual trigger for the runtime `ensure_ante_off` enforcement (dashboard
+   * button). Runs the SAME `ensureAnteOff` used in case-run preambles against
+   * the live session so a QA can eyeball whether it actually lands ante OFF
+   * (watch the embedded Chrome + the returned bet/toggle counts).
+   */
+  async testEnsureAnteOff(): Promise<{
+    ok: boolean;
+    wasOff?: boolean;
+    toggledCount?: number;
+    hasAnteButton: boolean;
+    reason?: string;
+  }> {
+    if (!this.session || !this.gameSlug || !this.registry) {
+      return { ok: false, hasAnteButton: false, reason: "no active session" };
+    }
+    if (!this.registry["anteButton"]) {
+      return { ok: true, hasAnteButton: false, reason: "registry has no anteButton (game has no ante feature)" };
+    }
+    const r = await ensureAnteOff(this.session.page, this.gameSlug, this.registry);
+    return { ok: r.ok, wasOff: r.wasOff, toggledCount: r.toggledCount, hasAnteButton: true, reason: r.reason };
+  }
+
   async ensureMainScreen(opts: {
     probe?: boolean;
     autoRecover?: boolean;
@@ -3428,6 +3523,122 @@ export class ManualSessionManager {
    * The 15-min default cap accommodates worst-case 100-spin autoplay or a
    * deep free-spin chain. Most recoveries finish in 5-30s.
    */
+  /**
+   * Registry-aware popup close: when a substate modal (buy-feature / autoplay /
+   * paytable / settings) survives the generic ESC+corner dismiss, look up its
+   * parent's explicit close affordance in the registry and click it. SAFETY:
+   * only ever clicks a CANCEL / NO / CLOSE / EXIT control — NEVER confirm / yes
+   * / buy (which would spend a real bet or purchase the feature). Maps the
+   * detected OCR keywords → likely parent trigger, then resolves `<parent>__
+   * <closeKey>` from the registry. Returns the key clicked, or null when no
+   * safe close affordance is registered.
+   */
+  private async tryRegistryCloseSubstate(matchedKeywords: string[]): Promise<string | null> {
+    if (!this.session || !this.registry) return null;
+    const kw = matchedKeywords.map((k) => k.toLowerCase());
+    const has = (...needles: string[]): boolean => needles.some((n) => kw.some((k) => k.includes(n)));
+
+    // Keyword → candidate parent trigger key(s), most-specific first.
+    const parents: string[] = [];
+    if (has("buy", "purchase")) parents.push("buyBonusButton", "buyFeatureButton", "buyButton");
+    if (has("number of spins", "loss limit", "autoplay", "auto play")) parents.push("autoButton");
+    if (has("paytable", "pay table")) parents.push("paytableButton");
+    if (has("history")) parents.push("historyButton", "menuButton");
+    if (has("setting")) parents.push("settingsButton", "menuButton");
+    if (has("menu")) parents.push("menuButton");
+    if (parents.length === 0) return null;
+
+    // SAFE close affordances, in priority order: cancel/no DECLINE the action,
+    // close/exit just DISMISS. NEVER confirm/yes/buy (commits the purchase/spin).
+    const CLOSE_SUFFIXES = ["__cancelButton", "__noButton", "__closeButton", "__exitButton", "__closePaytableButton"];
+    const reg = this.registry as Record<string, UiElement | undefined>;
+    for (const parent of parents) {
+      for (const suf of CLOSE_SUFFIXES) {
+        const key = `${parent}${suf}`;
+        const el = reg[key];
+        if (el && typeof el.x === "number" && typeof el.y === "number") {
+          try {
+            await this.session.page.mouse.click(el.x, el.y);
+            await this.session.page.waitForTimeout(800);
+            return key;
+          } catch {
+            return null;
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
+   * AI-assisted close: when the deterministic registry lookup can't decide which
+   * control closes the stuck popup, send the CURRENT screenshot + the registry's
+   * SAFE close controls (cancel / close / exit — coords included) to the AI and
+   * let it pick the exact one matching the visible popup. SAFETY: the candidate
+   * set sent to the AI is pre-filtered to close-type controls only (confirm /
+   * yes / buy / spin / start are never candidates), and the AI's choice is
+   * re-validated against that set before clicking — so the AI can NEVER cause a
+   * purchase/spin even if it mis-picks. Returns the clicked key, or null.
+   */
+  private async aiPickCloseFromRegistry(matchedKeywords: string[]): Promise<string | null> {
+    if (!this.session || !this.registry) return null;
+    const reg = this.registry as Record<string, UiElement | undefined>;
+    // SAFE close candidates only — never confirm/yes/buy/spin/start/gamble.
+    const SAFE = /(cancel|close|exit|dismiss|closePaytable)Button$/i;
+    const UNSAFE = /(confirm|yes|buy|purchase|spin|start|gamble|double|collect|ok)/i;
+    const candidates = Object.entries(reg)
+      .filter(([k, el]) => el && typeof el.x === "number" && typeof el.y === "number" && SAFE.test(k) && !UNSAFE.test(k))
+      .map(([k, el]) => ({ key: k, x: el!.x, y: el!.y }));
+    if (candidates.length === 0) return null;
+
+    let pngBuf: Buffer;
+    try {
+      pngBuf = await this.session.page.screenshot({ type: "png" });
+    } catch {
+      return null;
+    }
+    const list = candidates.map((c) => `- ${c.key} @ (${c.x},${c.y})`).join("\n");
+    const { askClaude, extractJsonFromText } = await import("../../ai/claude.js");
+    let raw: string;
+    try {
+      raw = await askClaude({
+        label: "force-recover/close-picker",
+        system:
+          "You help dismiss a stuck modal popup in a slot game so the main screen returns. " +
+          "You are given a screenshot and a list of REGISTERED close-type controls (cancel/close/exit) with coords. " +
+          "Pick the ONE control that closes the popup currently visible in the screenshot. " +
+          "Return STRICT JSON only: {\"key\": \"<one of the listed keys>\" | null, \"reason\": \"<short>\"}. " +
+          "Rules: only return a key from the provided list, or null if NONE of them closes the visible popup. " +
+          "NEVER invent coords. These are all safe dismiss controls — none confirm a purchase.",
+        content: [
+          { type: "image", source: { type: "base64", media_type: "image/png", data: pngBuf.toString("base64") } },
+          { type: "text", text: `Stuck popup keywords: [${matchedKeywords.join(", ")}].\nRegistered close-type controls:\n${list}\n\nWhich key closes the popup in the screenshot? JSON only.` },
+        ],
+        maxTurns: 1,
+        timeoutMs: 60_000,
+      });
+    } catch (err) {
+      console.warn(`[force-recover] AI close-picker failed: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    }
+    const parsed = extractJsonFromText<{ key?: string | null; reason?: string }>(raw);
+    const picked = parsed?.key ?? null;
+    if (!picked) return null;
+    // Re-validate: the AI's choice MUST be one of the safe candidates we sent.
+    const match = candidates.find((c) => c.key === picked);
+    if (!match) {
+      console.warn(`[force-recover] AI picked "${picked}" which is NOT a safe candidate — ignoring`);
+      return null;
+    }
+    try {
+      await this.session.page.mouse.click(match.x, match.y);
+      await this.session.page.waitForTimeout(800);
+      return match.key;
+    } catch {
+      return null;
+    }
+  }
+
   private async forceRecoverToMain(opts: { maxWaitMs?: number } = {}): Promise<{ onMain: boolean; reason?: string; elapsedMs: number }> {
     if (!this.session) return { onMain: false, reason: "no session", elapsedMs: 0 };
     const page = this.session.page;
@@ -3448,6 +3659,9 @@ export class ManualSessionManager {
     // progresses.
     let prevSignature = "";
     let unchangedCount = 0;
+    // Signatures we've already tried to close via the registry close affordance
+    // (one attempt per distinct popup signature — don't spam clicks).
+    const triedRegistryClose = new Set<string>();
     while (Date.now() - start < maxWaitMs) {
       attempt++;
       // Phase 0: close any extra browser tabs the verify-click agent may have
@@ -3528,6 +3742,27 @@ export class ManualSessionManager {
       // Non-FS popup: check whether we're making progress (signature changes
       // each iteration) or stuck (same signature repeating).
       const signature = [...det.matchedKeywords].sort().join(",");
+      // Registry-aware close: a substate modal (buy-feature / autoplay /
+      // paytable / settings) won't yield to ESC+corner. Look up its parent's
+      // explicit CANCEL/CLOSE control in the registry and click it — ONCE per
+      // signature. Never clicks confirm/buy (see tryRegistryCloseSubstate).
+      if (!triedRegistryClose.has(signature)) {
+        triedRegistryClose.add(signature);
+        // 1) Deterministic: keyword → parent → cancel/close (free, instant).
+        let closedKey = await this.tryRegistryCloseSubstate(det.matchedKeywords);
+        // 2) AI fallback: send screenshot + the registry's safe close controls
+        //    and let the AI pick the exact one for the visible popup. Only runs
+        //    when the deterministic guess found nothing.
+        if (!closedKey) {
+          closedKey = await this.aiPickCloseFromRegistry(det.matchedKeywords);
+          if (closedKey) console.log(`[force-recover] attempt ${attempt}: AI picked close control ${closedKey} for popup [${signature}]`);
+        }
+        if (closedKey) {
+          console.log(`[force-recover] attempt ${attempt}: clicked close affordance ${closedKey} for popup [${signature}] — re-checking main`);
+          await page.waitForTimeout(800);
+          continue; // re-loop → Phase 3 re-detects; popup likely gone
+        }
+      }
       if (signature === prevSignature) {
         unchangedCount++;
         if (unchangedCount >= 6) {
@@ -4142,6 +4377,38 @@ CHECK_CODE RULES
   }
 
   /**
+   * #6 — Apply the reusable standard test-case template set to this game and
+   * rebind setup→actions against the game's registry. Lets a tester copy a
+   * base set of cases onto any game from the dashboard instead of AI-generating
+   * per game. merge (default) keeps existing AI/manual cases; replace swaps the
+   * catalog's cases for the template set.
+   */
+  async applyTemplates(
+    slugOverride?: string,
+    mode: "merge" | "replace" = "merge",
+  ): Promise<{ ok: boolean; applied?: string[]; skipped?: Array<{ id: string; reason: string }>; bound?: number; reason?: string }> {
+    const slug = slugOverride ?? this.gameSlug;
+    if (!slug) return { ok: false, reason: "gameSlug required (no active session or override)" };
+    const { applyTemplateSet } = await import("../step7-testcase-gen/case-templates.js");
+    const result = await applyTemplateSet(slug, { mode });
+
+    const reg = (this.gameSlug === slug && this.registry) ? this.registry : await uiRegistry.load(slug);
+    if (!reg) {
+      return {
+        ok: true,
+        applied: result.applied.map((c) => c.id),
+        skipped: result.skipped,
+        bound: 0,
+        reason: "cases written but no registry — run discovery, then retranslate to bind actions",
+      };
+    }
+    const { translateAllCases } = await import("../step7-testcase-gen/case-action-translator.js");
+    const cache = await translateAllCases(slug, result.applied, reg);
+    const bound = result.applied.filter((c) => cache.cases[c.id] && !cache.cases[c.id]!.skipReason).length;
+    return { ok: true, applied: result.applied.map((c) => c.id), skipped: result.skipped, bound };
+  }
+
+  /**
    * Return the cached translated actions for a case so the dashboard editor
    * can render them. Returns null actions when the case isn't in the cache
    * yet (translation never ran or was reset). Caller decides UX.
@@ -4380,7 +4647,20 @@ CHECK_CODE RULES
     // tolerate these expected variations unless the catalog explicitly opts
     // out by setting `allowed_interruptions: []`.
     const spinActionCount = translated.actions.filter((a) => a.kind === "spin").length;
-    const DEFAULT_INTERRUPTIONS = ["FREE_SPIN_TRIGGERED", "BIG_WIN_POPUP", "BONUS_POPUP"];
+    // Includes the dismissable popup states (autoplay / paytable / history /
+    // settings / buy-feature) — each has a dismiss handler, so a STRAY popup
+    // during a generic spin run is auto-dismissed and tolerated instead of
+    // failing the State signal as an "unexpected non-MAIN transition".
+    const DEFAULT_INTERRUPTIONS = [
+      "FREE_SPIN_TRIGGERED",
+      "BIG_WIN_POPUP",
+      "BONUS_POPUP",
+      "AUTOPLAY_POPUP",
+      "PAYTABLE_POPUP",
+      "HISTORY_POPUP",
+      "SETTINGS_POPUP",
+      "BUY_FEATURE_POPUP",
+    ];
     let resolvedInterruptions = tc.allowed_interruptions;
     if (resolvedInterruptions === undefined && spinActionCount >= 2) {
       resolvedInterruptions = DEFAULT_INTERRUPTIONS;

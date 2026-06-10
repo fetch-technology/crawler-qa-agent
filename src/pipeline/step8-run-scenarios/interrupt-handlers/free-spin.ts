@@ -25,7 +25,10 @@ export const freeSpinHandler: InterruptHandler = async (ctx: HandlerContext): Pr
 
   // Step 2: wait for chain to finish — poll OCR every 3s, look for absence
   // of FREE SPIN keyword in screen text. Hard cap from timing config.
-  const deadline = Math.min(start + ctx.timing.hardCapMs, start + 3 * 60 * 1000); // never wait >3 min
+  // #4b: previously this was additionally clamped to 3 min, which truncated
+  // long / retriggered bonuses. Respect the configured hardCapMs (default
+  // 5 min) so retrigger-heavy chains can play out fully.
+  const deadline = start + ctx.timing.hardCapMs;
   while (Date.now() < deadline) {
     await ctx.page.waitForTimeout(3000);
     try {

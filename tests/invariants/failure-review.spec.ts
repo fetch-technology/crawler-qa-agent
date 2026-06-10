@@ -73,6 +73,39 @@ test("buildEvidence shapes CaseResult into expected fields", () => {
   expect(ev.actionPlan.length).toBe(3);
 });
 
+test("buildEvidence: forwards FULL per-spin breakdown (not just lastSpin)", () => {
+  const spins = [
+    { bet: 0.4, win: 0, balanceBefore: 100, balanceAfter: 99.6, state: "NORMAL", roundId: "r1" },
+    { bet: 0.4, win: 2, balanceBefore: 99.6, balanceAfter: 101.2, state: "NORMAL", roundId: "r2" },
+    { bet: 0, win: 5, balanceBefore: 101.2, balanceAfter: 106.2, state: "FREE_SPIN", roundId: "r3", isFreeSpin: true },
+  ];
+  const ev = buildEvidence({
+    result: fakeResult({ spinsCount: 3, spins, spin: spins[2] }),
+    knowledge: fakeKnowledge(),
+    actionPlan: [{ kind: "spin" }],
+  });
+  expect(ev.perSpin?.length).toBe(3);
+  expect(ev.perSpin![0]).toMatchObject({ idx: 1, bet: 0.4, win: 0, balanceBefore: 100, roundId: "r1" });
+  expect(ev.perSpin![2]).toMatchObject({ idx: 3, isFreeSpin: true, state: "FREE_SPIN" });
+  expect(ev.perSpinTruncated).toBe(false);
+});
+
+test("buildEvidence: per-spin capped (head+tail) when > 100 rounds", () => {
+  const spins = Array.from({ length: 130 }, (_, i) => ({
+    bet: 0.4, win: 0, balanceBefore: 100 - i * 0.4, balanceAfter: 100 - (i + 1) * 0.4,
+    state: "NORMAL", roundId: `r${i + 1}`,
+  }));
+  const ev = buildEvidence({
+    result: fakeResult({ spinsCount: 130, spins }),
+    knowledge: fakeKnowledge(),
+    actionPlan: [{ kind: "spin" }],
+  });
+  expect(ev.perSpinTruncated).toBe(true);
+  expect(ev.perSpin!.length).toBe(100);
+  // last kept row is the true final round (idx 130, roundId r130)
+  expect(ev.perSpin!.at(-1)).toMatchObject({ idx: 130, roundId: "r130" });
+});
+
 test("buildEvidence: knowledge fields surface correctly", () => {
   const ev = buildEvidence({
     result: fakeResult(),

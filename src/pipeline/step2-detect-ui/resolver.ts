@@ -52,8 +52,15 @@ function mergeSuggestions(
 ): Array<{ key: string; x: number; y: number; confidence: number; note?: string }> {
   const added: Array<{ key: string; x: number; y: number; confidence: number; note?: string }> = [];
   for (const s of suggestions) {
-    const key = sanitizeKey(s.label);
-    if (!key) continue;
+    const sanitized = sanitizeKey(s.label);
+    if (!sanitized) continue;
+    // Remap known synonyms onto their canonical key so downstream logic that
+    // looks up exact canonical names engages. The ante/bet-boost feature is
+    // reported by the AI under many labels (ante_bet, double_chance, bet_plus
+    // boost, +25%, 2x bet …); without this it lands under a non-canonical key
+    // and ante-normalize / ensureAnteOff / maybeAntePreamble (all keyed off
+    // registry["anteButton"]) silently skip — the root cause of issue #5.
+    const key = canonicalizeSuggestionKey(sanitized);
     if (uiMap[key]) continue; // don't overwrite expected / already-added
     const x = Math.round(s.x);
     const y = Math.round(s.y);
@@ -72,6 +79,27 @@ function mergeSuggestions(
     added.push({ key, x, y, confidence: s.confidence ?? 0.5, note: s.note });
   }
   return added;
+}
+
+/** Map a sanitized AI-suggestion key onto a canonical registry key when it is
+ *  a recognized synonym. Currently covers the ante / bet-boost family; extend
+ *  as new synonym clusters surface. Returns the input unchanged when no alias
+ *  matches. */
+function canonicalizeSuggestionKey(sanitizedKey: string): string {
+  const lower = sanitizedKey.toLowerCase();
+  // ante / bet+ / double-chance / bet-boost — all the same "raise bet to boost
+  // free-spin trigger chance" toggle.
+  if (
+    /(^|_)ante(_|$)/.test(lower) ||
+    lower.includes("double_chance") ||
+    lower.includes("bet_plus") ||
+    lower.includes("bet_boost") ||
+    lower.includes("betboost") ||
+    lower.includes("bet_boost_toggle")
+  ) {
+    return "anteButton";
+  }
+  return sanitizedKey;
 }
 
 function sanitizeKey(label: string): string | null {
