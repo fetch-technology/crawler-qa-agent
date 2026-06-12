@@ -25,7 +25,7 @@ import { executeCase, type CaseResult } from "../step8-run-scenarios/case-execut
 import "../step6-build-model/index.js";
 import { createParserForGame } from "../step6-build-model/parser-factory.js";
 import { tryLoadProviderSpec } from "../step6-build-model/providers/spec-loader.js";
-import { learnParserOverlayWithAi } from "../step8-run-scenarios/spec-learner.js";
+import { learnParserOverlayWithAi, detectFsCreditTiming } from "../step8-run-scenarios/spec-learner.js";
 import { aiProposeWinItemization } from "../../ai/itemization-classifier.js";
 import type { ReplaySample } from "../step8-run-scenarios/spec-replay-gate.js";
 import { parserCache } from "../registry/parser-cache.js";
@@ -380,6 +380,8 @@ function cropPngBufferSync(
 
 export class ManualSessionManager {
   private session: BrowserSession | null = null;
+  /** window.open tabs observed on this session's context (newest last). */
+  private externalTabs: import("playwright").Page[] = [];
   private gameSlug: string | null = null;
   private gameUrl: string | null = null;
   private startedAt: string | null = null;
@@ -518,6 +520,7 @@ export class ManualSessionManager {
     this.startedAt = new Date().toISOString();
     this.lastBalance = null;
     this.attachBalanceTracker();
+    this.attachExternalTabTracker();
 
     const crawled = await crawl(this.session.page, { gameUrl: url });
     this.gameSlug = crawled.gameSlug;
@@ -676,7 +679,35 @@ export class ManualSessionManager {
     const el = this.registry[uiKey];
     if (!el) return { ok: false, clickedAt: null, error: `uiKey ${uiKey} not in registry` };
     try {
+      // Elements discovered on an EXTERNAL TAB: their coords are tab-relative
+      // — clicking the game page hits whatever sits at those coords there.
+      // Route to the most recent OPEN tab; without one, fail with guidance
+      // (the parent trigger must be clicked first to open the tab).
+      if (el.externalPage) {
+        const tab = [...this.externalTabs].reverse().find((p) => !p.isClosed());
+        if (!tab) {
+          const parent = uiKey.includes("__") ? uiKey.slice(0, uiKey.lastIndexOf("__")) : null;
+          return {
+            ok: false, clickedAt: null,
+            error: `"${uiKey}" lives on an external tab but no tab is open — Test/click its parent trigger first${parent ? ` (${parent})` : ""} to open the tab, then retry`,
+          };
+        }
+        await tab.mouse.click(el.x, el.y);
+        console.log(`[manual] click ${uiKey} (${el.x},${el.y}) [external tab]`);
+        return { ok: true, clickedAt: { x: el.x, y: el.y } };
+      }
+      // Tab-opening trigger (direct children are externalPage): canvas games
+      // swallow the first programmatic click — double-click so ONE Test press
+      // opens the tab (mirrors the runtime executor's gesture).
+      const prefix = `${uiKey}__`;
+      const opensTab = Object.entries(this.registry).some(([k, v]) =>
+        k.startsWith(prefix) && !k.slice(prefix.length).includes("__") && v?.externalPage === true);
       await this.session.page.mouse.click(el.x, el.y);
+      if (opensTab) {
+        await this.session.page.waitForTimeout(150);
+        await this.session.page.mouse.click(el.x, el.y);
+        console.log(`[manual] click ${uiKey} ×2 (tab-opening trigger)`);
+      }
       return { ok: true, clickedAt: { x: el.x, y: el.y } };
     } catch (err) {
       return { ok: false, clickedAt: null, error: err instanceof Error ? err.message : String(err) };
@@ -836,24 +867,101 @@ export class ManualSessionManager {
     for (let i = 1; i <= parts.length; i++) ancestors.push(parts.slice(0, i).join("__"));
 
     const clickedPath: Array<{ key: string; x: number; y: number }> = [];
-    for (const key of ancestors) {
-      const el = this.registry[key];
-      if (!el) {
-        return { ok: false, reason: `ancestor missing in registry: ${key} (need to discover + verify it first)`, clickedPath };
+    // External-tab detection (same mechanism graph-explorer uses): the FINAL
+    // trigger may window.open a separate browser tab (e.g. historyButton →
+    // external game-history page). Listen on the context before that click;
+    // when a tab appears, discovery runs ON THE TAB and children are flagged
+    // `externalPage: true` so runtime clicks route there.
+    const tabSlot: Array<import("playwright").Page> = [];
+    const onNewPage = (p: import("playwright").Page): void => {
+      if (tabSlot.length === 0) tabSlot.push(p);
+    };
+    const pageCtx = this.session.page.context();
+    try {
+      // EFFECT-VERIFIED click for EVERY ancestor: canvas games reliably
+      // swallow the FIRST programmatic click after a popup opens (QA
+      // observation: 2nd click registers). A swallowed MIDDLE click would
+      // leave later clicks landing on the wrong screen, so each step must
+      // verify its effect before the walk continues:
+      //   - final step: a new TAB counts as the effect (plus pixel change)
+      //   - any step: on-page change ABOVE THE STATE'S OWN IDLE NOISE counts
+      //     (slot canvases animate constantly — a fixed threshold read
+      //     "changed" on every frame pair and killed the retries)
+      // Attempt 1 stays single (a double would toggle a popup open→shut);
+      // attempt ≥2 adds a quick second click since single has PROVEN inert.
+      const { pixelDiff, decodePng } = await import("../utils/pixel-diff/diff.js");
+      const shot = async (): Promise<ReturnType<typeof decodePng> | null> => {
+        try { return decodePng(await this.session!.page.screenshot({ type: "png" })); } catch { return null; }
+      };
+      for (let i = 0; i < ancestors.length; i++) {
+        const key = ancestors[i]!;
+        const isLast = i === ancestors.length - 1;
+        const el = this.registry[key];
+        if (!el) {
+          return { ok: false, reason: `ancestor missing in registry: ${key} (need to discover + verify it first)`, clickedPath };
+        }
+        if (isLast) pageCtx.on("page", onNewPage);
+        try {
+          const n1 = await shot();
+          await this.session.page.waitForTimeout(350);
+          const n2 = await shot();
+          let noiseRatio = 0;
+          if (n1 && n2) { try { noiseRatio = pixelDiff(n1, n2).ratio; } catch { /* size mismatch — keep 0 */ } }
+          const changedThreshold = Math.min(0.5, Math.max(0.03, noiseRatio * 2.5));
+          console.log(`[manual/discover] click ${key}: idle noise=${(noiseRatio * 100).toFixed(1)}% → change threshold=${(changedThreshold * 100).toFixed(1)}%`);
+          let landed = false;
+          for (let attempt = 1; attempt <= 3; attempt++) {
+            const before = await shot();
+            await this.session.page.mouse.click(el.x, el.y);
+            if (attempt >= 2) {
+              await this.session.page.waitForTimeout(150);
+              await this.session.page.mouse.click(el.x, el.y);
+            }
+            if (attempt === 1) clickedPath.push({ key, x: el.x, y: el.y });
+            await this.session.page.waitForTimeout(1500);
+            if (isLast && tabSlot[0]) { landed = true; break; }
+            if (!before) { landed = true; break; } // can't verify — proceed
+            let changed = false;
+            try {
+              const after = await shot();
+              if (after) changed = pixelDiff(before, after).ratio > changedThreshold;
+            } catch { changed = true; }
+            if (changed) {
+              landed = true;
+              if (attempt > 1) console.log(`[manual/discover] click ${key}: landed on attempt ${attempt}/3`);
+              break;
+            }
+            if (attempt < 3) console.log(`[manual/discover] click ${key} attempt ${attempt}/3 had no effect (no tab, change ≤ noise) — re-clicking`);
+          }
+          if (!landed) {
+            console.warn(`[manual/discover] click ${key}: no observable effect after 3 attempts — continuing, but the walk may be off-state`);
+          }
+        } catch (err) {
+          return { ok: false, reason: `click on ${key} (${el.x},${el.y}) failed: ${err instanceof Error ? err.message : String(err)}`, clickedPath };
+        }
       }
-      try {
-        await this.session.page.mouse.click(el.x, el.y);
-        clickedPath.push({ key, x: el.x, y: el.y });
-      } catch (err) {
-        return { ok: false, reason: `click on ${key} (${el.x},${el.y}) failed: ${err instanceof Error ? err.message : String(err)}`, clickedPath };
-      }
-      // Wait for popup to animate in + settle before next click or discovery.
-      await this.session.page.waitForTimeout(1500);
-    }
 
-    // 3. AI-discover elements at the final state.
-    const discovered = await this.discoverSubState(stateLabel);
-    return { ...discovered, clickedPath };
+      // 3. AI-discover elements at the final state — on the external tab when
+      //    the trigger opened one, else on the game page as before.
+      const tab = tabSlot[0];
+      if (tab && !tab.isClosed()) {
+        console.log(`[manual/discover] ${triggerKey} opened an external tab — discovering its contents (children will be externalPage:true)`);
+        await tab.waitForLoadState("domcontentloaded", { timeout: 8000 }).catch(() => undefined);
+        await tab.waitForTimeout(1000); // let the page paint past DOM-ready
+        const discovered = await this.discoverSubState(stateLabel, { sourcePage: tab, externalPage: true });
+        try { await tab.close(); } catch { /* already closed */ }
+        return { ...discovered, clickedPath };
+      }
+      const discovered = await this.discoverSubState(stateLabel);
+      return { ...discovered, clickedPath };
+    } finally {
+      pageCtx.off("page", onNewPage);
+      // Never leak a tab on early-return/error paths.
+      const leftover = tabSlot[0];
+      if (leftover && !leftover.isClosed()) {
+        try { await leftover.close(); } catch { /* already closed */ }
+      }
+    }
   }
 
   /**
@@ -865,7 +973,18 @@ export class ManualSessionManager {
    *     (within 30px) — AI sometimes still sees main controls faintly through
    *     dimmed background
    */
-  async discoverSubState(stateLabel: string): Promise<{ ok: boolean; addedKeys?: string[]; reason?: string }> {
+  async discoverSubState(
+    stateLabel: string,
+    opts: {
+      /** Discover on a DIFFERENT page than the game page — set when the
+       *  trigger opened an external browser tab (e.g. history). Screenshot,
+       *  AI vision and coords all come from this page. */
+      sourcePage?: import("playwright").Page;
+      /** Mark added children `externalPage: true` so runtime clicks route to
+       *  the captured tab instead of the game page. */
+      externalPage?: boolean;
+    } = {},
+  ): Promise<{ ok: boolean; addedKeys?: string[]; reason?: string }> {
     if (!this.session || !this.gameSlug || !this.registry) return { ok: false, reason: "no active session" };
     const safeLabel = stateLabel.trim().replace(/[^a-zA-Z0-9_]+/g, "_");
     if (!safeLabel) return { ok: false, reason: "stateLabel required (alphanumeric)" };
@@ -899,7 +1018,7 @@ export class ManualSessionManager {
       if (matched?.discoverHint) {
         console.log(`[manual/discover] applied discover-hint for "${safeLabel}" (${matched.discoverHint.length} chars)`);
       }
-      const result = await aiDiscoverState(this.session.page, debugDir, Date.now(), prompt);
+      const result = await aiDiscoverState(opts.sourcePage ?? this.session.page, debugDir, Date.now(), prompt);
       if (result.elements.length === 0) {
         return { ok: false, reason: "AI returned 0 elements — popup may not be visible" };
       }
@@ -908,7 +1027,12 @@ export class ManualSessionManager {
       // visible THROUGH the dimmed popup background. Deterministic safety net
       // on top of the prompt's "DO NOT include main-game buttons behind the
       // popup" instruction (which AI doesn't always honor).
-      const filtered = filterMainOverlap(result.elements, this.registry);
+      // SKIP for external tabs: their coords live on a DIFFERENT page, so a
+      // coincidental overlap with a main-game coord is meaningless and would
+      // wrongly drop real tab elements.
+      const filtered = opts.externalPage
+        ? { kept: result.elements, dropped: [] as ReturnType<typeof filterMainOverlap>["dropped"] }
+        : filterMainOverlap(result.elements, this.registry);
       if (filtered.dropped.length > 0) {
         const sample = filtered.dropped.slice(0, 5).map((d) => `${d.key}@(${d.x},${d.y})→${d.overlapsMainKey}`).join("; ");
         console.log(`[manual/discover] dropped ${filtered.dropped.length}/${result.elements.length} main-overlap false positives: ${sample}${filtered.dropped.length > 5 ? "…" : ""}`);
@@ -981,6 +1105,9 @@ export class ManualSessionManager {
           confidence: e.confidence ?? 0.8,
           detectedAt: now,
           status: "pending",
+          // Children discovered on an external tab: runtime clicks must route
+          // to the captured tab, not the game page (case-executor honors this).
+          ...(opts.externalPage ? { externalPage: true } : {}),
         };
         this.registry[namespacedKey] = el;
         this.verifyState[namespacedKey] = "pending";
@@ -3875,6 +4002,7 @@ export class ManualSessionManager {
     this.skippedMainKeys = await this.loadSkippedMainKeys(gameSlug);
     this.lastBalance = null;
     this.attachBalanceTracker();
+    this.attachExternalTabTracker();
     // Restore verify state from persisted status field
     this.verifyState = {};
     for (const [k, el] of Object.entries(reg)) {
@@ -4961,12 +5089,45 @@ CHECK_CODE RULES
     }
     actions.push(...level1Batch());
     if (higherBet != null && betMinus && betPlus) {
+      // STOP leftover autoplay before touching the bet UI. Waiting it out has
+      // failed twice in production:
+      //   - the end-of-FS CELEBRATION pauses autoplay >10s → quiet-waits exit
+      //     while ~59 rounds are still pending behind the popup, and
+      //   - a 100-spin batch outlives any reasonable wait cap, then overlaps
+      //     the whole level-2 phase (set_bet swallowed, coin never changes).
+      // Deterministic instead: dismiss the celebration first (a PAUSED
+      // autoplay emits no spins, so the stop action can't see it), then
+      // actively STOP whatever resumes (autoButton = stop control while
+      // running; clicked only when spins are observed arriving).
+      actions.push({
+        kind: "wait_until_state",
+        state: "MAIN",
+        maxMs: 60_000,
+        reason: "dismiss end-of-feature celebration (a paused autoplay emits no spins)",
+      });
+      actions.push({ kind: "stop_autoplay_if_running", reason: "stop leftover level-1 autoplay before changing bet" });
+      actions.push({
+        kind: "wait_until_state",
+        state: "MAIN",
+        maxMs: 20_000,
+        reason: "ensure main screen before bet UI",
+      });
       actions.push({ kind: "set_bet_to_value", value: higherBet, reason: "calibration: second coin level" });
       actions.push({ kind: "wait_ms", ms: 800 });
       actions.push(...discreteBatch()); // discrete (not autoplay) — see level1Batch note
     } else if (higherBet != null) {
       console.warn(`[calibrate-payout] ${this.gameSlug}: second-level calibration skipped (needs both betMinus + betPlus in registry)`);
     }
+    // Leave the session IDLE: an autoplay batch that survived to the end of
+    // the action list keeps spinning AFTER the case returns (listeners
+    // detached → invisible), burning balance and polluting the next phase.
+    actions.push({
+      kind: "wait_until_state",
+      state: "MAIN",
+      maxMs: 30_000,
+      reason: "dismiss any trailing celebration before final autoplay stop",
+    });
+    actions.push({ kind: "stop_autoplay_if_running", reason: "leave the session idle — no leftover autoplay after calibration" });
 
     let caseResult: Awaited<ReturnType<typeof executeCase>> | null = null;
     try {
@@ -5074,9 +5235,43 @@ CHECK_CODE RULES
           `${learned.aiUsed ? ` — AI tail used (${learned.aiReasoning ?? ""})` : ""}` +
           `${learned.needsAi ? " — still unrecognized (manual review)" : ""}${learned.needMoreSamples ? " — needMoreSamples" : ""}`,
         );
+      } else if (learnerSamples.length > 0) {
+        // No provider spec on disk → the spec-driven ITEMIZATION learner can't
+        // run (the legacy parser itemizes natively anyway). But FS credit
+        // timing only needs A parser — learn it from the game's ACTUAL parser
+        // so deferred-credit games get verified instead of INCONCLUSIVE.
+        const parser = await createParserForGame(this.gameSlug);
+        const t = detectFsCreditTiming(parser, learnerSamples);
+        if (t.value != null) {
+          const overlay = {
+            schemaVersion: 1 as const,
+            basedOnProvider: "(legacy parser — no provider spec)",
+            // NOTE: no winItemization aspect — absent means "not overridden",
+            // the runtime treats native itemization as verified.
+            fsCreditTiming: { value: t.value, trusted: t.trusted },
+            validation: { validatedAt: new Date().toISOString(), samplesReplayed: learnerSamples.length },
+          };
+          const overlayFile = path.join(dirForGame(this.gameSlug), "parser-overlay.json");
+          await writeFile(overlayFile, JSON.stringify(overlay, null, 2) + "\n", "utf8");
+          console.log(`[calibrate-payout] ${this.gameSlug}: parser-overlay → fsCreditTiming=${t.value} trusted=${t.trusted} (${t.reason})`);
+        } else {
+          console.log(`[calibrate-payout] ${this.gameSlug}: fsCreditTiming not learned — ${t.reason}`);
+        }
       }
     } catch (err) {
       console.warn(`[calibrate-payout] ${this.gameSlug}: parser-overlay learn failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    // Surface WHY the model can't be trusted when only one coin level was
+    // captured (level-2 didn't change the coin / was skipped) — QA previously
+    // only saw `trusted=false` with no cause. Fail-loud, no silent 1-coin runs.
+    const extraNotes: string[] = [];
+    if (distinctCoins.length < 2) {
+      extraNotes.push(
+        higherBet == null
+          ? `⚠ single coin level (${distinctCoins.join(", ") || "?"}): level-2 was SKIPPED — no bet chips in registry and no usable betLadder in gameSpec`
+          : `⚠ single coin level (${distinctCoins.join(", ") || "?"}): level-2 ran but the coin never changed — set_bet_to_value(${higherBet}) did not land (check the chip-click verify warnings in the log). Model stays UNTRUSTED (needs ≥2 coin levels).`,
+      );
     }
 
     return {
@@ -5087,7 +5282,7 @@ CHECK_CODE RULES
       combosMatched: model.calibration.combosMatched,
       paytableAgreement: model.calibration.paytableAgreement,
       symbolsModeled: Object.keys(model.symbolCurves).length,
-      notes: model.notes,
+      notes: [...(model.notes ?? []), ...extraNotes],
     };
   }
 
@@ -5324,6 +5519,19 @@ CHECK_CODE RULES
    * `lastBalance`. Called once at session start; persists across reloads
    * because the BrowserContext is shared. Fail-safe: errors swallowed.
    */
+  /** Session-level external-tab tracker — window.open tabs (e.g. game
+   *  history) land here so manual flows (Test click on externalPage elements)
+   *  can route to them, mirroring the case-executor's per-case tracking.
+   *  Closed tabs are pruned lazily by the consumers (isClosed checks). */
+  private attachExternalTabTracker(): void {
+    if (!this.session) return;
+    this.externalTabs = [];
+    this.session.page.context().on("page", (p) => {
+      this.externalTabs.push(p);
+      console.log(`[manual] external tab opened — ${this.externalTabs.filter((t) => !t.isClosed()).length} open`);
+    });
+  }
+
   private attachBalanceTracker(): void {
     if (!this.session) return;
     this.session.page.on("response", async (res) => {

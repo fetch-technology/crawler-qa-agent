@@ -29,6 +29,13 @@ export type BalanceSignalsInput = {
   networkBalance?: number;
   /** Optional per-case requirement spec (else defaults). */
   requirement?: EvidenceRequirement;
+  /** When THIS game credits FS wins (learned per-game, parser-overlay aspect).
+   *  "immediate" → each FS round credits as it resolves (bb + win == ba).
+   *  "deferred"  → balance stays flat mid-chain; total credited at chain end.
+   *  undefined/null → NOT LEARNED: an FS frame that fails the immediate model
+   *  is INCONCLUSIVE (can't tell deferred-credit from a real bug), never a
+   *  hard FAIL. Games differ — never assume one model. */
+  fsCreditTiming?: import("../../step6-build-model/providers/spec-types.js").FsCreditTiming | null;
 };
 
 /**
@@ -46,9 +53,6 @@ export function evaluateBalanceMultiSignal(
   input: BalanceSignalsInput,
 ): ConfidentAssertionResult {
   const { spin, ocrBalance, historyBalance, networkBalance } = input;
-  const expected = spin.isFreeSpin
-    ? (spin.balanceBefore ?? 0) + spin.win
-    : (spin.balanceBefore ?? 0) - spin.bet + spin.win;
 
   // Skip case — can't evaluate without balanceBefore
   if (spin.balanceBefore === null) {
@@ -63,7 +67,78 @@ export function evaluateBalanceMultiSignal(
     };
   }
 
+  // BUY round (game-agnostic SIGNATURE, not per-game hardcode): a non-FS round
+  // that grants a feature (fs counter / bonus) while deducting MORE than the
+  // bet is a feature purchase — the wallet moved by the BUY COST, not the bet.
+  // `bb − bet + win` is the wrong model for it; per-round conservation can't
+  // be checked against bet (and validating against the drop itself is a
+  // tautology). The buy-cost-ratio catalog assertion + chain-end totals cover
+  // it — report honestly instead of false-failing round 1 of every buy case.
+  const drop = (spin.balanceBefore ?? 0) - spin.balanceAfter;
+  const grantsFeature = (spin.freeSpinsRemaining ?? 0) > 0 || spin.hasBonus === true;
+  const isBuyRound = !spin.isFreeSpin && grantsFeature && spin.bet > 0 && drop > spin.bet * 1.5;
+  if (isBuyRound) {
+    return {
+      id: "balance-conservation",
+      description: "Balance conservation (buy round — deduction is the purchase cost, not the bet)",
+      pass: true,
+      outcome: "INCONCLUSIVE",
+      confidence: 0,
+      signals: [],
+      detail: `feature-buy signature: deduction ${drop.toFixed(2)} ≈ ${(drop / spin.bet).toFixed(1)}× bet with feature granted — per-round bet conservation does not apply; verified instead by buy-cost-ratio + chain-end totals`,
+    };
+  }
+
+  // FS frame: WHICH conservation model applies is a PER-GAME behavior
+  // (learned during calibrate → parser-overlay.fsCreditTiming). immediate →
+  // bb + win == ba. deferred → balance flat mid-chain (win accumulates,
+  // credited at chain end) → expect ba == bb; the final credit lands ≥ bb so
+  // it also passes. Unknown → evaluate the immediate model but downgrade a
+  // mismatch to INCONCLUSIVE (can't tell deferred-credit from a real bug).
+  const fsTiming = input.fsCreditTiming ?? null;
+  const expected = spin.isFreeSpin
+    ? (fsTiming === "deferred"
+        ? (spin.balanceBefore ?? 0) // flat mid-chain; chain-end credit only adds
+        : (spin.balanceBefore ?? 0) + spin.win)
+    : (spin.balanceBefore ?? 0) - spin.bet + spin.win;
+
+  if (spin.isFreeSpin && fsTiming === "deferred") {
+    // Deferred game: mid-chain frames must not DECREASE the balance; flat or
+    // the final chain credit are both legitimate.
+    const ok = spin.balanceAfter >= (spin.balanceBefore ?? 0) - TOLERANCE;
+    return {
+      id: "balance-conservation",
+      description: "Balance conservation (FS, deferred credit — flat mid-chain, total credited at chain end)",
+      pass: ok,
+      outcome: ok ? "PASS_HIGH" : "FAIL_HIGH",
+      confidence: ok ? 0.9 : 0.9,
+      signals: [],
+      detail: ok
+        ? undefined
+        : `FS frame balance DECREASED (${spin.balanceBefore} → ${spin.balanceAfter}) — illegal even under deferred credit`,
+    };
+  }
+
   const apiMatches = Math.abs(spin.balanceAfter - expected) <= TOLERANCE;
+
+  // Unknown timing + immediate model failed: downgrade ONLY when the mismatch
+  // is consistent with DEFERRED credit — balance flat / under-credited but NOT
+  // decreased (bb ≤ ba ≤ bb + win). A DECREASE on an FS frame is illegal under
+  // BOTH models and stays a hard FAIL; same for an over-credit.
+  const deferralConsistent =
+    spin.balanceAfter >= (spin.balanceBefore ?? 0) - TOLERANCE &&
+    spin.balanceAfter <= expected + TOLERANCE;
+  if (spin.isFreeSpin && fsTiming == null && !apiMatches && deferralConsistent) {
+    return {
+      id: "balance-conservation",
+      description: "Balance conservation (FS frame — credit timing not learned for this game)",
+      pass: true,
+      outcome: "INCONCLUSIVE",
+      confidence: 0,
+      signals: [],
+      detail: `FS frame: balanceAfter=${spin.balanceAfter} ≠ bb+win=${expected} — could be deferred chain-end credit OR a bug. Run Calibrate with FS coverage to learn fsCreditTiming (parser-overlay) so this can be verified.`,
+    };
+  }
   const ruleSatisfied = apiMatches; // Same here — math is the rule
   const networkMatches = typeof networkBalance === "number"
     ? Math.abs(networkBalance - spin.balanceAfter) <= TOLERANCE

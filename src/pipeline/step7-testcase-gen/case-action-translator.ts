@@ -35,8 +35,19 @@ export type CaseAction =
       kind: "wait_until_no_spin_response";
       quietMs?: number;
       maxMs?: number;
+      /** Exit on quiet even with 0 new spins — for IDLE-CONFIRM waits
+       *  ("verify nothing is still spinning"), where zero spins = success. */
+      allowZeroSpins?: boolean;
       reason?: string;
     }
+  // Actively STOP a running autoplay batch (state-aware, runtime-branching):
+  // observe spin activity; while spins keep arriving (and no FS chain is
+  // playing out) click autoButton — during a RUNNING autoplay that click is
+  // the STOP control. Waiting-out a long batch has proven unreliable
+  // (celebration pauses fake "quiet"; 100-spin batches outlive any wait cap);
+  // stopping is deterministic. No-op when already idle. Internal use
+  // (calibration etc.) — not part of the AI translator vocabulary.
+  | { kind: "stop_autoplay_if_running"; maxMs?: number; reason?: string }
   // Force ante toggle OFF before the case proceeds. Idempotent — uses
   // pixel-diff vs offBaseline captured during Discover. Auto-prepended
   // to every case by the translator when the registry has anteButton
@@ -661,7 +672,11 @@ export function buildAutoplayBatch(
     { kind: "click", uiKey: `autoButton__autoCountSlide-${tile}`, reason: `select ${tile}-spin autoplay batch` },
     { kind: "wait_ms", ms: 500 },
     { kind: "click", uiKey: "autoButton__startAutoplayButton", reason: "start autoplay batch" },
-    { kind: "wait_until_no_spin_response", quietMs: 5000, maxMs, reason: `wait autoplay batch of ${tile} to finish` },
+    // quiet=10s, not 5s: autoplay inter-spin gaps during win celebrations /
+    // long tumbles regularly exceed 5s (observed 8–13s), which made the wait
+    // declare "batch finished" while autoplay was merely between spins — the
+    // next phase then clicked autoButton ON A RUNNING autoplay (= stop toggle).
+    { kind: "wait_until_no_spin_response", quietMs: 10_000, maxMs, reason: `wait autoplay batch of ${tile} to finish` },
   ];
   return { actions, tile };
 }

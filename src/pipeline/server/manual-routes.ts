@@ -63,7 +63,9 @@ export async function handleManualRoute(
   url: string,
   method: string,
 ): Promise<boolean> {
-  if (!url.startsWith("/api/qa/manual")) return false;
+  // /api/qa/rtp-callback is the PUBLIC listener RG posts e2e results to —
+  // deliberately outside /manual (it's machine-to-machine, not dashboard).
+  if (!url.startsWith("/api/qa/manual") && url !== "/api/qa/rtp-callback") return false;
   console.log(`[manual] ${method} ${url}`);
 
   try {
@@ -680,6 +682,42 @@ export async function handleManualRoute(
     // POST /api/qa/manual/calibrate-payout { spinsPerLevel? }
     // Spins live at >=2 bet levels, derives + self-validates the per-game payout
     // model (Layer 2 of payout verification), stores payout-model.json.
+    // ── RTP (logic-level e2e via RG) ──────────────────────────────────────
+    // POST /api/qa/manual/rtp-run { gameSlug, tag, command?, logicName? }
+    // Triggers RG's e2e API twice (base + --ps=true). ~30 min/run; results
+    // arrive later via POST /api/qa/rtp-callback (give that URL to RG).
+    if (url === "/api/qa/manual/rtp-run" && method === "POST") {
+      const body = await asJsonBody<{ gameSlug?: string; tag?: string; command?: string; logicName?: string }>(req);
+      const slug = body.gameSlug || (typeof req.headers["x-game-slug"] === "string" ? req.headers["x-game-slug"] : null);
+      if (!slug) return sendJson(res, 400, { ok: false, error: "gameSlug required" }), true;
+      if (!body.tag?.trim()) return sendJson(res, 400, { ok: false, error: "tag (game version, e.g. v1.0.3.1) required" }), true;
+      const { triggerRtpRuns } = await import("./rtp-runs.js");
+      const r = await triggerRtpRuns({ gameSlug: slug, tag: body.tag.trim(), command: body.command, logicName: body.logicName?.trim() || undefined });
+      return sendJson(res, r.ok ? 200 : 502, r), true;
+    }
+
+    // GET /api/qa/manual/rtp-runs?game=<slug> — runs + raw callback payloads.
+    if (url.startsWith("/api/qa/manual/rtp-runs") && method === "GET") {
+      const u = new URL(url, "http://localhost");
+      const slug = u.searchParams.get("game") || (typeof req.headers["x-game-slug"] === "string" ? req.headers["x-game-slug"] : null);
+      if (!slug) return sendJson(res, 400, { ok: false, error: "game required" }), true;
+      const { loadRtpRuns, deriveLogicName, DEFAULT_RTP_COMMAND } = await import("./rtp-runs.js");
+      const file = await loadRtpRuns(slug);
+      const logic = file.lastLogicName ? { logicName: file.lastLogicName, derived: true } : await deriveLogicName(slug);
+      return sendJson(res, 200, { ok: true, ...file, suggestedLogicName: logic.logicName, logicNameDerived: logic.derived, defaultCommand: DEFAULT_RTP_COMMAND, hasApiKey: !!process.env.RG_E2E_API_KEY }), true;
+    }
+
+    // POST /api/qa/rtp-callback — the listener endpoint we hand to RG. Accepts
+    // ANY payload (JSON or plain text), stores it VERBATIM (inbox + matched
+    // run). No schema assumptions until RG's event format settles.
+    if (url === "/api/qa/rtp-callback" && method === "POST") {
+      const raw = await readBody(req);
+      const { recordCallback } = await import("./rtp-runs.js");
+      const r = await recordCallback(raw);
+      console.log(`[rtp-callback] received ${raw.length} bytes → ${r.matched ? `matched ${r.gameSlug}/${r.runId}` : "unmatched (inbox only)"}`);
+      return sendJson(res, 200, { ok: true, ...r }), true;
+    }
+
     if (url === "/api/qa/manual/calibrate-payout" && method === "POST") {
       const body = await asJsonBody<{ spinsPerLevel?: number }>(req);
       const r = await resolveSession(req, body as any, url).calibratePayoutModel({ spinsPerLevel: body.spinsPerLevel });

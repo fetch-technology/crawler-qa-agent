@@ -48,12 +48,16 @@ function makeFakeClock(opts: {
   };
 }
 
-test("returns 'quiet' when no spin events and gap reaches quietMs", async () => {
+test("returns 'quiet' when no spin events and gap reaches quietMs (idle-confirm: allowZeroSpins)", async () => {
   const clk = makeFakeClock();
   // Seed lastSpinAt = 0, fakeNow starts 0 → gap grows as we sleep.
+  // Without allowZeroSpins a zero-spin wait runs to maxMs (guard against a
+  // stale lastSpinResponseAt right after spin-triggering actions); idle-confirm
+  // waits opt in via allowZeroSpins.
   const result = await waitUntilNoSpinResponse({
     quietMs: 5000,
     maxMs: 60000,
+    allowZeroSpins: true,
     lastSpinResponseAt: clk.lastSpinResponseAt,
     spinResponseCount: clk.spinResponseCount,
     sleep: clk.sleep,
@@ -160,6 +164,7 @@ test("returns 'quiet' immediately when no spin in flight (gap >= quietMs from st
   const result = await waitUntilNoSpinResponse({
     quietMs: 0,
     maxMs: 60000,
+    allowZeroSpins: true,
     lastSpinResponseAt: clk.lastSpinResponseAt,
     spinResponseCount: clk.spinResponseCount,
     sleep: clk.sleep,
@@ -199,6 +204,7 @@ test("custom pollIntervalMs honored (uses smaller default poll for tests)", asyn
   const result = await waitUntilNoSpinResponse({
     quietMs: 1000,
     maxMs: 5000,
+    allowZeroSpins: true,
     pollIntervalMs: 100,  // smaller poll
     lastSpinResponseAt: clk.lastSpinResponseAt,
     spinResponseCount: clk.spinResponseCount,
@@ -209,4 +215,20 @@ test("custom pollIntervalMs honored (uses smaller default poll for tests)", asyn
   // With 100ms poll, exits ~100ms after gap reaches 1000ms
   expect(result.elapsedMs).toBeGreaterThanOrEqual(1000);
   expect(result.elapsedMs).toBeLessThan(1200);
+});
+
+test("WITHOUT allowZeroSpins: zero-spin wait runs to maxMs (stale-timestamp guard)", async () => {
+  // A wait placed right after spin-triggering actions must NOT exit on a
+  // stale lastSpinResponseAt before at least one new spin lands.
+  const clk = makeFakeClock();
+  const result = await waitUntilNoSpinResponse({
+    quietMs: 1000,
+    maxMs: 5000,
+    lastSpinResponseAt: clk.lastSpinResponseAt,
+    spinResponseCount: clk.spinResponseCount,
+    sleep: clk.sleep,
+    now: clk.now,
+  });
+  expect(result.exitReason).toBe("timeout");
+  expect(result.spinsCapturedDuringWait).toBe(0);
 });

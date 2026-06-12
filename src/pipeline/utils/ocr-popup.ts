@@ -134,15 +134,77 @@ export async function ocrBuffer(buf: Buffer): Promise<{ text: string; durationMs
  *     small fonts where Tesseract reads "." as ":")
  *   - Apostrophe mis-OCR (some Swiss locales use ' as thousand sep)
  */
+/** Try to read a run of ADJACENT numeric tokens as ONE number whose thousands
+ *  separators OCR mangled into spaces: "1 000,004.31" → 1000004.31. Valid
+ *  grouping = first group 1-3 digits, every later group EXACTLY 3 digits, the
+ *  last optionally carrying ".dd" decimals. Anything else (e.g. "13"+"0.20",
+ *  "50"+"10") is NOT grouping → null → tokens stay separate numbers. */
+function tryThousandGrouping(run: string[]): { value: number; hasDecimals: boolean } | null {
+  if (run.length < 2) return null;
+  const groups: string[] = [];
+  for (const tok of run) {
+    for (const p of tok.split(/[,;']/)) if (p) groups.push(p);
+  }
+  if (groups.length < 2) return null;
+  if (!/^\d{1,3}$/.test(groups[0]!)) return null;
+  for (let k = 1; k < groups.length - 1; k++) {
+    if (!/^\d{3}$/.test(groups[k]!)) return null;
+  }
+  const last = groups[groups.length - 1]!;
+  const dm = last.match(/^(\d{3})\.(\d+)$/);
+  if (!dm && !/^\d{3}$/.test(last)) return null;
+  const intStr = groups.slice(0, -1).join("") + (dm ? dm[1] : last);
+  const v = Number(dm ? `${intStr}.${dm[2]}` : intStr);
+  return Number.isFinite(v) ? { value: v, hasDecimals: dm != null } : null;
+}
+
 export function parseNumericFromOcr(text: string): number | null {
   if (!text) return null;
-  const cleaned = text
-    .replace(/[\s,;'$€£¥₫]/g, "")
-    .replace(/:/g, ".");
-  const match = cleaned.match(/-?\d+(\.\d+)?/);
-  if (!match) return null;
-  const n = Number(match[0]);
-  return Number.isFinite(n) ? n : null;
+  // CURRENCY SYMBOLS are HARD boundaries — two distinct values never share
+  // one ("£13 $0.20" = badge 13 + bet 0.20). WHITESPACE inside a segment is
+  // ambiguous: it may separate distinct numbers ("Win: 50 Bet: 10") or be an
+  // OCR-mangled thousands separator ("$1 000,004.31" = 1000004.31). Adjacent
+  // numeric tokens are first tried as one thousand-grouped number; only when
+  // the 3-digit-group structure doesn't hold do they stay separate. In-token
+  // separators (, ; ') still merge: "$99,996;103.04" → 99996103.04.
+  const candidates: Array<{ value: number; hasDecimals: boolean }> = [];
+  for (const segment of text.split(/[$€£¥₫]+/)) {
+    const tokens = segment.split(/\s+/).filter(Boolean);
+    let i = 0;
+    while (i < tokens.length) {
+      const cleaned0 = tokens[i]!.replace(/[,;']/g, "").replace(/:/g, ".");
+      const m0 = cleaned0.match(/-?\d+(\.\d+)?/);
+      if (!m0) { i++; continue; }
+      // Collect the adjacent purely-numeric run after this token.
+      const run: string[] = [tokens[i]!];
+      let j = i + 1;
+      while (j < tokens.length && /^[\d.,;':]+$/.test(tokens[j]!)) {
+        run.push(tokens[j]!);
+        j++;
+      }
+      const grouped = tryThousandGrouping(run);
+      if (grouped) {
+        candidates.push(grouped);
+      } else {
+        for (const tok of run) {
+          const cleaned = tok.replace(/[,;']/g, "").replace(/:/g, ".");
+          const m = cleaned.match(/-?\d+(\.\d+)?/);
+          if (!m) continue;
+          const n = Number(m[0]);
+          if (Number.isFinite(n)) candidates.push({ value: n, hasDecimals: m[1] != null });
+        }
+      }
+      i = j;
+    }
+  }
+  if (candidates.length === 0) return null;
+  if (candidates.length === 1) return candidates[0]!.value;
+  // Multiple numbers in the crop: the monetary value is written WITH decimals
+  // ("0.20", "1,234.56"); stray neighbors (multiplier badges, counters) are
+  // integers. Prefer the FIRST decimal-bearing token; else first overall —
+  // preserving the long-standing "first number wins" contract.
+  const decimal = candidates.find((c) => c.hasDecimals);
+  return (decimal ?? candidates[0]!).value;
 }
 
 export async function terminateOcr(): Promise<void> {

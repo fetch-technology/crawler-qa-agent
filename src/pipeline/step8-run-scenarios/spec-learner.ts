@@ -7,7 +7,9 @@
 // reconcile despite enough wins, `needsAi` flags the long-tail case for the
 // AI fallback (Phase 5).
 
-import type { ProviderSpec, ParserOverlay, WinItemization } from "../step6-build-model/providers/spec-types.js";
+import type { ProviderSpec, ParserOverlay, WinItemization, FsCreditTiming } from "../step6-build-model/providers/spec-types.js";
+import type { BaseParser } from "../step6-build-model/base-parser.js";
+import type { NormalizedSpinResult } from "../step6-build-model/normalized.js";
 import { SpecDrivenParser, parseBodyBySpec } from "../step6-build-model/providers/spec-driven-parser.js";
 import { replayGate, type ReplaySample, type ReplayGateResult } from "./spec-replay-gate.js";
 
@@ -61,6 +63,70 @@ export function detectWinItemization(
   };
 }
 
+export type FsTimingDetection = {
+  /** null = cannot determine (no FS chain with a winning mid-chain frame, or
+   *  inconsistent evidence). */
+  value: FsCreditTiming | null;
+  trusted: boolean;
+  evidence: { fsFrames: number; winningFsFrames: number; immediateHits: number; deferredHits: number };
+  reason: string;
+};
+
+/** Detect WHEN this game credits free-spin wins to the wallet, from captured
+ *  samples. Self-validating classification: each winning FS frame is tested
+ *  against BOTH hypotheses on the server's own balance fields —
+ *    immediate: balanceAfter == balanceBefore + win (credited per round)
+ *    deferred:  balanceAfter == balanceBefore        (flat; credited at chain end)
+ *  Trusted only when ≥1 winning FS frame exists AND every one agrees on a
+ *  single hypothesis. Games differ — runtime conservation checks consult this
+ *  instead of assuming one model. */
+export function detectFsCreditTiming(
+  parser: BaseParser,
+  samples: ReplaySample[],
+  tol = 0.01,
+): FsTimingDetection {
+  let fsFrames = 0;
+  let winningFsFrames = 0;
+  let immediateHits = 0;
+  let deferredHits = 0;
+  let prev: NormalizedSpinResult | null = null;
+  for (const s of samples) {
+    let spin: NormalizedSpinResult | null = null;
+    try {
+      spin = parser.parseSpinPair
+        ? parser.parseSpinPair(s.request ?? null, s.response, s.url)
+        : parser.parseResponse(s.response);
+    } catch { continue; }
+    if (!spin) continue;
+    if (spin.balanceBefore == null && prev && typeof prev.balanceAfter === "number") {
+      spin.balanceBefore = prev.balanceAfter;
+    }
+    if (spin.isFreeSpin === true) {
+      fsFrames++;
+      const bb = spin.balanceBefore;
+      const ba = spin.balanceAfter;
+      const win = spin.win;
+      if (bb != null && Number.isFinite(ba) && typeof win === "number" && win > tol) {
+        winningFsFrames++;
+        if (Math.abs(ba - (bb + win)) <= tol) immediateHits++;
+        else if (Math.abs(ba - bb) <= tol) deferredHits++;
+      }
+    }
+    prev = spin;
+  }
+  const evidence = { fsFrames, winningFsFrames, immediateHits, deferredHits };
+  if (winningFsFrames === 0) {
+    return { value: null, trusted: false, evidence, reason: fsFrames > 0 ? "FS frames seen but none with a win — cannot classify credit timing" : "no FS frames in samples" };
+  }
+  if (immediateHits === winningFsFrames && deferredHits === 0) {
+    return { value: "immediate", trusted: true, evidence, reason: `${immediateHits}/${winningFsFrames} winning FS frame(s) credited per-round` };
+  }
+  if (deferredHits === winningFsFrames && immediateHits === 0) {
+    return { value: "deferred", trusted: true, evidence, reason: `${deferredHits}/${winningFsFrames} winning FS frame(s) flat — total credited at chain end` };
+  }
+  return { value: null, trusted: false, evidence, reason: `inconsistent: ${immediateHits} immediate vs ${deferredHits} deferred hit(s) across ${winningFsFrames} winning FS frame(s)` };
+}
+
 export type LearnResult = {
   overlay: ParserOverlay;
   detector: ItemizationDetection;
@@ -108,11 +174,22 @@ export function learnParserOverlay(
       invariants: invariantsPassed,
     },
   };
+  attachFsCreditTiming(overlay, parser, samples);
 
   const needsAi = !gate.itemization.trusted && gate.itemization.coverageMet && !gate.itemization.reconciled;
   const needMoreSamples = !gate.itemization.coverageMet;
 
   return { overlay, detector, gate, needsAi, needMoreSamples };
+}
+
+/** Learn the FS credit-timing aspect from the same samples and attach it to
+ *  the overlay (omitted when undeterminable — absent = unknown, runtime then
+ *  reports INCONCLUSIVE instead of guessing a model). */
+function attachFsCreditTiming(overlay: ParserOverlay, parser: BaseParser, samples: ReplaySample[]): void {
+  const t = detectFsCreditTiming(parser, samples);
+  if (t.value != null) {
+    overlay.fsCreditTiming = { value: t.value, trusted: t.trusted };
+  }
 }
 
 /** Build the overlay for a specific candidate itemization, validated by the
@@ -128,7 +205,8 @@ function gateCandidate(
     ...baseSpec,
     response: { ...baseSpec.response, winItemization: value },
   };
-  const gate = replayGate(new SpecDrivenParser(candidateSpec, "PragmaticParser"), samples, { minWinningRounds });
+  const parser = new SpecDrivenParser(candidateSpec, "PragmaticParser");
+  const gate = replayGate(parser, samples, { minWinningRounds });
   const invariantsPassed: string[] = [];
   if (gate.invariants.sumsToTotal.pass) invariantsPassed.push("sums-to-total");
   if (gate.invariants.balanceConservation.pass) invariantsPassed.push("balance-conservation");
@@ -139,6 +217,7 @@ function gateCandidate(
     winItemization: { value, trusted: gate.itemization.trusted },
     validation: { samplesReplayed: gate.parsedSpins, reconciled: gate.itemization.winningRounds, invariants: invariantsPassed },
   };
+  attachFsCreditTiming(overlay, parser, samples);
   return { overlay, gate };
 }
 

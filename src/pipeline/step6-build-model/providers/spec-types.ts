@@ -168,12 +168,24 @@ export type ParserOverlayAspect<T> = {
  *  (Phase 3) after the replay-gate validates it; can also be hand-authored.
  *  `trusted` is PER-ASPECT: a game can certify itemization while leaving
  *  another aspect unverified, instead of an all-or-nothing flag. */
+/** When a game credits free-spin wins to the wallet:
+ *  - "immediate": each FS round's win lands on the balance as it resolves
+ *  - "deferred":  balance stays FLAT during the chain; the accumulated total
+ *                 is credited once at the END of the last free spin
+ *  Games differ — conservation checks MUST consult the learned value instead
+ *  of assuming one model (a deferred game false-fails every mid-chain round
+ *  under the immediate assumption, and vice versa). */
+export type FsCreditTiming = "immediate" | "deferred";
+
 export type ParserOverlay = {
   schemaVersion: number;
   /** Provider base this overlay layers on (e.g. "pragmatic"). */
   basedOnProvider: string;
   /** How wins are itemized for THIS game (overrides base when trusted). */
   winItemization?: ParserOverlayAspect<WinItemization>;
+  /** When THIS game credits FS wins to the balance (learned from captured FS
+   *  chains; trusted only when the replay-gate's coverage saw a real chain). */
+  fsCreditTiming?: ParserOverlayAspect<FsCreditTiming>;
   /** Audit trail from the replay-gate that certified this overlay. */
   validation?: {
     validatedAt?: string;

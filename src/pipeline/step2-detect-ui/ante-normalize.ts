@@ -170,7 +170,13 @@ function anteMetaPath(slug: string): string {
   return path.join(dirForGame(slug), "ante-baseline.json");
 }
 
-type AnteMeta = { offBet: number | null };
+type AnteMeta = {
+  offBet: number | null;
+  /** This game's OBSERVED ante inflation factor (larger/smaller bet across an
+   *  ante toggle), learned whenever a toggle-probe sees the bet move. Lets
+   *  classifyBetRatio use the game's real factor instead of a generic band. */
+  anteFactor?: number | null;
+};
 
 async function writeAnteMeta(slug: string, meta: AnteMeta): Promise<void> {
   try {
@@ -191,11 +197,27 @@ async function readAnteMeta(slug: string): Promise<AnteMeta | null> {
 /** PURE — classify ante state from current bet vs the recorded OFF bet.
  *  Ante ON inflates the bet (~1.25×): `ratio = cur/offBet`. ≥1.1 → ON,
  *  ≤1.05 → OFF, else "unknown" (ambiguous). Exported for unit tests. */
-export function classifyBetRatio(curBet: number, offBet: number): "off" | "on" | "unknown" {
+export function classifyBetRatio(
+  curBet: number,
+  offBet: number,
+  /** The game's LEARNED ante factor (from an observed toggle), when known.
+   *  Narrows the "on" band to that factor ±10% instead of the generic range. */
+  anteFactor?: number | null,
+): "off" | "on" | "unknown" {
   if (!(curBet > 0) || !(offBet > 0)) return "unknown";
   const ratio = curBet / offBet;
-  if (ratio >= 1.1) return "on";
   if (ratio <= 1.05) return "off";
+  // Ante is a SMALL fixed surcharge (observed factors 1.25 / 1.5 / 1.9 —
+  // never beyond ~2×). A larger ratio means the BET LEVEL differs from the
+  // one the offBet baseline was recorded at (e.g. cur=4.00 vs off=0.20 →
+  // ratio 20 = max-vs-min stake, not ante). Such a cross-level comparison
+  // can NOT decide ante state → "unknown", never a false "on".
+  if (anteFactor != null && anteFactor > 1.05) {
+    const lo = anteFactor * 0.9;
+    const hi = anteFactor * 1.1;
+    return ratio >= lo && ratio <= hi ? "on" : "unknown";
+  }
+  if (ratio >= 1.1 && ratio <= 2.05) return "on";
   return "unknown";
 }
 
@@ -230,7 +252,7 @@ async function betAnteVerdict(
   if (offBet == null || offBet <= 0 || curBet == null || curBet <= 0) {
     return { verdict: "unknown", curBet, offBet };
   }
-  return { verdict: classifyBetRatio(curBet, offBet), curBet, offBet };
+  return { verdict: classifyBetRatio(curBet, offBet, meta?.anteFactor), curBet, offBet };
 }
 
 /** Debug crop save — writes each intermediate snapshot under
@@ -735,30 +757,62 @@ async function forceAnteOffByBet(
   entry: AnteEntry,
   knownBetBefore?: number | null,
 ): Promise<{ ok: boolean; toggledCount: number; resolvedByBet: boolean; wasAlreadyOff: boolean; reason?: string }> {
-  const b0 = knownBetBefore ?? (await readTotalBet(page, slug, registry));
+  // STABLE read: two consecutive OCR reads must AGREE (≤1%) before a value is
+  // trusted. A single read races the bet display's update animation after an
+  // ante click — observed failure: clicking ante OFF→ON read the STALE
+  // pre-click value as b1 (smaller) → verdict "already OFF" while the game
+  // was actually flipped ON, and the garbage pair was persisted as offBet/
+  // anteFactor, poisoning every later verdict. Nulls retry; max 4 reads.
+  const readBetStable = async (): Promise<number | null> => {
+    let prev: number | null = null;
+    for (let i = 0; i < 4; i++) {
+      const v = await readTotalBet(page, slug, registry);
+      if (v != null && prev != null && Math.abs(v - prev) / Math.max(v, prev) <= 0.01) return v;
+      prev = v ?? prev;
+      await page.waitForTimeout(300);
+    }
+    return prev;
+  };
+  const b0 = knownBetBefore ?? (await readBetStable());
   await clickAnte(page, entry);
   let toggled = 1;
-  const b1 = await readTotalBet(page, slug, registry);
+  // Let the display finish its post-toggle animation BEFORE reading b1.
+  await page.waitForTimeout(700);
+  const b1 = await readBetStable();
+  console.log(`[ensure-ante-off] ${slug}: toggle probe reads b0=${b0 ?? "?"} → click → b1=${b1 ?? "?"}`);
 
   const plan = planAnteToggle(b0, b1, BET_DELTA_MIN_RATIO);
   if (plan.kind === "changed") {
     const smaller = Math.min(b0!, b1!);
-    // We are at b1 now. If b1 is the larger (ante ON), toggle back to smaller.
-    if (!plan.afterIsOff) {
-      await clickAnte(page, entry);
-      toggled++;
+    const larger = Math.max(b0!, b1!);
+    // Sanity: a real ante toggle moves the bet by a SMALL factor (≤ ~2×).
+    // A bigger jump means one of the reads was garbage (celebration digits,
+    // bbox bleed) or the click hit a bet-level control — don't trust the pair.
+    if (larger / smaller > 2.05) {
+      console.warn(`[ensure-ante-off] ${slug}: toggle delta ${smaller}→${larger} (${(larger / smaller).toFixed(2)}×) exceeds any ante factor — reads untrusted, falling to pixel verify`);
+    } else {
+      // We are at b1 now. If b1 is the larger (ante ON), toggle back to smaller.
+      if (!plan.afterIsOff) {
+        await clickAnte(page, entry);
+        toggled++;
+      }
+      // RE-VERIFY after the display fully settles — the immediate read used to
+      // race the animation and "confirm" a state the game wasn't in.
+      await page.waitForTimeout(700);
+      const finalBet = await readBetStable();
+      const landedOff = finalBet != null && finalBet <= smaller * 1.02;
+      if (landedOff) {
+        // Persist ground truth ONLY on a VERIFIED landing — persisting before
+        // verification poisoned offBet/anteFactor with garbage reads.
+        await writeAnteMeta(slug, { offBet: smaller, anteFactor: Math.round((larger / smaller) * 100) / 100 });
+        // wasAlreadyOff iff the FIRST state (b0) was the smaller one.
+        return { ok: true, toggledCount: toggled, resolvedByBet: true, wasAlreadyOff: b0! <= smaller * 1.02 };
+      }
+      return {
+        ok: false, toggledCount: toggled, resolvedByBet: true, wasAlreadyOff: false,
+        reason: `bet did not settle at OFF level (final=${finalBet ?? "?"} expected≈${smaller}, pair ${b0}→${b1})`,
+      };
     }
-    const finalBet = await readTotalBet(page, slug, registry);
-    const landedOff = finalBet != null && finalBet <= smaller * 1.02;
-    await writeAnteMeta(slug, { offBet: smaller }); // refresh ground truth
-    if (landedOff) {
-      // wasAlreadyOff iff the FIRST state (b0) was the smaller one.
-      return { ok: true, toggledCount: toggled, resolvedByBet: true, wasAlreadyOff: b0! <= smaller * 1.02 };
-    }
-    return {
-      ok: false, toggledCount: toggled, resolvedByBet: true, wasAlreadyOff: false,
-      reason: `bet did not settle at OFF level (final=${finalBet ?? "?"} expected≈${smaller})`,
-    };
   }
 
   if (plan.kind === "no-change") {

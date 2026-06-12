@@ -1621,11 +1621,21 @@ export async function executeCase(
   // itemization (treated as verified). Untrusted overlay → itemization-
   // dependent payout assertions become INCONCLUSIVE (not false fail/pass).
   let winItemizationVerified = true;
+  // Learned per-game FS credit timing (immediate vs deferred) — null until the
+  // spec-learner certifies it from a captured FS chain. Conservation checks
+  // consult this instead of assuming one model for every game.
+  let fsCreditTiming: import("../step6-build-model/providers/spec-types.js").FsCreditTiming | null = null;
   if (ctx.gameSlug) {
     try {
       const { loadOverlay } = await import("../step6-build-model/providers/spec-loader.js");
       const ov = await loadOverlay(ctx.gameSlug);
-      if (ov) winItemizationVerified = ov.winItemization?.trusted === true;
+      if (ov) {
+        // Gate on the aspect only when it is PRESENT. An overlay carrying just
+        // fsCreditTiming (legacy-parser games — itemization handled natively)
+        // must not flip payout assertions to "unverified".
+        if (ov.winItemization) winItemizationVerified = ov.winItemization.trusted === true;
+        if (ov.fsCreditTiming?.trusted) fsCreditTiming = ov.fsCreditTiming.value;
+      }
     } catch { /* no overlay → default verified */ }
   }
 
@@ -1633,6 +1643,7 @@ export async function executeCase(
   // collector. Single-spin cases work too (collector has 1 entry).
   const userAssertions = evaluateAssertions(spin, collectedSpins, input.custom_assertions ?? [], {
     winItemizationVerified,
+    fsCreditTiming,
     minimumEvidence: input.minimum_evidence,
     ocrBalance,
     ocrBet,
@@ -2047,6 +2058,7 @@ export async function executeCase(
     stateTimeline,
     allowedInterrupts: effectiveAllowedInterrupts,
     category: input.category,
+    fsCreditTiming,
   });
 
   // Phase 8 FLAKY auto-detection. Aggregate per-assertion outcomes → case
@@ -2365,6 +2377,12 @@ export function resolveSpinBalanceBefore(input: {
 export type WaitUntilNoSpinResponseOpts = {
   quietMs: number;
   maxMs: number;
+  /** Exit on a quiet gap even when NO spin landed during this wait. Default
+   *  false (a wait placed right after spin-triggering actions must see ≥1
+   *  spin before "quiet", else stale lastSpinResponseAt exits immediately).
+   *  Set true for IDLE-CONFIRM waits whose job is "verify nothing is still
+   *  spinning" — there zero new spins is the success condition. */
+  allowZeroSpins?: boolean;
   lastSpinResponseAt: () => number;
   spinResponseCount: () => number;
   sleep: (ms: number) => Promise<void>;
@@ -2404,7 +2422,8 @@ export async function waitUntilNoSpinResponse(
     // Do not declare "quiet complete" before at least one new spin lands.
     // Otherwise, if action execution before this wait took > quietMs,
     // lastSpinResponseAt can be stale and the wait exits immediately.
-    if (captured > 0 && gap >= opts.quietMs && !fsBusy) {
+    // (allowZeroSpins waives this for idle-confirm waits.)
+    if ((captured > 0 || opts.allowZeroSpins === true) && gap >= opts.quietMs && !fsBusy) {
       console.log(`[case-action]   quiet for ${gap}ms — captured ${captured} spin response(s) during wait; exiting after ${opts.now() - start}ms`);
       return { exitReason: "quiet", elapsedMs: opts.now() - start, spinsCapturedDuringWait: captured, lastGapMs: gap };
     }
@@ -2423,6 +2442,58 @@ export async function waitUntilNoSpinResponse(
   const captured = opts.spinResponseCount() - startCount;
   console.warn(`[case-action] wait_until_no_spin_response: timeout after ${opts.maxMs}ms (captured ${captured} spins, last gap ${finalGap}ms)`);
   return { exitReason: "timeout", elapsedMs: opts.now() - start, spinsCapturedDuringWait: captured, lastGapMs: finalGap };
+}
+
+/** Injected-IO orchestration for `stop_autoplay_if_running` — exported so
+ *  invariant tests can drive it with a fake clock (same pattern as
+ *  waitUntilNoSpinResponse). Decision rules:
+ *    - observe a window; ZERO new spins → idle → done (press Escape once if
+ *      we clicked, to close a panel an after-the-end click may have opened)
+ *    - spins arriving + FS chain active → DON'T click (FS plays out on its
+ *      own; the click would be swallowed) — just keep observing
+ *    - spins arriving, no FS → click autoButton (the STOP control while a
+ *      batch is running), let the in-flight round land, re-observe
+ *    - cap stop clicks (a 3rd+ click on an already-stopped game would OPEN
+ *      the autoplay panel) and total time; failure is LOUD. */
+export type StopAutoplayOpts = {
+  spinResponseCount: () => number;
+  fsActive?: () => boolean;
+  clickAutoButton: () => Promise<void>;
+  pressEscape: () => Promise<void>;
+  sleep: (ms: number) => Promise<void>;
+  now: () => number;
+  /** Spin-activity observation window. Default 9s (autoplay cadence ~5s). */
+  observeMs?: number;
+  maxMs?: number;
+  maxClicks?: number;
+};
+export type StopAutoplayResult = { stopped: boolean; clicks: number; observedSpins: number; reason?: string };
+
+export async function stopAutoplayIfRunning(o: StopAutoplayOpts): Promise<StopAutoplayResult> {
+  const observeMs = o.observeMs ?? 9_000;
+  const maxMs = o.maxMs ?? 240_000;
+  const maxClicks = o.maxClicks ?? 2;
+  const start = o.now();
+  let clicks = 0;
+  let observedSpins = 0;
+  while (o.now() - start < maxMs) {
+    const c0 = o.spinResponseCount();
+    await o.sleep(observeMs);
+    const fresh = o.spinResponseCount() - c0;
+    observedSpins += fresh;
+    if (fresh === 0) {
+      if (clicks > 0) await o.pressEscape();
+      return { stopped: true, clicks, observedSpins };
+    }
+    if (o.fsActive?.() === true) continue;
+    if (clicks >= maxClicks) {
+      return { stopped: false, clicks, observedSpins, reason: `still spinning after ${clicks} stop click(s)` };
+    }
+    await o.clickAutoButton();
+    clicks++;
+    await o.sleep(3_000); // let the in-flight round land before re-observing
+  }
+  return { stopped: false, clicks, observedSpins, reason: `timeout after ${maxMs}ms` };
 }
 
 /** Find a bet-selector CHIP in the registry whose value matches `target`
@@ -2541,6 +2612,47 @@ async function executeAction(
       return;
     }
     console.log(`[case-action] click ${action.uiKey} (${el.x},${el.y}) ×${times}${el.externalPage ? " [external tab]" : ""}${action.reason ? ` — ${action.reason}` : ""}`);
+    // Tab-opening trigger (its CHILDREN are externalPage): canvas games swallow
+    // single programmatic clicks during animation frames — observed: the
+    // history trigger needs 2-3 clicks before window.open fires. Retry until
+    // the tab ACTUALLY appears (effect-verified, same philosophy as spin-retry);
+    // without it, every subsequent external-child click gets skipped.
+    // DIRECT children only: grandchildren must not qualify the ancestor —
+    // `menuButton` has externalPage GRANDchildren (menuButton__historyButton__*)
+    // but itself opens a same-page popup; a startsWith-only check would
+    // double-click it and toggle the menu open→shut while waiting for a tab
+    // that never comes. The actual tab opener is the element whose DIRECT
+    // children are externalPage (menuButton__historyButton).
+    const prefix = `${action.uiKey}__`;
+    const opensTab = !el.externalPage
+      && Object.entries(ctx.uiMap).some(([k, v]) =>
+        k.startsWith(prefix) && !k.slice(prefix.length).includes("__") && v?.externalPage === true);
+    if (opensTab) {
+      const tabsBefore = ctx.externalTabs?.length ?? 0;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        // DOUBLE click for tab-opening triggers: two discrete clicks ~120ms
+        // apart. QA observation: this button type swallows single programmatic
+        // clicks far more often; a rapid second click reliably registers.
+        // Safe here — the trigger opens a TAB (window.open fires once), there
+        // is no same-page popup to toggle shut.
+        await clickPage!.mouse.click(el.x, el.y);
+        await clickPage!.waitForTimeout(120);
+        await clickPage!.mouse.click(el.x, el.y);
+        const deadline = Date.now() + 1_500;
+        while (Date.now() < deadline && (ctx.externalTabs?.length ?? 0) <= tabsBefore) {
+          await ctx.page.waitForTimeout(150);
+        }
+        if ((ctx.externalTabs?.length ?? 0) > tabsBefore) {
+          console.log(`[case-action]   external tab opened on attempt ${attempt}/3`);
+          return;
+        }
+        if (attempt < 3) {
+          console.warn(`[case-action]   click ${action.uiKey}: children are externalPage but no tab opened (attempt ${attempt}/3) — re-clicking`);
+        }
+      }
+      console.warn(`[case-action] click ${action.uiKey}: NO external tab after 3 attempts — subsequent external-child clicks will be skipped`);
+      return;
+    }
     for (let i = 0; i < times; i++) {
       await clickPage!.mouse.click(el.x, el.y);
       await clickPage!.waitForTimeout(150);
@@ -2634,6 +2746,25 @@ async function executeAction(
 
     if (!minus || !plus) throw new Error("set_bet_to_value: betMinus + betPlus required in ui-registry");
 
+    // Bet OCR reader — shared by chip-click VERIFICATION (Strategy 1) and the
+    // ladder loop (Strategy 2). Null when the game has no betArea OCR region.
+    let readBet: (() => Promise<number | null>) | null = null;
+    if (ctx.gameSlug) {
+      const { ocrRegions: ocrRegionsStore } = await import("../registry/ocr-regions.js");
+      const regions = await ocrRegionsStore.load(ctx.gameSlug);
+      if (regions?.betArea) {
+        const betArea = regions.betArea;
+        readBet = async (): Promise<number | null> => {
+          try {
+            const ocr = await ocrRegion(ctx.page, {
+              x: betArea.x, y: betArea.y, w: betArea.width, h: betArea.height,
+            }, { numeric: true });
+            return parseNumericFromOcr(ocr.text);
+          } catch { return null; }
+        };
+      }
+    }
+
     // ─── Strategy 1: direct chip click (popup-style games) ────────────
     // Many PP slots open a bet selector popup when clicking betPlus/Minus
     // (or a dedicated bet_settings button). The popup contains chips like
@@ -2681,8 +2812,49 @@ async function executeAction(
           await ctx.page.keyboard.press("Escape");
         }
         await ctx.page.waitForTimeout(500);
-        console.log(`[case-action] set_bet_to_value ${target} — chip click done (parent=${chipMatch.parentKey}, close=${chipMatch.closeButton ? "via " + chipMatch.closeKey : "via Escape"})`);
-        return;
+        // VERIFY the chip actually committed — a click is not a state change.
+        // Clicks landing on a locked UI (autoplay still animating, popup not
+        // rendered, close-reverts-value games) silently leave the bet at the
+        // old value; the old code returned "done" regardless (observed:
+        // set_bet "ok" yet every later spin still at the previous coin →
+        // 1-coin calibration). Mismatch → fall through to the OCR ladder.
+        if (readBet) {
+          let after = await readBet();
+          if (after == null) { await ctx.page.waitForTimeout(400); after = await readBet(); }
+          if (after != null && Math.abs(after - target) <= tolerance) {
+            console.log(`[case-action] set_bet_to_value ${target} — chip click VERIFIED (OCR=${after}, parent=${chipMatch.parentKey})`);
+            return;
+          }
+          // RETRY once with Escape-close: on some games the panel's X button
+          // CANCELS the selected chip (close-reverts pattern) — the chip click
+          // itself committed, then our closeButton click undid it. Re-select
+          // the chip and dismiss via Escape instead.
+          if (after != null && chipMatch.closeButton) {
+            console.warn(`[case-action] set_bet_to_value ${target}: chip click did NOT land (OCR=${after}) — retrying with Escape-close (X may cancel the selection)`);
+            await ctx.page.mouse.click(chipMatch.parent.x, chipMatch.parent.y);
+            await ctx.page.waitForTimeout(800);
+            await ctx.page.mouse.click(chipMatch.chip.x, chipMatch.chip.y);
+            await ctx.page.waitForTimeout(400);
+            await ctx.page.keyboard.press("Escape");
+            await ctx.page.waitForTimeout(500);
+            after = await readBet();
+            if (after == null) { await ctx.page.waitForTimeout(400); after = await readBet(); }
+            if (after != null && Math.abs(after - target) <= tolerance) {
+              console.log(`[case-action] set_bet_to_value ${target} — chip click VERIFIED on Escape-close retry (OCR=${after})`);
+              return;
+            }
+          }
+          if (after != null) {
+            console.warn(`[case-action] set_bet_to_value ${target}: chip click did NOT land (OCR=${after}) — falling through to OCR ladder`);
+            // fall through to Strategy 2 (no return)
+          } else {
+            console.warn(`[case-action] set_bet_to_value ${target}: chip click UNVERIFIED (bet OCR unreadable) — assuming committed`);
+            return;
+          }
+        } else {
+          console.log(`[case-action] set_bet_to_value ${target} — chip click done, unverified (no betArea OCR region; parent=${chipMatch.parentKey})`);
+          return;
+        }
       } catch (err) {
         console.warn(`[case-action] set_bet_to_value ${target}: chip click path threw (${err instanceof Error ? err.message : String(err)}) — falling through to OCR ladder`);
         // Best-effort: try to dismiss any half-open popup before falling
@@ -2698,29 +2870,13 @@ async function executeAction(
     // Direct-adjust games (no popup, betPlus/betMinus just nudges value)
     // OR popup games where target value isn't in the chip set fall here.
     // Reads bet OCR after each +/- click; stops when value matches target.
-    // Need OCR betArea to verify; else fallback to set_bet_to_min behavior.
-    if (!ctx.gameSlug) {
-      console.warn(`[case-action] set_bet_to_value ${target}: no gameSlug — clicking betMinus 20× as fallback`);
+    // Need OCR betArea to verify (the readBet hoisted above); else fallback
+    // to set_bet_to_min behavior.
+    if (!readBet) {
+      console.warn(`[case-action] set_bet_to_value ${target}: no betArea OCR available — clicking betMinus 20× as fallback`);
       for (let i = 0; i < 20; i++) { await ctx.page.mouse.click(minus.x, minus.y); await ctx.page.waitForTimeout(delay); }
       return;
     }
-    const { ocrRegions: ocrRegionsStore } = await import("../registry/ocr-regions.js");
-    const regions = await ocrRegionsStore.load(ctx.gameSlug);
-    if (!regions?.betArea) {
-      console.warn(`[case-action] set_bet_to_value ${target}: no betArea in ocr-regions.json — clicking betMinus 20× as fallback`);
-      for (let i = 0; i < 20; i++) { await ctx.page.mouse.click(minus.x, minus.y); await ctx.page.waitForTimeout(delay); }
-      return;
-    }
-
-    const readBet = async (): Promise<number | null> => {
-      try {
-        const ocr = await ocrRegion(ctx.page, {
-          x: regions.betArea!.x, y: regions.betArea!.y,
-          w: regions.betArea!.width, h: regions.betArea!.height,
-        }, { numeric: true });
-        return parseNumericFromOcr(ocr.text);
-      } catch { return null; }
-    };
 
     console.log(`[case-action] set_bet_to_value ${target} — OCR-verified navigation (max ${maxAttempts} clicks)`);
     let attempts = 0;
@@ -2863,12 +3019,48 @@ async function executeAction(
     await waitUntilNoSpinResponse({
       quietMs,
       maxMs: max,
+      allowZeroSpins: action.allowZeroSpins,
       lastSpinResponseAt: extras.lastSpinResponseAt,
       spinResponseCount: extras.spinResponseCount,
       fsActive: extras.fsActive,
       sleep: (ms) => ctx.page.waitForTimeout(ms),
       now: () => Date.now(),
     });
+    return;
+  }
+  if (action.kind === "stop_autoplay_if_running") {
+    if (!extras) {
+      console.warn(`[case-action] stop_autoplay_if_running: extras missing — cannot observe spins; skipping`);
+      return;
+    }
+    const auto = ctx.uiMap.autoButton;
+    console.log(`[case-action] stop_autoplay_if_running${action.reason ? ` — ${action.reason}` : ""}${auto ? "" : " (no autoButton in registry — observe-only)"}`);
+    const r = await stopAutoplayIfRunning({
+      spinResponseCount: extras.spinResponseCount,
+      fsActive: extras.fsActive,
+      clickAutoButton: async () => {
+        if (!auto) return;
+        console.log(`[case-action]   autoplay active → clicking autoButton (${auto.x},${auto.y}) to STOP`);
+        await ctx.page.mouse.click(auto.x, auto.y);
+      },
+      pressEscape: async () => {
+        try { await ctx.page.keyboard.press("Escape"); } catch { /* ignore */ }
+      },
+      sleep: (ms) => ctx.page.waitForTimeout(ms),
+      now: () => Date.now(),
+      maxMs: action.maxMs,
+      // Without a stop control we can only observe; never "fail" a game for
+      // spins we have no means to stop.
+      maxClicks: auto ? 2 : 0,
+    });
+    if (!r.stopped && auto) {
+      throw new Error(`stop_autoplay_if_running failed: ${r.reason} — autoplay would overlap the next phase; aborting case`);
+    }
+    if (!r.stopped) {
+      console.warn(`[case-action] stop_autoplay_if_running: ${r.reason} (observe-only — proceeding)`);
+    } else {
+      console.log(`[case-action] stop_autoplay_if_running: idle confirmed (${r.clicks} stop click(s), ${r.observedSpins} spin(s) observed)`);
+    }
     return;
   }
   if (action.kind === "dismiss") {
@@ -3063,6 +3255,9 @@ export function evaluateAssertions(
      *  → phantom-win) or false PASS (vacuous). Default true: legacy/no-overlay
      *  games itemize via the hardcoded parser. */
     winItemizationVerified?: boolean;
+    /** Learned per-game FS credit timing (parser-overlay aspect); null = unknown.
+     *  Drives FS-frame balance conservation (immediate vs deferred). */
+    fsCreditTiming?: import("../step6-build-model/providers/spec-types.js").FsCreditTiming | null;
   } = {},
 ): AssertionResult[] {
   const results: AssertionResult[] = [];
@@ -3176,6 +3371,7 @@ export function evaluateAssertions(
               networkBalance: opts.networkBalance,
               ocrBalance: opts.ocrBalance,
               requirement: opts.minimumEvidence,
+              fsCreditTiming: opts.fsCreditTiming,
             };
           }
           const msResult = evaluateBalanceMultiSignal(multiSignalCache);
@@ -3554,6 +3750,8 @@ function buildSignalRollup(opts: {
   stateTimeline: Array<{ from?: string; to: string; via?: string }>;
   allowedInterrupts: string[];
   category: string;
+  /** Learned per-game FS credit timing (parser-overlay aspect); null = unknown. */
+  fsCreditTiming?: import("../step6-build-model/providers/spec-types.js").FsCreditTiming | null;
 }): SignalRollup[] {
   const out: SignalRollup[] = [];
   const TOL = 0.05;
@@ -3783,18 +3981,58 @@ function buildSignalRollup(opts: {
   const ruleChecks: SignalCheck[] = [];
   if (opts.spin && opts.spin.balanceBefore != null) {
     const s = opts.spin;
-    const expected = s.isFreeSpin
-      ? s.balanceBefore + s.win
-      : s.balanceBefore - s.bet + s.win;
-    const diff = Math.abs(expected - s.balanceAfter);
-    ruleChecks.push({
-      field: "balance arithmetic",
-      expected: expected,
-      actual: s.balanceAfter,
-      match: diff < 0.01,
-      source: "balanceAfter == balanceBefore - bet + win",
-      note: diff >= 0.01 ? `diff=${diff.toFixed(3)} > 0.01 — server math off OR parser bet/win wrong` : undefined,
-    });
+    const sDrop = s.balanceBefore - s.balanceAfter;
+    const sGrantsFeature = (s.freeSpinsRemaining ?? 0) > 0 || s.hasBonus === true;
+    const sIsBuyRound = !s.isFreeSpin && sGrantsFeature && s.bet > 0 && sDrop > s.bet * 1.5;
+    if (sIsBuyRound) {
+      // Buy round: wallet moved by the PURCHASE COST, not the bet — the
+      // bet-based formula doesn't apply (see balance-multi-signal rationale).
+      ruleChecks.push({
+        field: "balance arithmetic",
+        expected: "skipped (feature-buy round — deduction is the buy cost)",
+        actual: s.balanceAfter,
+        match: true,
+        source: "balanceAfter == balanceBefore - bet + win",
+        note: `buy signature: deduction ${sDrop.toFixed(2)} ≈ ${(sDrop / s.bet).toFixed(1)}× bet with feature granted — verified by buy-cost-ratio + chain totals instead`,
+      });
+    } else if (s.isFreeSpin && opts.fsCreditTiming === "deferred") {
+      // Deferred-credit game (learned per-game): mid-chain FS frames keep the
+      // balance flat; the chain total is credited at the end. Only an actual
+      // DECREASE is illegal.
+      const ok = s.balanceAfter >= s.balanceBefore - 0.01;
+      ruleChecks.push({
+        field: "balance arithmetic",
+        expected: `>= ${s.balanceBefore} (FS deferred credit — flat until chain end)`,
+        actual: s.balanceAfter,
+        match: ok,
+        source: "fsCreditTiming=deferred (parser-overlay)",
+        note: ok ? undefined : "FS frame balance decreased — illegal even under deferred credit",
+      });
+    } else {
+      const expected = s.isFreeSpin
+        ? s.balanceBefore + s.win
+        : s.balanceBefore - s.bet + s.win;
+      const diff = Math.abs(expected - s.balanceAfter);
+      // Downgrade only mismatches CONSISTENT with deferred credit (flat /
+      // under-credit, never a decrease or over-credit — those are bugs under
+      // both models).
+      const fsUnknownMismatch = s.isFreeSpin && opts.fsCreditTiming == null && diff >= 0.01
+        && s.balanceAfter >= s.balanceBefore - 0.01
+        && s.balanceAfter <= expected + 0.01;
+      ruleChecks.push({
+        field: "balance arithmetic",
+        expected: fsUnknownMismatch ? "unverifiable (FS credit timing not learned)" : expected,
+        actual: s.balanceAfter,
+        // FS frame failing the immediate model on a game whose credit timing
+        // is NOT learned → could be deferred chain-end credit, not a bug.
+        // Don't fail the signal on a guess; surface via note instead.
+        match: fsUnknownMismatch ? true : diff < 0.01,
+        source: "balanceAfter == balanceBefore - bet + win",
+        note: fsUnknownMismatch
+          ? "FS frame mismatch under immediate-credit model — run Calibrate with FS coverage to learn fsCreditTiming"
+          : diff >= 0.01 ? `diff=${diff.toFixed(3)} > 0.01 — server math off OR parser bet/win wrong` : undefined,
+      });
+    }
   } else if (opts.spin) {
     ruleChecks.push({
       field: "balance arithmetic",
