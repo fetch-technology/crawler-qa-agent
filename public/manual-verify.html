@@ -2644,27 +2644,25 @@
           <button id="rtpRefresh" class="gray" style="font-size:11px;padding:2px 8px;">Refresh</button>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-          <label>logic_name <input id="rtpLogic" value="${escapeHtml(d.suggestedLogicName || "")}" style="width:260px;font-size:11px;" title="${d.logicNameDerived ? "derived from captured network traffic" : "GUESSED from slug — verify with the logic team"}"/></label>
-          ${d.logicNameDerived ? "" : `<span class="pill pending" title="not found in network captures — guessed logic-&lt;slug&gt;-clonedpp">guessed</span>`}
-          <label>tag <input id="rtpTag" value="${escapeHtml(d.lastTag || "")}" placeholder="v1.0.3.1" style="width:90px;font-size:11px;"/></label>
+          <label>logic_name <input id="rtpLogic" value="${escapeHtml(d.suggestedLogicName || "")}" style="width:260px;font-size:11px;" title="${d.tagFromLookup ? "from RG lookup API (ex-logic)" : d.logicNameDerived ? "derived from captured network traffic" : "GUESSED from slug — verify with the logic team"}"/></label>
+          ${d.tagFromLookup ? `<span class="pill verified" title="logic_name + version fetched live from RG's lookup API">lookup ✓</span>` : d.logicNameDerived ? "" : `<span class="pill pending" title="lookup API unreachable & not found in network captures — guessed logic-&lt;slug&gt;-clonedpp">guessed</span>`}
+          <label>tag <input id="rtpTag" value="${escapeHtml(d.suggestedTag || d.lastTag || "")}" placeholder="v1.0.3.1" style="width:90px;font-size:11px;" title="${d.tagFromLookup ? "current version from RG lookup API" : "lookup API gave no version — enter the game version manually"}"/></label>
           <button id="rtpRun" style="background:#0d9488;font-size:11px;padding:3px 10px;">▶ Run RTP (×2)</button>
         </div>
         <div style="margin-top:4px;"><label style="font-size:11px;">command <input id="rtpCmd" value="${escapeHtml(d.lastCommand || d.defaultCommand || "")}" style="width:96%;font-size:11px;font-family:ui-monospace,monospace;"/></label></div>
-        <div style="color:#8b939c;font-size:11px;margin-top:4px;">Webhook for RG: <code>POST &lt;server&gt;/api/qa/rtp-callback</code> — raw payload is stored verbatim &amp; shown below.</div>
+        <div style="color:#8b939c;font-size:11px;margin-top:4px;">Webhook for RG: <code>POST ${escapeHtml(location.origin)}/api/qa/rtp-callback</code> — raw payload is stored verbatim &amp; shown below.</div>
         <div style="margin-top:6px;max-height:320px;overflow:auto;">${runsHtml}</div>`;
       panel.querySelector("#rtpRefresh").onclick = renderRtpPanel;
       panel.querySelector("#rtpRun").onclick = async () => {
-        const tag = panel.querySelector("#rtpTag").value.trim();
-        if (!tag) return toast("tag (game version) required", true);
         const body = {
           gameSlug: slug,
-          tag,
+          tag: panel.querySelector("#rtpTag").value.trim() || undefined, // empty → server resolves via lookup API
           logicName: panel.querySelector("#rtpLogic").value.trim() || undefined,
           command: panel.querySelector("#rtpCmd").value.trim() || undefined,
         };
         try {
           const r = await api("/api/qa/manual/rtp-run", { method: "POST", body });
-          toast(r.ok ? `RTP triggered ×2 (${r.logicName}) — results in ~30 min via webhook` : `RTP trigger problem: ${r.reason || "see runs"}`, !r.ok);
+          toast(r.ok ? `RTP triggered ×2 (${r.logicName} @ ${r.tag}) — results in ~30 min via webhook` : `RTP trigger problem: ${r.reason || "see runs"}`, !r.ok);
         } catch (err) { toast(`RTP trigger failed: ${err.message}`, true); }
         await renderRtpPanel();
       };

@@ -63,6 +63,54 @@ async function saveRtpRuns(slug: string, data: RtpRunsFile): Promise<void> {
   await writeFile(rtpFilePath(slug), JSON.stringify(data, null, 2) + "\n", "utf8");
 }
 
+/** Look up the game's logic_name + current version (tag) from RG's lookup
+ *  API — the AUTHORITATIVE source for both trigger fields:
+ *    GET https://ex-logic.dev.revenge-games.com
+ *    body { env, game_code } → { logic_name, version }
+ *  NOTE: their API is a GET **with a JSON body** — Node's fetch forbids that,
+ *  so this uses node:https directly to mirror the curl faithfully. Returns
+ *  null on any failure (network, non-JSON, missing fields) — callers fall
+ *  back to the capture-derived/guessed chain. Endpoint/env overridable via
+ *  RG_LOGIC_LOOKUP_URL / RG_LOGIC_ENV. */
+export async function lookupLogicInfo(gameCode: string): Promise<{ logicName: string; version: string } | null> {
+  const endpoint = process.env.RG_LOGIC_LOOKUP_URL || "https://ex-logic.dev.revenge-games.com";
+  const envName = process.env.RG_LOGIC_ENV || "sandbox";
+  try {
+    const { request } = await import("node:https");
+    const u = new URL(endpoint);
+    const body = JSON.stringify({ env: envName, game_code: gameCode });
+    const text = await new Promise<string>((resolve, reject) => {
+      const req = request(
+        {
+          hostname: u.hostname,
+          port: u.port || 443,
+          path: (u.pathname || "/") + u.search,
+          method: "GET",
+          headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
+        },
+        (res) => {
+          let data = "";
+          res.on("data", (c) => { data += c; });
+          res.on("end", () => resolve(data));
+        },
+      );
+      req.on("error", reject);
+      req.setTimeout(10_000, () => req.destroy(new Error("lookup timeout (10s)")));
+      req.write(body);
+      req.end();
+    });
+    const j = JSON.parse(text) as { logic_name?: string; version?: string };
+    if (typeof j.logic_name === "string" && j.logic_name) {
+      return { logicName: j.logic_name, version: typeof j.version === "string" ? j.version : "" };
+    }
+    console.warn(`[rtp] logic lookup for "${gameCode}": response missing logic_name — ${text.slice(0, 200)}`);
+    return null;
+  } catch (err) {
+    console.warn(`[rtp] logic lookup for "${gameCode}" failed (falling back to capture/guess): ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+}
+
 /** Derive the game's logic service name from captured network traffic. Some
  *  envs embed it in spin responses (`debug.logic = http://.../logic-<x>-clonedpp...`);
  *  when absent, fall back to the conventional `logic-<slug>-clonedpp` and mark
@@ -129,25 +177,37 @@ async function triggerOne(args: {
   return run;
 }
 
-/** Trigger BOTH commands (base + --ps=true) for a game and persist the runs. */
+/** Trigger BOTH commands (base + --ps=true) for a game and persist the runs.
+ *  logicName/tag resolution: explicit args win (QA edited the fields), else
+ *  the RG lookup API (authoritative), else capture-scan/convention for the
+ *  name — and a hard error for the tag, since a guessed version would silently
+ *  test the wrong build. */
 export async function triggerRtpRuns(args: {
   gameSlug: string;
-  tag: string;
+  tag?: string;
   command?: string;
   logicName?: string;
-}): Promise<{ ok: boolean; runs: RtpRun[]; logicName: string; derived: boolean; reason?: string }> {
+}): Promise<{ ok: boolean; runs: RtpRun[]; logicName: string; derived: boolean; tag?: string; reason?: string }> {
   const base = (args.command ?? DEFAULT_RTP_COMMAND).trim();
+  const needLookup = !args.logicName || !args.tag?.trim();
+  const looked = needLookup ? await lookupLogicInfo(args.gameSlug) : null;
   const derived = args.logicName
     ? { logicName: args.logicName, derived: true }
-    : await deriveLogicName(args.gameSlug);
+    : looked
+      ? { logicName: looked.logicName, derived: true }
+      : await deriveLogicName(args.gameSlug);
+  const tag = args.tag?.trim() || looked?.version || "";
+  if (!tag) {
+    return { ok: false, runs: [], logicName: derived.logicName, derived: derived.derived, reason: "tag (game version) unknown: lookup API gave no version and none was provided — enter it manually" };
+  }
   const psCommand = /\s--ps=true\b/.test(base) ? base : `${base} --ps=true`;
   const runs = [
-    await triggerOne({ gameSlug: args.gameSlug, logicName: derived.logicName, tag: args.tag, command: base, psVariant: false }),
-    await triggerOne({ gameSlug: args.gameSlug, logicName: derived.logicName, tag: args.tag, command: psCommand, psVariant: true }),
+    await triggerOne({ gameSlug: args.gameSlug, logicName: derived.logicName, tag, command: base, psVariant: false }),
+    await triggerOne({ gameSlug: args.gameSlug, logicName: derived.logicName, tag, command: psCommand, psVariant: true }),
   ];
   const file = await loadRtpRuns(args.gameSlug);
   file.runs.push(...runs);
-  file.lastTag = args.tag;
+  file.lastTag = tag;
   file.lastCommand = base;
   file.lastLogicName = derived.logicName;
   await saveRtpRuns(args.gameSlug, file);
@@ -157,6 +217,7 @@ export async function triggerRtpRuns(args: {
     runs,
     logicName: derived.logicName,
     derived: derived.derived,
+    tag,
     reason: failed.length > 0 ? `trigger failed for ${failed.length}/2 command(s) — see triggerResponse` : undefined,
   };
 }

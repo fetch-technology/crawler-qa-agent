@@ -65,7 +65,7 @@ export async function handleManualRoute(
 ): Promise<boolean> {
   // /api/qa/rtp-callback is the PUBLIC listener RG posts e2e results to —
   // deliberately outside /manual (it's machine-to-machine, not dashboard).
-  if (!url.startsWith("/api/qa/manual") && url !== "/api/qa/rtp-callback") return false;
+  if (!url.startsWith("/api/qa/manual") && !url.startsWith("/api/qa/rtp-callback")) return false;
   console.log(`[manual] ${method} ${url}`);
 
   try {
@@ -701,17 +701,17 @@ export async function handleManualRoute(
     // Spins live at >=2 bet levels, derives + self-validates the per-game payout
     // model (Layer 2 of payout verification), stores payout-model.json.
     // ── RTP (logic-level e2e via RG) ──────────────────────────────────────
-    // POST /api/qa/manual/rtp-run { gameSlug, tag, command?, logicName? }
-    // Triggers RG's e2e API twice (base + --ps=true). ~30 min/run; results
-    // arrive later via POST /api/qa/rtp-callback (give that URL to RG).
+    // POST /api/qa/manual/rtp-run { gameSlug, tag?, command?, logicName? }
+    // Triggers RG's e2e API twice (base + --ps=true). tag/logicName omitted →
+    // resolved via RG's lookup API (ex-logic). ~30 min/run; results arrive
+    // later via POST /api/qa/rtp-callback (give that URL to RG).
     if (url === "/api/qa/manual/rtp-run" && method === "POST") {
       const body = await asJsonBody<{ gameSlug?: string; tag?: string; command?: string; logicName?: string }>(req);
       const slug = body.gameSlug || (typeof req.headers["x-game-slug"] === "string" ? req.headers["x-game-slug"] : null);
       if (!slug) return sendJson(res, 400, { ok: false, error: "gameSlug required" }), true;
-      if (!body.tag?.trim()) return sendJson(res, 400, { ok: false, error: "tag (game version, e.g. v1.0.3.1) required" }), true;
       const { triggerRtpRuns } = await import("./rtp-runs.js");
-      const r = await triggerRtpRuns({ gameSlug: slug, tag: body.tag.trim(), command: body.command, logicName: body.logicName?.trim() || undefined });
-      return sendJson(res, r.ok ? 200 : 502, r), true;
+      const r = await triggerRtpRuns({ gameSlug: slug, tag: body.tag?.trim() || undefined, command: body.command, logicName: body.logicName?.trim() || undefined });
+      return sendJson(res, r.ok ? 200 : r.runs.length === 0 ? 400 : 502, r), true;
     }
 
     // GET /api/qa/manual/rtp-runs?game=<slug> — runs + raw callback payloads.
@@ -719,16 +719,38 @@ export async function handleManualRoute(
       const u = new URL(url, "http://localhost");
       const slug = u.searchParams.get("game") || (typeof req.headers["x-game-slug"] === "string" ? req.headers["x-game-slug"] : null);
       if (!slug) return sendJson(res, 400, { ok: false, error: "game required" }), true;
-      const { loadRtpRuns, deriveLogicName, DEFAULT_RTP_COMMAND } = await import("./rtp-runs.js");
+      const { loadRtpRuns, deriveLogicName, lookupLogicInfo, DEFAULT_RTP_COMMAND } = await import("./rtp-runs.js");
       const file = await loadRtpRuns(slug);
-      const logic = file.lastLogicName ? { logicName: file.lastLogicName, derived: true } : await deriveLogicName(slug);
-      return sendJson(res, 200, { ok: true, ...file, suggestedLogicName: logic.logicName, logicNameDerived: logic.derived, defaultCommand: DEFAULT_RTP_COMMAND, hasApiKey: !!process.env.RG_E2E_API_KEY }), true;
+      // Lookup API is authoritative for logic_name + version (tag); fall back
+      // to last-used values / capture-scan when it's unreachable.
+      const looked = await lookupLogicInfo(slug);
+      const logic = looked
+        ? { logicName: looked.logicName, derived: true }
+        : file.lastLogicName
+          ? { logicName: file.lastLogicName, derived: true }
+          : await deriveLogicName(slug);
+      const suggestedTag = looked?.version || file.lastTag || "";
+      return sendJson(res, 200, { ok: true, ...file, suggestedLogicName: logic.logicName, logicNameDerived: logic.derived, suggestedTag, tagFromLookup: !!looked?.version, defaultCommand: DEFAULT_RTP_COMMAND, hasApiKey: !!process.env.RG_E2E_API_KEY }), true;
     }
 
     // POST /api/qa/rtp-callback — the listener endpoint we hand to RG. Accepts
     // ANY payload (JSON or plain text), stores it VERBATIM (inbox + matched
     // run). No schema assumptions until RG's event format settles.
-    if (url === "/api/qa/rtp-callback" && method === "POST") {
+    // OPTIONAL gate for public deployments: when env RTP_CALLBACK_TOKEN is
+    // set, the request must carry it (header `x-rtp-token` or `?token=`) —
+    // else anyone on the internet can spam the inbox. Unset = open (current
+    // agreement with RG until they confirm an auth scheme).
+    if (url.startsWith("/api/qa/rtp-callback") && method === "POST") {
+      const required = process.env.RTP_CALLBACK_TOKEN;
+      if (required) {
+        const got = (typeof req.headers["x-rtp-token"] === "string" && req.headers["x-rtp-token"])
+          || new URL(url, "http://localhost").searchParams.get("token")
+          || "";
+        if (got !== required) {
+          console.warn(`[rtp-callback] rejected: bad/missing token`);
+          return sendJson(res, 401, { ok: false, error: "invalid token" }), true;
+        }
+      }
       const raw = await readBody(req);
       const { recordCallback } = await import("./rtp-runs.js");
       const r = await recordCallback(raw);
