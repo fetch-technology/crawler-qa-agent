@@ -100,3 +100,42 @@ test("already-autoplay actions (no discrete spins) are left unchanged", () => {
   const out = maybeConvertToAutoplay(actions, { category: "free_spins", spinCount: 100, uiMap: REG_WITH_AUTOPLAY });
   expect(out).toEqual(actions);
 });
+
+// === ensureAutoplayHygiene (stop tail — leftover-autoplay race fix) ===
+import { ensureAutoplayHygiene } from "../../src/pipeline/step7-testcase-gen/case-action-translator.ts";
+
+test("hygiene: converted autoplay plan gets MAIN+stop tail right after the batch wait", () => {
+  const out = ensureAutoplayHygiene(
+    maybeConvertToAutoplay(spinRun(60), { category: "free_spins", spinCount: 60, uiMap: REG_WITH_AUTOPLAY }),
+    REG_WITH_AUTOPLAY,
+  );
+  const waitIdx = out.findIndex((a) => a.kind === "wait_until_no_spin_response");
+  expect(out[waitIdx + 1]!.kind).toBe("wait_until_state");
+  expect(out[waitIdx + 2]!.kind).toBe("stop_autoplay_if_running");
+});
+
+test("hygiene: AI-authored autoplay (no conversion) also gets the tail", () => {
+  const actions: CaseAction[] = [
+    { kind: "click", uiKey: "autoButton" },
+    { kind: "click", uiKey: "autoButton__autoCountSlide-100" },
+    { kind: "click", uiKey: "autoButton__startAutoplayButton" },
+    { kind: "wait_until_no_spin_response", quietMs: 5000, maxMs: 180000 },
+  ];
+  const out = ensureAutoplayHygiene(actions, REG_WITH_AUTOPLAY);
+  expect(out.some((a) => a.kind === "stop_autoplay_if_running")).toBe(true);
+  expect(out[out.length - 1]!.kind).toBe("stop_autoplay_if_running");
+});
+
+test("hygiene: plan without autoplay start is untouched", () => {
+  const actions = spinRun(3);
+  expect(ensureAutoplayHygiene(actions, REG_WITH_AUTOPLAY)).toEqual(actions);
+});
+
+test("hygiene: idempotent — plan already containing a stop action is untouched", () => {
+  const actions: CaseAction[] = [
+    { kind: "click", uiKey: "autoButton__startAutoplayButton" },
+    { kind: "wait_until_no_spin_response" },
+    { kind: "stop_autoplay_if_running" },
+  ];
+  expect(ensureAutoplayHygiene(actions, REG_WITH_AUTOPLAY)).toEqual(actions);
+});

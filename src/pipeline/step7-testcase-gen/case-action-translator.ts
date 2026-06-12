@@ -447,11 +447,11 @@ export async function translateCase(input: {
     // this, empty-setup FS-watch cases (e.g. free-spins-trigger-watch, 60
     // spins, no AI) stayed as 60 discrete clicks and never became autoplay-1000
     // — the short-circuit returned before the post-process safety net.
-    const finalActions = maybeConvertToAutoplay(actions, {
+    const finalActions = ensureAutoplayHygiene(maybeConvertToAutoplay(actions, {
       category: input.category,
       spinCount: input.spinCount,
       uiMap: input.uiMap,
-    });
+    }), input.uiMap);
     return { caseId: input.caseId, actions: finalActions, aiCalled: false };
   }
 
@@ -573,11 +573,11 @@ export async function translateCase(input: {
   // autoplay, no manual edit). Faster + far more robust than N manual clicks,
   // and the only practical way to reach the spin counts that organically
   // trigger free spins. Runs LAST so the ante/bet prelude is preserved.
-  const finalActions = maybeConvertToAutoplay(parsed.actions, {
+  const finalActions = ensureAutoplayHygiene(maybeConvertToAutoplay(parsed.actions, {
     category: input.category,
     spinCount: input.spinCount,
     uiMap: input.uiMap,
-  });
+  }), input.uiMap);
   return { caseId: input.caseId, actions: finalActions, aiCalled: true };
 }
 
@@ -623,7 +623,12 @@ export function maybeConvertToAutoplay(
   const tile = isFsWatch
     ? presets[presets.length - 1]!
     : (presets.find((n) => n >= target) ?? presets[presets.length - 1]!);
-  const maxMs = Math.min(900_000, tile * 3000 + 120_000);
+  // ~6s/spin budget + 10s quiet — same rationale as buildAutoplayBatch: a
+  // tight cap/quiet ends the case MID-BATCH, and evaluation then races the
+  // still-running autoplay (observed: end-of-case OCR read the balance one
+  // whole bet BELOW the last captured spin — the next round had already
+  // deducted). ensureAutoplayHygiene() appends the stop tail as the backstop.
+  const maxMs = Math.min(900_000, tile * 6000 + 120_000);
 
   const autoplaySeq: CaseAction[] = [
     { kind: "click", uiKey: "autoButton", reason: "open autoplay panel (auto-converted from discrete spins)" },
@@ -631,13 +636,46 @@ export function maybeConvertToAutoplay(
     { kind: "click", uiKey: `autoButton__autoCountSlide-${tile}`, reason: `select ${tile}-spin autoplay batch` },
     { kind: "wait_ms", ms: 500 },
     { kind: "click", uiKey: "autoButton__startAutoplayButton", reason: "start autoplay batch" },
-    { kind: "wait_until_no_spin_response", quietMs: 5000, maxMs, reason: `wait autoplay batch of ${tile} (FS-aware) to finish` },
+    { kind: "wait_until_no_spin_response", quietMs: 10_000, maxMs, reason: `wait autoplay batch of ${tile} (FS-aware) to finish` },
   ];
   const before = actions.slice(0, firstSpin);
   // Drop any trailing wait_ms after the spin run (belonged to discrete spins).
   const after = actions.slice(lastSpin + 1).filter((a) => a.kind !== "wait_ms");
   console.warn(`[case-translator/autoplay] converted ${numSpins} discrete spin(s) → native autoplay tile=${tile} (category=${input.category ?? "?"}, fsWatch=${isFsWatch})`);
   return [...before, ...autoplaySeq, ...after];
+}
+
+/** Autoplay hygiene post-pass: any action plan that STARTS an autoplay batch
+ *  must also guarantee the batch is fully stopped before later steps and the
+ *  end-of-case evaluation. Without it, a quiet-gap/timeout exit from the wait
+ *  leaves autoplay RUNNING → assertions and OCR race a moving game (observed:
+ *  final balance OCR exactly one bet below the last captured spin), and the
+ *  leftover batch keeps burning balance after the case returns. Appends
+ *  (right after the batch wait):
+ *    1. wait_until_state MAIN — actively dismisses an end-of-feature
+ *       celebration (a PAUSED autoplay emits no spins, so the stop action
+ *       cannot see it until the popup is cleared), then
+ *    2. stop_autoplay_if_running — effect-verified stop of whatever remains.
+ *  No-op when the plan has no autoplay start, lacks autoButton, or already
+ *  contains a stop action. Applied AFTER maybeConvertToAutoplay, so it covers
+ *  both converted plans and autoplay flows the AI authored directly. */
+export function ensureAutoplayHygiene(actions: CaseAction[], uiMap: UiRegistry): CaseAction[] {
+  const reg = uiMap as Record<string, UiElement | undefined>;
+  if (!reg.autoButton) return actions;
+  const startIdx = actions.findIndex(
+    (a) => a.kind === "click" && (a as { uiKey?: string }).uiKey === "autoButton__startAutoplayButton",
+  );
+  if (startIdx < 0) return actions;
+  if (actions.some((a) => a.kind === "stop_autoplay_if_running")) return actions;
+  let insertAt = startIdx + 1;
+  for (let i = startIdx + 1; i < actions.length; i++) {
+    if (actions[i]!.kind === "wait_until_no_spin_response") { insertAt = i + 1; break; }
+  }
+  const tail: CaseAction[] = [
+    { kind: "wait_until_state", state: "MAIN", maxMs: 30_000, reason: "dismiss end-of-feature celebration (a paused autoplay emits no spins)" },
+    { kind: "stop_autoplay_if_running", reason: "ensure no leftover autoplay before evaluation / later steps" },
+  ];
+  return [...actions.slice(0, insertAt), ...tail, ...actions.slice(insertAt)];
 }
 
 /** Build a native autoplay batch action sequence for ~targetSpins rounds.

@@ -289,7 +289,7 @@
   <div class="panel">
     <h2>
       Test Cases · Inspect & Run
-      <button id="btnClearResults" class="gray" style="float: right; font-size: 11px; padding: 4px 8px; margin-left: 6px;" title="Clear cached run results for current game (localStorage)">Clear Results</button>
+      <button id="btnClearResults" class="gray" style="float: right; font-size: 11px; padding: 4px 8px; margin-left: 6px;" title="Delete this game's run results AND on-disk evidence (videos, screenshots, network logs, run history). Learned knowledge (registry, cases, payout model) is kept. Click twice to confirm.">Clear Results</button>
       <button id="btnRetranslateAllForce" style="background: #d9534f; float: right; font-size: 11px; padding: 4px 8px; margin-left: 6px;" title="Re-translate ALL cases (including runnable ones — re-runs AI for everything)">Re-translate ALL</button>
       <button id="btnRetranslateAll" style="background: #d97706; float: right; font-size: 11px; padding: 4px 8px; margin-left: 6px;" title="Re-translate only SKIPPED cases (those with 0 actions or skipReason)">Re-translate Skipped</button>
       <button id="btnLoadCases" class="gray" style="float: right; font-size: 11px; padding: 4px 8px; margin-left: 6px;">Load Cases</button>
@@ -2720,13 +2720,45 @@
     $("#btnRetranslateAll").onclick = () => doBatchRetranslate("skipped");
     $("#btnRetranslateAllForce").onclick = () => doBatchRetranslate("all");
 
-    $("#btnClearResults").onclick = () => {
+    // Clear Results = browser cache AND on-disk evidence (videos, screenshots,
+    // network logs, persisted results, run history). Without the disk wipe the
+    // button was cosmetic: results re-appeared on reload because disk is the
+    // authoritative source. Destructive → inline arm-confirm (no popup):
+    // first click arms the button, second click within 5s executes.
+    let clearResultsArmed = null;
+    $("#btnClearResults").onclick = async () => {
       const slug = window.__lastCasesSlug;
       if (!slug) return toast("No cases loaded", true);
-      localStorage.removeItem(caseResultsKey(slug));
-      window.__caseResults = {};
-      renderCases(window.__cases || [], slug);
-      toast(`Cleared run results for ${slug}`);
+      const btn = $("#btnClearResults");
+      if (clearResultsArmed !== slug) {
+        clearResultsArmed = slug;
+        btn.textContent = "⚠ Click again — deletes disk evidence";
+        btn.style.background = "#d9534f";
+        setTimeout(() => {
+          if (clearResultsArmed === slug) {
+            clearResultsArmed = null;
+            btn.textContent = "Clear Results";
+            btn.style.background = "";
+          }
+        }, 5000);
+        return;
+      }
+      clearResultsArmed = null;
+      btn.textContent = "Clearing…";
+      try {
+        const r = await api("/api/qa/manual/clear-evidence", { method: "POST", body: { gameSlug: slug } });
+        localStorage.removeItem(caseResultsKey(slug));
+        window.__caseResults = {};
+        window.__caseStats = {};
+        renderCases(window.__cases || [], slug);
+        const mb = r.freedBytes ? (r.freedBytes / 1024 / 1024).toFixed(1) : "0";
+        toast(`Cleared run results + evidence for ${slug} (${mb} MB freed)`);
+      } catch (err) {
+        toast(`Clear failed: ${err.message}`, true);
+      } finally {
+        btn.textContent = "Clear Results";
+        btn.style.background = "";
+      }
     };
 
     async function loadCasesForSlug(slug, opts = {}) {

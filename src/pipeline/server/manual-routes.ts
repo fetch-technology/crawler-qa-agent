@@ -364,6 +364,14 @@ export async function handleManualRoute(
       return sendJson(res, r.ok ? 200 : 400, r), true;
     }
 
+    // POST /api/qa/manual/clear-evidence { gameSlug? } — delete the game's run
+    // evidence on disk (case-evidence + case-history). Knowledge files stay.
+    if (url === "/api/qa/manual/clear-evidence" && method === "POST") {
+      const body = await asJsonBody<{ gameSlug?: string }>(req);
+      const r = await resolveSession(req, body as any, url).clearCaseEvidence(body.gameSlug);
+      return sendJson(res, r.ok ? 200 : 400, r), true;
+    }
+
     // POST /api/qa/manual/resync-assertions { caseId, gameSlug? } — replace a
     // case's template-derived assertions with the CURRENT template library
     // (no AI call; Re-translate only refreshes ACTIONS, never assertions).
