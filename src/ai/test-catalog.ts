@@ -294,6 +294,11 @@ const ASSERTION_VARS_DOC = `Variables available in check_code expressions:
 
 DATA (always bound):
 - spin: current SpinResponse (or null for UI-only cases). Normalized fields ONLY: betAmount, winAmount, endingBalance, startingBalance, status, id, round, currency, isFreeSpin, isEndRound, matrix, state, freeSpinsRemaining.
+  ⚠ freeSpinsRemaining DIRECTION IS PROVIDER-SPECIFIC: on Pragmatic it counts
+  UP (it is the spin INDEX within the chain, 1→N), on others it counts DOWN
+  (true remaining). NEVER assert one direction ("decreases monotonically" =
+  guaranteed false-FAIL on PP). If you check counter sanity, accept EITHER
+  consistent direction (all-non-decreasing OR all-non-increasing).
 - previousSpin: null (placeholder, unused — use collector.spins[i-1] if you need previous).
 - collector: { spins: SpinResponse[] } — ALL captured spins of this case (post cascade-dedup).
 - spinIndex: number — collector.spins.length - 1 (last spin index).

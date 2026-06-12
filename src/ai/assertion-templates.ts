@@ -155,9 +155,17 @@ export const ASSERTION_TEMPLATES_BY_CATEGORY: Record<string, AssertionTemplate[]
       check_code: "collector.spins.filter(s => s.isFreeSpin === true).every(s => s.startingBalance == null || s.endingBalance >= s.startingBalance - 0.001)",
     },
     {
+      // DIRECTION-AGNOSTIC: the counter's direction is PROVIDER-SPECIFIC.
+      // PP's `fs` field counts UP (it's the spin INDEX within the chain,
+      // paired with fsmax); other providers count DOWN (true "remaining").
+      // Asserting one direction false-failed every PP FS chain (observed:
+      // 1→10 clean progression marked FAIL). Monotonic-in-ONE-direction still
+      // catches a genuinely erratic counter (e.g. 3→7→2) without assuming
+      // which way it runs. Retriggers may bump a down-counter — hence ±, not
+      // strict.
       id: "free-spins-counter-monotonic",
-      description: "freeSpinsRemaining counter decreases monotonically",
-      check_code: "(() => { const fs = collector.spins.filter(s => s.isFreeSpin === true && typeof s.freeSpinsRemaining === 'number'); for (let i = 1; i < fs.length; i++) { if (fs[i].freeSpinsRemaining > fs[i-1].freeSpinsRemaining) return false; } return true; })()",
+      description: "freeSpinsRemaining counter is monotonic in one consistent direction (PP counts UP as spin index; others count DOWN) — no erratic jumps",
+      check_code: "(() => { const v = collector.spins.filter(s => s.isFreeSpin === true && typeof s.freeSpinsRemaining === 'number').map(s => s.freeSpinsRemaining); if (v.length < 2) return true; const up = v.every((x, i) => i === 0 || x >= v[i-1]); const down = v.every((x, i) => i === 0 || x <= v[i-1]); return up || down; })()",
     },
   ],
 

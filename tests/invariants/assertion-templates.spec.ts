@@ -89,3 +89,22 @@ test("buildTemplateBlockForPlan: header included when any templates render", () 
   const block = buildTemplateBlockForPlan(["bet_boundary"]);
   expect(block).toContain("PER-CATEGORY ASSERTION TEMPLATES");
 });
+
+// REGRESSION (2026-06-12) — freeSpinsRemaining direction is PROVIDER-SPECIFIC:
+// PP counts UP (spin index in chain), others count DOWN. The old template
+// asserted "decreases monotonically" → false-FAILed every PP FS chain
+// (observed: clean 1→10 progression marked FAIL). The template must accept
+// EITHER consistent direction and reject only erratic counters.
+test("fs-counter-monotonic template is direction-agnostic", () => {
+  const tpl = ASSERTION_TEMPLATES_BY_CATEGORY.free_spins.find((t) => t.id === "free-spins-counter-monotonic")!;
+  expect(tpl).toBeTruthy();
+  const run = (values: number[]): boolean => {
+    const collector = { spins: values.map((n) => ({ isFreeSpin: true, freeSpinsRemaining: n })) };
+    // eslint-disable-next-line no-new-func
+    return new Function("collector", `return (${tpl.check_code});`)(collector) as boolean;
+  };
+  expect(run([2, 3, 4, 5, 6, 7, 8, 9, 10])).toBe(true); // PP up-count (the false-FAIL case)
+  expect(run([10, 9, 8, 7, 6, 5])).toBe(true);          // classic down-count
+  expect(run([3, 7, 2])).toBe(false);                   // erratic → real failure
+  expect(run([5])).toBe(true);                          // single frame vacuous
+});
