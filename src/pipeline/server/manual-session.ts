@@ -4467,9 +4467,49 @@ CHECK_CODE RULES
     };
   }
 
-  async retranslateCase(caseId: string, slugOverride?: string): Promise<{ ok: boolean; actions?: unknown[]; skipReason?: string; reason?: string; aiCalled?: boolean }> {
+  /** Re-sync ONE case's persisted assertions with the current template
+   *  library (template fixes don't reach already-generated catalogs — see
+   *  resyncAssertionsWithTemplates). No AI call; saves test-cases.json only
+   *  when something actually changed. */
+  async resyncCaseAssertions(caseId: string, slugOverride?: string): Promise<{
+    ok: boolean;
+    updated?: Array<{ id: string; templateId: string }>;
+    ambiguous?: Array<{ id: string; templateIds: string[] }>;
+    reason?: string;
+  }> {
     const slug = slugOverride ?? this.gameSlug;
     if (!slug) return { ok: false, reason: "gameSlug required (no active session or override)" };
+    const { loadRawCatalog, saveCatalog } = await import("../step7-testcase-gen/ai-catalog.js");
+    const catalog = await loadRawCatalog(slug);
+    if (!catalog) return { ok: false, reason: "test-cases.json not found" };
+    const tc = catalog.cases.find((c) => c.id === caseId);
+    if (!tc) return { ok: false, reason: `case ${caseId} not in catalog` };
+    if (!tc.custom_assertions || tc.custom_assertions.length === 0) {
+      return { ok: true, updated: [], ambiguous: [] };
+    }
+    const { resyncAssertionsWithTemplates } = await import("../../ai/assertion-templates.js");
+    const r = resyncAssertionsWithTemplates(tc.custom_assertions);
+    if (r.updated.length > 0) {
+      tc.custom_assertions = r.assertions;
+      await saveCatalog(slug, catalog);
+      console.log(`[manual/case] ${slug}/${caseId}: re-synced ${r.updated.length} assertion(s) from templates: ${r.updated.map((u) => `${u.id}←${u.templateId}`).join(", ")}`);
+    }
+    if (r.ambiguous.length > 0) {
+      console.warn(`[manual/case] ${slug}/${caseId}: ${r.ambiguous.length} assertion(s) matched multiple templates — skipped: ${r.ambiguous.map((a) => a.id).join(", ")}`);
+    }
+    return { ok: true, updated: r.updated, ambiguous: r.ambiguous };
+  }
+
+  async retranslateCase(caseId: string, slugOverride?: string): Promise<{ ok: boolean; actions?: unknown[]; skipReason?: string; reason?: string; aiCalled?: boolean; resynced?: number }> {
+    const slug = slugOverride ?? this.gameSlug;
+    if (!slug) return { ok: false, reason: "gameSlug required (no active session or override)" };
+    // Re-translate = bring the WHOLE case up to current system knowledge:
+    // 1) re-sync template-derived assertions with the current template
+    //    library (free, persisted to test-cases.json), THEN
+    // 2) re-translate setup → actions (AI call) — the translator sees the
+    //    UPDATED assertions as context.
+    const sync = await this.resyncCaseAssertions(caseId, slug);
+    const resynced = sync.ok ? (sync.updated?.length ?? 0) : 0;
     const catalog = await loadAiCatalog(slug);
     if (!catalog) return { ok: false, reason: "test-cases.json not found" };
     const tc = catalog.cases.find((c) => c.id === caseId);
@@ -4506,7 +4546,7 @@ CHECK_CODE RULES
     cache.generatedAt = new Date().toISOString();
     await saveActionsCache(slug, cache);
 
-    return { ok: true, actions: translated.actions, skipReason: translated.skipReason, aiCalled };
+    return { ok: true, actions: translated.actions, skipReason: translated.skipReason, aiCalled, resynced };
   }
 
   /**
@@ -4642,6 +4682,31 @@ CHECK_CODE RULES
     const mode = opts.mode ?? "skipped";
     const slug = opts.slugOverride ?? this.gameSlug;
     if (!slug) return { ok: false, reason: "gameSlug required" };
+    // Re-sync ALL cases' template-derived assertions first (one load+save) so
+    // batch re-translate also adopts template fixes — same contract as the
+    // per-case button.
+    try {
+      const { loadRawCatalog, saveCatalog } = await import("../step7-testcase-gen/ai-catalog.js");
+      const raw = await loadRawCatalog(slug);
+      if (raw) {
+        const { resyncAssertionsWithTemplates } = await import("../../ai/assertion-templates.js");
+        let totalSynced = 0;
+        for (const c of raw.cases) {
+          if (!c.custom_assertions?.length) continue;
+          const r = resyncAssertionsWithTemplates(c.custom_assertions);
+          if (r.updated.length > 0) {
+            c.custom_assertions = r.assertions;
+            totalSynced += r.updated.length;
+          }
+        }
+        if (totalSynced > 0) {
+          await saveCatalog(slug, raw);
+          console.log(`[manual/retranslate-all] ${slug}: re-synced ${totalSynced} assertion(s) from templates across the catalog`);
+        }
+      }
+    } catch (err) {
+      console.warn(`[manual/retranslate-all] assertion resync failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+    }
     const catalog = await loadAiCatalog(slug);
     if (!catalog) return { ok: false, reason: "test-cases.json not found" };
     const reg = (this.gameSlug === slug && this.registry) ? this.registry : await uiRegistry.load(slug);

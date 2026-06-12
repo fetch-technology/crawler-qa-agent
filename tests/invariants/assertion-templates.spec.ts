@@ -9,6 +9,7 @@ import {
   ASSERTION_TEMPLATES_BY_CATEGORY,
   renderTemplatesForCategory,
   buildTemplateBlockForPlan,
+  resyncAssertionsWithTemplates,
 } from "../../src/ai/assertion-templates.ts";
 
 test("templates exist for all critical categories", () => {
@@ -107,4 +108,46 @@ test("fs-counter-monotonic template is direction-agnostic", () => {
   expect(run([10, 9, 8, 7, 6, 5])).toBe(true);          // classic down-count
   expect(run([3, 7, 2])).toBe(false);                   // erratic → real failure
   expect(run([5])).toBe(true);                          // single frame vacuous
+});
+
+// === resyncAssertionsWithTemplates (catalog ← template fixes) ===
+
+const OLD_COUNTER_CODE = "(() => { const fs = collector.spins.filter(s => s.isFreeSpin === true && typeof s.freeSpinsRemaining === 'number'); for (let i = 1; i < fs.length; i++) { if (fs[i].freeSpinsRemaining > fs[i-1].freeSpinsRemaining) return false; } return true; })()";
+
+test("resync: namespaced assertion carrying STALE template code gets the current code", () => {
+  // The real-world case: AI named it buy-pm-fs-counter-monotonic (template is
+  // free-spins-counter-monotonic) and the catalog still holds the old
+  // down-only check that false-fails PP.
+  const r = resyncAssertionsWithTemplates([
+    { id: "buy-pm-fs-counter-monotonic", description: "old desc", check_code: OLD_COUNTER_CODE },
+  ]);
+  expect(r.updated).toEqual([{ id: "buy-pm-fs-counter-monotonic", templateId: "free-spins-counter-monotonic" }]);
+  expect(r.assertions[0]!.check_code).toContain("up || down");
+  expect(r.assertions[0]!.id).toBe("buy-pm-fs-counter-monotonic"); // id preserved
+});
+
+test("resync: already-current assertion untouched", () => {
+  const current = ASSERTION_TEMPLATES_BY_CATEGORY.free_spins.find((t) => t.id === "free-spins-counter-monotonic")!;
+  const r = resyncAssertionsWithTemplates([
+    { id: "fs-counter-monotonic", description: current.description, check_code: current.check_code },
+  ]);
+  expect(r.updated).toHaveLength(0);
+});
+
+test("resync: genuinely custom assertion (no template tail match) untouched", () => {
+  const r = resyncAssertionsWithTemplates([
+    { id: "buy-pm-fs-cost-ratio", description: "x", check_code: "detectBuyFeatureDeduction(collector.spins, 0, balanceBefore).ratio >= 250" },
+  ]);
+  expect(r.updated).toHaveLength(0);
+  expect(r.ambiguous).toHaveLength(0);
+});
+
+test("resync: tail matching multiple templates equally → ambiguous, skipped, reported", () => {
+  // "win-non-negative" tail exists in both base_game and buy_feature templates.
+  const r = resyncAssertionsWithTemplates([
+    { id: "custom-win-non-negative", description: "x", check_code: "spin.winAmount >= 0 // stale variant" },
+  ]);
+  expect(r.updated).toHaveLength(0);
+  expect(r.ambiguous).toHaveLength(1);
+  expect(r.ambiguous[0]!.templateIds.length).toBeGreaterThan(1);
 });

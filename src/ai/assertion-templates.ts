@@ -16,6 +16,70 @@ export type AssertionTemplate = {
   check_code: string;
 };
 
+export type AssertionLike = { id: string; description: string; check_code: string };
+
+export type ResyncResult = {
+  /** New assertion list (unmatched / already-synced entries pass through). */
+  assertions: AssertionLike[];
+  /** Assertions whose check_code was replaced by the current template's. */
+  updated: Array<{ id: string; templateId: string }>;
+  /** Tail matched ≥2 templates equally well — skipped, surfaced for review. */
+  ambiguous: Array<{ id: string; templateIds: string[] }>;
+};
+
+/**
+ * Re-sync a case's persisted assertions with the CURRENT template library.
+ * Catalogs keep the check_code that was generated at the time — when a
+ * template gets fixed (e.g. fs-counter direction-agnostic), every existing
+ * catalog still carries the broken code with no path to adopt the fix short
+ * of regenerating the whole catalog (AI cost + loses manual edits).
+ *
+ * Matching: the AI namespaces template-derived ids per case (template
+ * "free-spins-counter-monotonic" → assertion "buy-pm-fs-counter-monotonic"),
+ * so exact-id equality misses them. Instead an assertion matches a template
+ * when its id ENDS WITH a ≥2-segment suffix of the template id; the longest
+ * such suffix wins. Equal-length matches from different templates are
+ * AMBIGUOUS → skipped + reported (fail-loud, never guess). Only the
+ * check_code + description are replaced; the case's own id is kept.
+ */
+export function resyncAssertionsWithTemplates(assertions: AssertionLike[]): ResyncResult {
+  const templates = Object.values(ASSERTION_TEMPLATES_BY_CATEGORY).flat();
+  const tailsOf = (id: string): string[] => {
+    const segs = id.split("-");
+    const tails: string[] = [];
+    for (let start = 0; start <= segs.length - 2; start++) tails.push(segs.slice(start).join("-"));
+    return tails; // longest first
+  };
+  const updated: ResyncResult["updated"] = [];
+  const ambiguous: ResyncResult["ambiguous"] = [];
+  const out = assertions.map((a) => {
+    let best: { tpl: AssertionTemplate; tailLen: number } | null = null;
+    let tie: string[] = [];
+    for (const tpl of templates) {
+      for (const tail of tailsOf(tpl.id)) {
+        if (a.id === tail || a.id.endsWith(`-${tail}`)) {
+          if (!best || tail.length > best.tailLen) {
+            best = { tpl, tailLen: tail.length };
+            tie = [tpl.id];
+          } else if (tail.length === best.tailLen && tpl.id !== best.tpl.id) {
+            tie.push(tpl.id);
+          }
+          break; // longest tail for THIS template found
+        }
+      }
+    }
+    if (!best) return a;
+    if (tie.length > 1) {
+      ambiguous.push({ id: a.id, templateIds: tie });
+      return a;
+    }
+    if (best.tpl.check_code === a.check_code) return a; // already current
+    updated.push({ id: a.id, templateId: best.tpl.id });
+    return { ...a, check_code: best.tpl.check_code, description: best.tpl.description };
+  });
+  return { assertions: out, updated, ambiguous };
+}
+
 /**
  * Templates indexed by TestCaseCategory string. Each list is a SUGGESTION
  * library — AI may pick a subset, swap field names, or compose new ones

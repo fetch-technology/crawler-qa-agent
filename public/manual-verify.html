@@ -2891,7 +2891,7 @@
       const rowStyle = isTranslating ? ' style="background-color: rgba(37, 99, 235, 0.08);"' : '';
       const retranslateBtn = isTranslating
         ? `<button id="btn-retranslate-${c.id}" class="spin-badge" disabled style="background: #2563eb; font-size: 11px; opacity: 0.95; cursor: wait;">Translating…</button>`
-        : `<button id="btn-retranslate-${c.id}" onclick="doRetranslateCase('${c.id}')" style="background: #d97706; font-size: 11px;" title="Re-run AI translator for this case (uses current verified registry + game spec)">Re-translate</button>`;
+        : `<button id="btn-retranslate-${c.id}" onclick="doRetranslateCase('${c.id}')" style="background: #d97706; font-size: 11px;" title="Refresh this case to current system knowledge: (1) re-sync template-derived assertions with the current template library, then (2) re-run the AI action translator (current verified registry + game spec)">Re-translate</button>`;
       const main = `<tr id="case-row-${c.id}" data-case-id="${c.id}"${rowStyle}>
         <td><button class="tree-toggle" onclick="toggleCase('${c.id}')">${isExpanded ? '▼' : '▶'}</button></td>
         <td><code style="font-size: 11px;">${c.id}</code>${translatingBadge}</td>
@@ -4166,6 +4166,7 @@
       }
     };
 
+
     window.doRetranslateCase = async (caseId) => {
       const slug = window.__lastCasesSlug;
       if (!slug) return toast("Load cases first", true);
@@ -4195,7 +4196,7 @@
             appendLog(`[retranslate] ${caseId} no-AI: ${spins} spins (${n} total actions)`);
           } else {
             const n = Array.isArray(r.actions) ? r.actions.length : 0;
-            toast(`✓ Re-translated ${caseId} via AI → ${n} action${n === 1 ? "" : "s"}`);
+            toast(`✓ Re-translated ${caseId} via AI → ${n} action${n === 1 ? "" : "s"}${r.resynced ? ` · ${r.resynced} assertion(s) re-synced from templates` : ""}`);
             appendLog(`[retranslate] ${caseId} AI ok: ${n} actions`);
           }
           // Force-expand so QA sees the new actions immediately.

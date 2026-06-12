@@ -364,6 +364,16 @@ export async function handleManualRoute(
       return sendJson(res, r.ok ? 200 : 400, r), true;
     }
 
+    // POST /api/qa/manual/resync-assertions { caseId, gameSlug? } — replace a
+    // case's template-derived assertions with the CURRENT template library
+    // (no AI call; Re-translate only refreshes ACTIONS, never assertions).
+    if (url === "/api/qa/manual/resync-assertions" && method === "POST") {
+      const body = await asJsonBody<{ caseId?: string; gameSlug?: string }>(req);
+      if (!body.caseId) return sendJson(res, 400, { error: "caseId required" }), true;
+      const r = await resolveSession(req, body as any, url).resyncCaseAssertions(body.caseId, body.gameSlug);
+      return sendJson(res, r.ok ? 200 : 400, r), true;
+    }
+
     // POST /api/qa/manual/apply-templates { gameSlug?, mode?: "merge" | "replace" }
     // #6 — copy the reusable standard test-case template set onto a game and
     // rebind actions. merge keeps existing cases; replace swaps them.
