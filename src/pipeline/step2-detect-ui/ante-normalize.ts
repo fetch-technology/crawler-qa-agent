@@ -36,7 +36,7 @@ import path from "node:path";
 import { dirForGame } from "../registry/paths.js";
 import { snapshotRegion, regionAround } from "../utils/pixel-diff/region.js";
 import { pixelDiff, decodePng } from "../utils/pixel-diff/diff.js";
-import { ocrRegion, parseNumericFromOcr } from "../utils/ocr-popup.js";
+import { ocrRegion, parseNumericFromOcr, isOcrReadImplausible } from "../utils/ocr-popup.js";
 import type { UiRegistry } from "../registry/types.js";
 import { ocrRegions as ocrRegionsStore } from "../registry/ocr-regions.js";
 import { readFile } from "node:fs/promises";
@@ -117,34 +117,78 @@ function classifyOcrText(raw: string): "off" | "on" | "unknown" {
  *  no usable region or OCR yields no number. This is the authoritative ante
  *  ON/OFF signal: ante ON inflates the total bet (typically ×1.25), so the
  *  state with the SMALLER bet is OFF. */
+/** Resolve the bet-readout crop box: prefer the saved betArea region, else the
+ *  readout BETWEEN betMinus and betPlus. Pure (sync) so both the Tesseract and
+ *  AI bet readers can share it. */
+function resolveBetBox(
+  regions: { betArea?: { x: number; y: number; width: number; height: number } } | null,
+  registry: UiRegistry,
+): { x: number; y: number; w: number; h: number } | null {
+  if (regions?.betArea) {
+    return { x: regions.betArea.x, y: regions.betArea.y, w: regions.betArea.width, h: regions.betArea.height };
+  }
+  const minus = registry["betMinus"];
+  const plus = registry["betPlus"];
+  if (
+    minus && plus &&
+    typeof minus.x === "number" && typeof plus.x === "number" &&
+    typeof minus.y === "number" && typeof plus.y === "number"
+  ) {
+    const cx = Math.round((minus.x + plus.x) / 2);
+    const cy = Math.round((minus.y + plus.y) / 2);
+    const w = Math.max(90, Math.abs(plus.x - minus.x) - 16);
+    return { x: Math.round(cx - w / 2), y: cy - 20, w, h: 40 };
+  }
+  return null;
+}
+
 async function readTotalBet(
   page: Page,
   slug: string,
   registry: UiRegistry,
 ): Promise<number | null> {
-  let box: { x: number; y: number; w: number; h: number } | null = null;
   const regions = await ocrRegionsStore.load(slug).catch(() => null);
-  if (regions?.betArea) {
-    box = { x: regions.betArea.x, y: regions.betArea.y, w: regions.betArea.width, h: regions.betArea.height };
-  } else {
-    const minus = registry["betMinus"];
-    const plus = registry["betPlus"];
-    if (
-      minus && plus &&
-      typeof minus.x === "number" && typeof plus.x === "number" &&
-      typeof minus.y === "number" && typeof plus.y === "number"
-    ) {
-      const cx = Math.round((minus.x + plus.x) / 2);
-      const cy = Math.round((minus.y + plus.y) / 2);
-      const w = Math.max(90, Math.abs(plus.x - minus.x) - 16);
-      box = { x: Math.round(cx - w / 2), y: cy - 20, w, h: 40 };
-    }
-  }
+  const box = resolveBetBox(regions, registry);
   if (!box) return null;
   try {
     const { text } = await ocrRegion(page, box, { numeric: true });
     return parseNumericFromOcr(text);
   } catch {
+    return null;
+  }
+}
+
+/** Last-resort bet read for the ante probe: when Tesseract keeps returning an
+ *  IMPLAUSIBLE value (a transient glitch the deterministic re-reads couldn't
+ *  clear — celebration digits / bbox bleed during the toggle animation),
+ *  re-read the SAME bet crop with Claude vision — BLIND (no expected value in
+ *  the prompt), gated exactly like the balance/bet runtime fallback. Returns a
+ *  plausible number or null. ON unless QA_OCR_AI_FALLBACK=0. */
+async function aiReadBet(
+  page: Page,
+  slug: string,
+  registry: UiRegistry,
+  expected: number,
+): Promise<number | null> {
+  if (process.env.QA_OCR_AI_FALLBACK === "0") return null;
+  const regions = await ocrRegionsStore.load(slug).catch(() => null);
+  const box = resolveBetBox(regions, registry);
+  if (!box) return null;
+  let imageBuf: Buffer | undefined;
+  try { imageBuf = (await ocrRegion(page, box, { numeric: true })).imageBuf; } catch { return null; }
+  if (!imageBuf) return null;
+  try {
+    const { readNumericCropWithAi } = await import("../../ai/detect-ocr-regions.js");
+    const ai = await readNumericCropWithAi({ cropBase64: imageBuf.toString("base64"), label: "bet" });
+    const aiParsed = ai.valueRead ? parseNumericFromOcr(ai.valueRead) : null;
+    if (aiParsed != null && ai.confidence >= 0.6 && !isOcrReadImplausible(aiParsed, expected)) {
+      console.log(`[ensure-ante-off] ${slug}: AI vision read bet "${ai.valueRead}" → ${aiParsed} (conf ${ai.confidence.toFixed(2)})`);
+      return aiParsed;
+    }
+    console.warn(`[ensure-ante-off] ${slug}: AI vision bet read ${aiParsed == null ? `failed (${ai.reason})` : `${aiParsed} still implausible`} — giving up on bet read`);
+    return null;
+  } catch (err) {
+    console.warn(`[ensure-ante-off] ${slug}: AI bet fallback errored: ${err instanceof Error ? err.message : String(err)}`);
     return null;
   }
 }
@@ -799,8 +843,37 @@ async function forceAnteOffByBet(
       // RE-VERIFY after the display fully settles — the immediate read used to
       // race the animation and "confirm" a state the game wasn't in.
       await page.waitForTimeout(700);
-      const finalBet = await readBetStable();
-      const landedOff = finalBet != null && finalBet <= smaller * 1.02;
+      // A valid post-toggle bet is either ≈smaller (OFF) or ≈larger (still ON).
+      // A read that is NEITHER (≥100× off — a transient glitch like celebration
+      // digits or bbox bleed during the toggle animation; observed final=45700
+      // vs OFF≈45) is rejected and RE-READ, never trusted. Tier 1: Tesseract
+      // retries (cheap — this widget reads fine normally). Tier 2: if it stays
+      // implausible, escalate to AI vision (blind), same as the balance/bet
+      // runtime fallback. Tier 3: if both fail, fall back to the pixel baseline
+      // rather than FAIL on a garbage number.
+      let finalBet = await readBetStable();
+      for (let attempt = 0; attempt < 3 && (finalBet == null || isOcrReadImplausible(finalBet, smaller)); attempt++) {
+        console.warn(`[ensure-ante-off] ${slug}: final bet=${finalBet ?? "?"} implausible vs OFF≈${smaller} — re-reading (${attempt + 1}/3)`);
+        await page.waitForTimeout(500);
+        finalBet = await readBetStable();
+      }
+      if (finalBet == null || isOcrReadImplausible(finalBet, smaller)) {
+        const ai = await aiReadBet(page, slug, registry, smaller);
+        if (ai != null) finalBet = ai;
+      }
+      if (finalBet == null || isOcrReadImplausible(finalBet, smaller)) {
+        console.warn(`[ensure-ante-off] ${slug}: bet unreadable after retries + AI — pixel re-verify`);
+        const after = await verifyAnteOff(page, slug, registry);
+        if (after.isOff) {
+          await writeAnteMeta(slug, { offBet: smaller, anteFactor: Math.round((larger / smaller) * 100) / 100 });
+          return { ok: true, toggledCount: toggled, resolvedByBet: false, wasAlreadyOff: b0! <= smaller * 1.02 };
+        }
+        return {
+          ok: false, toggledCount: toggled, resolvedByBet: false, wasAlreadyOff: false,
+          reason: after.reason ?? `bet unreadable after retries+AI and pixel still not OFF (ratio=${after.ratio?.toFixed(3) ?? "?"})`,
+        };
+      }
+      const landedOff = finalBet <= smaller * 1.02;
       if (landedOff) {
         // Persist ground truth ONLY on a VERIFIED landing — persisting before
         // verification poisoned offBet/anteFactor with garbage reads.
