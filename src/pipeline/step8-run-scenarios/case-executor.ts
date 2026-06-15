@@ -2538,7 +2538,16 @@ export async function waitUntilNoSpinResponse(
   let fsWaitLoggedAt = 0;
   let batchWaitLoggedAt = 0;
   const target = opts.minSpins ?? 0;
-  const hardQuietMs = opts.hardQuietMs ?? Math.max(opts.quietMs * 3, 15_000);
+  // hardQuietMs = silence long enough to mean "autoplay genuinely stopped early"
+  // (game-side stop / count not honoured), NOT just a between-rounds pause. It
+  // MUST sit above the longest legit pause — a WIN CELEBRATION. Observed on
+  // vs10hottuna: a 12.5× win paused autoplay ~19s, which tripped the old 15s
+  // ceiling → the batch was wrongly declared "stopped" mid-celebration, then
+  // stop_autoplay killed it when it resumed. 60s clears even epic-win
+  // celebrations (rarely >40s) while still bounding a real early-stop well below
+  // maxMs. (Principled follow-up: learn the per-game max inter-round gap at
+  // calibrate and set this from data.)
+  const hardQuietMs = opts.hardQuietMs ?? Math.max(opts.quietMs * 8, 60_000);
   while (opts.now() - start < opts.maxMs) {
     const gap = opts.now() - opts.lastSpinResponseAt();
     const captured = opts.spinResponseCount() - startCount;

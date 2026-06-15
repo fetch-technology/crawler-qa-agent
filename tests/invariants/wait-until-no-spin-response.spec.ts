@@ -288,6 +288,7 @@ test("count-aware: genuine early stop (target never reached) exits at hardQuietM
     quietMs: 5000,
     maxMs: 300000,
     minSpins: 10,
+    hardQuietMs: 20000, // explicit so the test is fast + independent of the default
     lastSpinResponseAt: clk.lastSpinResponseAt,
     spinResponseCount: clk.spinResponseCount,
     sleep: clk.sleep,
@@ -296,5 +297,27 @@ test("count-aware: genuine early stop (target never reached) exits at hardQuietM
   expect(result.exitReason).toBe("quiet");
   expect(result.spinsCapturedDuringWait).toBe(4);
   expect(result.elapsedMs).toBeLessThan(300000);      // did NOT hang to maxMs
-  expect(result.lastGapMs).toBeGreaterThanOrEqual(15000); // ended via hardQuiet
+  expect(result.lastGapMs).toBeGreaterThanOrEqual(20000); // ended via hardQuiet
+});
+
+test("count-aware: a long WIN-CELEBRATION pause (≈19s) does NOT trip the 60s hardQuiet", async () => {
+  // Reproduces vs10hottuna: 33 spins, then a ~19s big-win celebration, then the
+  // batch resumes to 50. The OLD 15s hardQuiet falsely concluded "stopped
+  // early" at 33 (then stop_autoplay killed it on resume); 60s extends through
+  // the celebration and finishes the batch.
+  const events: Array<{ atFakeMs: number }> = [];
+  for (let i = 1; i <= 33; i++) events.push({ atFakeMs: i * 1000 });
+  for (let i = 0; i < 17; i++) events.push({ atFakeMs: 52000 + i * 1000 }); // 19s gap after #33
+  const clk = makeFakeClock({ events });
+  const result = await waitUntilNoSpinResponse({
+    quietMs: 5000,
+    maxMs: 600000,
+    minSpins: 50, // default hardQuiet (60s) — the 19s celebration must NOT trip it
+    lastSpinResponseAt: clk.lastSpinResponseAt,
+    spinResponseCount: clk.spinResponseCount,
+    sleep: clk.sleep,
+    now: clk.now,
+  });
+  expect(result.exitReason).toBe("quiet");
+  expect(result.spinsCapturedDuringWait).toBe(50); // full batch, not cut at 33
 });
