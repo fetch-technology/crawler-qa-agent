@@ -244,6 +244,41 @@ export function parseNumericFromOcr(text: string): number | null {
   return (decimal ?? candidates[0]!).value;
 }
 
+/** Order-of-magnitude factor separating "OCR failed" from "UI genuinely wrong".
+ *  A real UI bug shows a BELIEVABLE number (stale, off-by-a-bet, cents, FX →
+ *  within ~1–10×); an OCR failure (dropped/duplicated digits, noise) lands far
+ *  off. 100× is deliberately loose so we only escalate on clearly-impossible
+ *  reads, never mask a real ≤10× UI discrepancy. */
+export const OCR_IMPLAUSIBLE_FACTOR = 100;
+
+/**
+ * Decide whether a parsed OCR value is IMPLAUSIBLE for a widget whose true
+ * value (from the network) is `expected` — the gate for escalating to the
+ * AI-vision fallback. Implausible ⇔ a value a correctly-rendered UI could not
+ * be showing (so it's an OCR failure, not a real UI bug):
+ *   - parse failed (null / non-finite), OR
+ *   - off from `expected` by ≥ OCR_IMPLAUSIBLE_FACTOR (≥100×), OR
+ *   - far too few digits vs `expected` (≤ half), when `expected` has ≥3 digits.
+ * When `expected` is unknown / zero, only the parse-failure check applies (we
+ * can't judge magnitude). Pure — exported for tests.
+ *
+ * NOTE: `expected` is used ONLY to decide whether to RE-READ, never to pick the
+ * answer — so this can't mask a real UI discrepancy: a genuine ≤10× bug stays
+ * below the threshold and is compared honestly; even a real ≥100× bug would
+ * just be re-read (and still fail the independent network comparison).
+ */
+export function isOcrReadImplausible(parsed: number | null, expected: number | null | undefined): boolean {
+  if (parsed == null || !Number.isFinite(parsed)) return true;
+  if (expected == null || !Number.isFinite(expected) || expected === 0) return false;
+  const a = Math.abs(parsed), e = Math.abs(expected);
+  if (a === 0) return true; // expected nonzero but read 0 → off by ∞
+  if (a / e >= OCR_IMPLAUSIBLE_FACTOR || e / a >= OCR_IMPLAUSIBLE_FACTOR) return true;
+  const digitCount = (n: number) => Math.abs(Math.trunc(n)).toString().length;
+  const ed = digitCount(expected);
+  if (ed >= 3 && digitCount(parsed) <= Math.ceil(ed / 2)) return true;
+  return false;
+}
+
 export async function terminateOcr(): Promise<void> {
   if (worker) {
     await worker.terminate().catch(() => undefined);

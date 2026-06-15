@@ -264,6 +264,59 @@ export async function verifyOcrRegionCrop(opts: {
   };
 }
 
+const READ_NUMERIC_SYSTEM =
+  "You read a single number off a cropped slot-game UI widget. Output JSON only. " +
+  "Transcribe EXACTLY the digits shown — never infer, round, or guess a 'likely' value.";
+
+/**
+ * BLIND numeric read of a single widget crop — the gated fallback used when
+ * deterministic OCR (Tesseract) returns an IMPLAUSIBLE value on a hard crop
+ * (colored text on photographic game art). Deliberately given NO expected /
+ * network value, so the model cannot be biased into agreement; the caller
+ * cross-checks the returned number against the network value independently.
+ * Returns valueRead=null + confidence 0 on any failure (never throws).
+ */
+export async function readNumericCropWithAi(opts: {
+  /** Crop PNG (base64) — the same pixels Tesseract read. */
+  cropBase64: string;
+  /** Human label for the prompt + telemetry ("balance" / "bet" / "last win"). */
+  label: string;
+}): Promise<{ valueRead: string | null; confidence: number; reason: string }> {
+  const prompt =
+    `This crop is the **${opts.label}** widget from a slot game — it shows ONE number ` +
+    `(possibly with a currency symbol and thousands/decimal separators).\n\n` +
+    `Return ONLY this JSON:\n` +
+    `{\n` +
+    `  "value_read": string | null,  // the number EXACTLY as displayed, e.g. "$983,252.80", "45.00". null if you genuinely cannot read it.\n` +
+    `  "confidence": number,         // 0..1 — how sure you are of EVERY digit\n` +
+    `  "reason": string              // 1 short phrase\n` +
+    `}\n\n` +
+    `Rules: transcribe the digits you SEE. Do NOT guess a plausible balance/bet. ` +
+    `If the crop is blurry, occluded, or empty, set value_read=null with low confidence.`;
+  let raw: string;
+  try {
+    raw = await askClaude({
+      content: [
+        { type: "image", source: { type: "base64", media_type: "image/png", data: opts.cropBase64 } },
+        { type: "text", text: prompt },
+      ],
+      system: READ_NUMERIC_SYSTEM,
+      label: `ocr-region/ai-read/${opts.label}`,
+      maxTurns: 1,
+      timeoutMs: 60_000,
+    });
+  } catch (err) {
+    return { valueRead: null, confidence: 0, reason: `ai read threw: ${err instanceof Error ? err.message : String(err)}` };
+  }
+  const parsed = extractJsonFromText<{ value_read?: string | null; confidence?: number; reason?: string }>(raw);
+  if (!parsed) return { valueRead: null, confidence: 0, reason: "ai response not parseable" };
+  return {
+    valueRead: typeof parsed.value_read === "string" ? parsed.value_read : null,
+    confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0,
+    reason: typeof parsed.reason === "string" ? parsed.reason : "",
+  };
+}
+
 function sanitizeRegion(
   r: Record<string, unknown>,
   viewport: { width: number; height: number },

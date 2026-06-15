@@ -13,7 +13,7 @@ import type { NormalizedSpinResult } from "../step6-build-model/normalized.js";
 import type { UiRegistry } from "../registry/types.js";
 import type { CaseAction } from "../step7-testcase-gen/case-action-translator.js";
 import { dirForGame } from "../registry/paths.js";
-import { detectAnyPopup, dismissPopupsLoop, ocrRegion, parseNumericFromOcr } from "../utils/ocr-popup.js";
+import { detectAnyPopup, dismissPopupsLoop, ocrRegion, parseNumericFromOcr, isOcrReadImplausible } from "../utils/ocr-popup.js";
 import { createDedupState, ingestFrame } from "./cascade-dedup.js";
 import { reconcileBetFromBalance } from "./bet-reconcile.js";
 import {
@@ -138,6 +138,13 @@ export type OcrSnapshot = {
    *  failed" cases where the bbox was covered by an animation or
    *  PLACE-YOUR-BETS prompt. */
   bboxScreenshotPath?: string;
+  /** Where the final `parsed` value came from: deterministic Tesseract, the
+   *  AI-vision fallback (only invoked when Tesseract was implausible), or
+   *  "inconclusive" when both failed (parsed=null → field not compared, never
+   *  a false fail/pass). */
+  source?: "tesseract" | "ai" | "inconclusive";
+  /** Human-readable note when an escalation/inconclusive path was taken. */
+  note?: string;
 };
 
 /** Per-action telemetry: what kind of action, what target, duration, success.
@@ -1525,13 +1532,20 @@ export async function executeCase(
       const evidenceDir = ctx.gameSlug ? path.join(dirForGame(ctx.gameSlug), "case-evidence") : null;
       if (evidenceDir) await mkdir(evidenceDir, { recursive: true });
       const safeCaseName = input.id.replace(/[^a-zA-Z0-9_.-]/g, "_");
+      // AI-vision fallback toggle: ON by default, opt-out via QA_OCR_AI_FALLBACK=0.
+      // Only ever invoked when the deterministic read is IMPLAUSIBLE, so cost +
+      // latency are bounded to genuine OCR failures.
+      const aiFallbackEnabled = process.env.QA_OCR_AI_FALLBACK !== "0";
       const tryOcr = async (
         label: "balance" | "bet" | "last_win",
         snapshotLabel: OcrSnapshot["region"],
         region: { x: number; y: number; width: number; height: number },
+        expected: number | undefined,
       ): Promise<number | undefined> => {
         const ocr = await ocrRegion(ctx.page, { x: region.x, y: region.y, w: region.width, h: region.height }, { numeric: true });
-        const parsed = parseNumericFromOcr(ocr.text);
+        let parsed = parseNumericFromOcr(ocr.text);
+        let source: OcrSnapshot["source"] = "tesseract";
+        let note: string | undefined;
         // Persist the crop PNG so dashboard can show what Tesseract saw.
         let bboxScreenshotPath: string | undefined;
         if (evidenceDir && ocr.imageBuf) {
@@ -1543,6 +1557,47 @@ export async function executeCase(
             console.warn(`[case-action] ${label} crop PNG write failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
           }
         }
+        // GATED AI-VISION FALLBACK: when the deterministic read is implausible
+        // (parse-failed, or ≥100× off / too few digits vs the network value),
+        // re-read the SAME crop with Claude vision — BLIND (no expected value
+        // passed, so it can't be biased into agreement). Accept the AI read
+        // only if it parses, is confident (≥0.6), and is itself plausible vs
+        // network; otherwise the widget is INCONCLUSIVE (parsed=null → not
+        // compared → never a false fail/pass). last_win with expected 0 can't
+        // be judged for magnitude, so it keeps its idle-widget behavior below.
+        if (isOcrReadImplausible(parsed, expected)) {
+          const why = parsed == null ? "parse-failed" : `${parsed} vs network ${expected} (≥100× off / too few digits)`;
+          if (aiFallbackEnabled && ocr.imageBuf) {
+            console.warn(`[case-action] ${label} OCR implausible (${why}) → escalating to AI vision (blind)`);
+            try {
+              const { readNumericCropWithAi } = await import("../../ai/detect-ocr-regions.js");
+              const ai = await readNumericCropWithAi({ cropBase64: ocr.imageBuf.toString("base64"), label: label.replace(/_/g, " ") });
+              const aiParsed = ai.valueRead ? parseNumericFromOcr(ai.valueRead) : null;
+              if (aiParsed != null && ai.confidence >= 0.6 && !isOcrReadImplausible(aiParsed, expected)) {
+                parsed = aiParsed;
+                source = "ai";
+                note = `Tesseract implausible (${why}); AI vision read "${ai.valueRead}" → ${aiParsed} (conf ${ai.confidence.toFixed(2)})`;
+                console.log(`[case-action] ${label} OCR: ✓ via AI vision "${ai.valueRead}" → ${aiParsed} (conf ${ai.confidence.toFixed(2)})`);
+              } else {
+                parsed = null;
+                source = "inconclusive";
+                note = `Tesseract implausible (${why}); AI vision ${aiParsed == null ? `could not read (${ai.reason})` : `read ${aiParsed} (conf ${ai.confidence.toFixed(2)}) — still implausible`} → INCONCLUSIVE`;
+                console.warn(`[case-action] ${label} OCR: INCONCLUSIVE — ${note}`);
+              }
+            } catch (err) {
+              parsed = null;
+              source = "inconclusive";
+              note = `Tesseract implausible (${why}); AI fallback errored (${err instanceof Error ? err.message : String(err)}) → INCONCLUSIVE`;
+              console.warn(`[case-action] ${label} OCR: INCONCLUSIVE — ${note}`);
+            }
+          } else if (parsed != null) {
+            // Implausible read but no fallback available → don't trust garbage.
+            parsed = null;
+            source = "inconclusive";
+            note = `Tesseract implausible (${why}); AI fallback disabled → INCONCLUSIVE`;
+            console.warn(`[case-action] ${label} OCR: INCONCLUSIVE — ${note}`);
+          }
+        }
         ocrSnapshots.push({
           region: snapshotLabel,
           bbox: { x: region.x, y: region.y, width: region.width, height: region.height },
@@ -1550,9 +1605,11 @@ export async function executeCase(
           parsed,
           durationMs: ocr.durationMs,
           bboxScreenshotPath,
+          source,
+          note,
         });
         if (typeof parsed === "number") {
-          console.log(`[case-action] ${label} OCR: ✓ "${ocr.text.slice(0, 80)}" → ${parsed} (${ocr.durationMs}ms)`);
+          console.log(`[case-action] ${label} OCR: ✓ "${ocr.text.slice(0, 80)}" → ${parsed} (${source}, ${ocr.durationMs}ms)`);
           return parsed;
         }
         // Special-case last_win: when OCR can't parse a number, the widget
@@ -1568,9 +1625,14 @@ export async function executeCase(
         );
         return label === "last_win" ? 0 : undefined;
       };
-      if (regions?.balanceArea) ocrBalance = await tryOcr("balance", "balance", regions.balanceArea);
-      if (regions?.betArea) ocrBet = await tryOcr("bet", "bet", regions.betArea);
-      if (regions?.winArea) ocrLastWin = await tryOcr("last_win", "last_win", regions.winArea);
+      // Expected values come from the parsed network spin — used ONLY to gate
+      // the AI-vision fallback (decide "re-read"), never to pick the answer.
+      const expBalance = typeof spin?.balanceAfter === "number" ? spin.balanceAfter : undefined;
+      const expBet = typeof spin?.bet === "number" ? spin.bet : undefined;
+      const expWin = typeof spin?.win === "number" ? spin.win : undefined;
+      if (regions?.balanceArea) ocrBalance = await tryOcr("balance", "balance", regions.balanceArea, expBalance);
+      if (regions?.betArea) ocrBet = await tryOcr("bet", "bet", regions.betArea, expBet);
+      if (regions?.winArea) ocrLastWin = await tryOcr("last_win", "last_win", regions.winArea, expWin);
     } catch (err) {
       console.warn(`[case-action] OCR failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
     }
