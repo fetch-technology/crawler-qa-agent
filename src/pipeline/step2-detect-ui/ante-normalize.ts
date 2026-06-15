@@ -841,7 +841,7 @@ async function forceAnteOffByBet(
       // pair with AI vision (blind) BEFORE giving up to pixel verify. We are
       // physically at the b1 state right now. Track the physical state across
       // the extra toggles so we end on the SMALLER (OFF) state.
-      if (aiFallbackEnabled) {
+      if (process.env.QA_OCR_AI_FALLBACK !== "0") {
         const aiAtB1 = await aiReadBet(page, slug, registry); // current state (post first click)
         await clickAnte(page, entry);
         toggled++;
