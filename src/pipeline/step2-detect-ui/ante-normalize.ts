@@ -168,7 +168,7 @@ async function aiReadBet(
   page: Page,
   slug: string,
   registry: UiRegistry,
-  expected: number,
+  expected?: number,
 ): Promise<number | null> {
   if (process.env.QA_OCR_AI_FALLBACK === "0") return null;
   const regions = await ocrRegionsStore.load(slug).catch(() => null);
@@ -181,7 +181,9 @@ async function aiReadBet(
     const { readNumericCropWithAi } = await import("../../ai/detect-ocr-regions.js");
     const ai = await readNumericCropWithAi({ cropBase64: imageBuf.toString("base64"), label: "bet" });
     const aiParsed = ai.valueRead ? parseNumericFromOcr(ai.valueRead) : null;
-    if (aiParsed != null && ai.confidence >= 0.6 && !isOcrReadImplausible(aiParsed, expected)) {
+    // No network anchor at probe time → accept on confidence + sanity alone;
+    // when an anchor IS given (finalBet), also require magnitude-plausibility.
+    if (aiParsed != null && ai.confidence >= 0.6 && (expected == null || !isOcrReadImplausible(aiParsed, expected))) {
       console.log(`[ensure-ante-off] ${slug}: AI vision read bet "${ai.valueRead}" → ${aiParsed} (conf ${ai.confidence.toFixed(2)})`);
       return aiParsed;
     }
@@ -833,7 +835,44 @@ async function forceAnteOffByBet(
     // A bigger jump means one of the reads was garbage (celebration digits,
     // bbox bleed) or the click hit a bet-level control — don't trust the pair.
     if (larger / smaller > 2.05) {
-      console.warn(`[ensure-ante-off] ${slug}: toggle delta ${smaller}→${larger} (${(larger / smaller).toFixed(2)}×) exceeds any ante factor — reads untrusted, falling to pixel verify`);
+      console.warn(`[ensure-ante-off] ${slug}: toggle delta ${smaller}→${larger} (${(larger / smaller).toFixed(2)}×) exceeds any ante factor — Tesseract pair untrusted`);
+      // Tesseract reads the bet widget as garbage on this game (observed pairs
+      // like 30000/600 or 45700 for a real ~50 bet). Re-establish the probe
+      // pair with AI vision (blind) BEFORE giving up to pixel verify. We are
+      // physically at the b1 state right now. Track the physical state across
+      // the extra toggles so we end on the SMALLER (OFF) state.
+      if (aiFallbackEnabled) {
+        const aiAtB1 = await aiReadBet(page, slug, registry); // current state (post first click)
+        await clickAnte(page, entry);
+        toggled++;
+        await page.waitForTimeout(700);
+        const aiAtB0 = await aiReadBet(page, slug, registry); // back at the initial state
+        if (
+          aiAtB0 != null && aiAtB1 != null
+          && Math.max(aiAtB0, aiAtB1) / Math.min(aiAtB0, aiAtB1) <= 2.05
+          && Math.min(aiAtB0, aiAtB1) > 0
+        ) {
+          const aiSmaller = Math.min(aiAtB0, aiAtB1);
+          const aiLarger = Math.max(aiAtB0, aiAtB1);
+          // Physically at the initial (b0) state, bet=aiAtB0. If that's the
+          // larger (ante ON), toggle once more to land on OFF.
+          if (aiAtB0 > aiSmaller * 1.02) {
+            await clickAnte(page, entry);
+            toggled++;
+            await page.waitForTimeout(700);
+          }
+          const finalAi = await aiReadBet(page, slug, registry, aiSmaller);
+          if (finalAi != null && finalAi <= aiSmaller * 1.02) {
+            await writeAnteMeta(slug, { offBet: aiSmaller, anteFactor: Math.round((aiLarger / aiSmaller) * 100) / 100 });
+            console.log(`[ensure-ante-off] ${slug}: ✅ AI-probe resolved → OFF (pair ${aiSmaller}/${aiLarger}, ${toggled} click(s))`);
+            return { ok: true, toggledCount: toggled, resolvedByBet: true, wasAlreadyOff: aiAtB0 <= aiSmaller * 1.02 };
+          }
+          console.warn(`[ensure-ante-off] ${slug}: AI-probe final bet=${finalAi ?? "?"} not at OFF≈${aiSmaller} — falling to pixel verify`);
+        } else {
+          console.warn(`[ensure-ante-off] ${slug}: AI re-probe pair (${aiAtB0 ?? "?"}/${aiAtB1 ?? "?"}) still untrusted — falling to pixel verify`);
+        }
+      }
+      // fall through to pixel verify below
     } else {
       // We are at b1 now. If b1 is the larger (ante ON), toggle back to smaller.
       if (!plan.afterIsOff) {

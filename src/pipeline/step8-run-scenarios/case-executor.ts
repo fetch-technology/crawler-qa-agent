@@ -1565,8 +1565,24 @@ export async function executeCase(
         // network; otherwise the widget is INCONCLUSIVE (parsed=null → not
         // compared → never a false fail/pass). last_win with expected 0 can't
         // be judged for magnitude, so it keeps its idle-widget behavior below.
-        if (isOcrReadImplausible(parsed, expected)) {
-          const why = parsed == null ? "parse-failed" : `${parsed} vs network ${expected} (≥100× off / too few digits)`;
+        // Escalate to the AI-vision fallback when the deterministic read is
+        // either GROSS garbage (≥100× off / parse-failed) OR simply DISAGREES
+        // with the network value beyond the match tolerance. The latter catches
+        // same-magnitude digit corruption that the 100× gate misses — e.g.
+        // Tesseract reading "$984,043.80" as "$999:606:40" → 999606.4, only
+        // ~1.6% off the network 984043.8 (NOT "implausible") yet plainly wrong.
+        // `expected` only decides WHETHER to re-read; the AI reads blind and the
+        // downstream comparison stays independent, so a real UI bug is never
+        // masked (AI would read the genuinely-wrong UI value → still fails).
+        const canJudge = expected != null && Number.isFinite(expected) && expected !== 0;
+        const disagreeTol = canJudge ? Math.max(0.5, Math.abs(expected!) * 1e-4) : 0;
+        const grossGarbage = parsed != null && isOcrReadImplausible(parsed, expected);
+        const disagreesWithNetwork = canJudge && parsed != null && Math.abs(parsed - expected!) > disagreeTol;
+        const parseFailedButExpected = parsed == null && canJudge;
+        if (grossGarbage || disagreesWithNetwork || parseFailedButExpected) {
+          const why = parsed == null ? "parse-failed"
+            : grossGarbage ? `${parsed} vs network ${expected} (≥100× off / too few digits)`
+            : `${parsed} disagrees with network ${expected} (Δ${Math.abs(parsed - expected!).toFixed(2)} > ${disagreeTol.toFixed(2)})`;
           if (aiFallbackEnabled && ocr.imageBuf) {
             console.warn(`[case-action] ${label} OCR implausible (${why}) → escalating to AI vision (blind)`);
             try {
