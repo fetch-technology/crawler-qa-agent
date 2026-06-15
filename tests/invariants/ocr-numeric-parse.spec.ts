@@ -159,3 +159,23 @@ test("BRL small decimal '0,40' stays grouping-ambiguous (single sep, unchanged)"
   // fix is a deliberate change, not an accident.
   expect(parseNumericFromOcr("0,40")).toBe(40);
 });
+
+// REGRESSION (2026-06-15 #2) — OCR mis-reads the thousands "," as ".", so the
+// US balance "$983,252.80" arrives as "$983.252.80" (TWO dots). The old regex
+// stopped at the first dot → 983.252. Multiple separators of the SAME kind get
+// the same last-separator-wins treatment as mixed separators.
+test("comma→dot mis-OCR '$983.252.80' → 983252.8 (last dot is decimal)", () => {
+  expect(parseNumericFromOcr("$983.252.80")).toBe(983252.8);
+});
+
+test("genuine 3-group thousands all-dots '1.234.567' → 1234567 (no decimal)", () => {
+  expect(parseNumericFromOcr("1.234.567")).toBe(1234567);
+});
+
+test("repeated-dot with 2-digit tail '12.345.67' → 12345.67", () => {
+  expect(parseNumericFromOcr("12.345.67")).toBe(12345.67);
+});
+
+test("lone dot still decimal after multi-sep rule: '99.95' → 99.95", () => {
+  expect(parseNumericFromOcr("99.95")).toBe(99.95);
+});

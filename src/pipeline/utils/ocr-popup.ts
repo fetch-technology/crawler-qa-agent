@@ -360,18 +360,27 @@ export async function ocrBuffer(buf: Buffer): Promise<{ text: string; durationMs
  *  keep the long-standing behavior (`,`/`;`/`'` = grouping → strip; `.` = decimal)
  *  and let tryThousandGrouping handle the 3-digit-group case. */
 function cleanNumericToken(tok: string): string {
-  const t = tok.replace(/:/g, ".");
-  const hasDot = t.includes(".");
-  const hasComma = /[,;]/.test(t);
-  if (hasDot && hasComma) {
-    const lastDot = t.lastIndexOf(".");
-    const lastComma = Math.max(t.lastIndexOf(","), t.lastIndexOf(";"));
-    const decPos = Math.max(lastDot, lastComma);
-    const intPart = t.slice(0, decPos).replace(/[.,;']/g, "");
-    const fracPart = t.slice(decPos + 1).replace(/[.,;']/g, "");
-    return `${intPart}.${fracPart}`;
+  // Colon is a common mis-OCR of the decimal point; Swiss thousands use "'" →
+  // always grouping, strip outright before the separator analysis.
+  const t = tok.replace(/:/g, ".").replace(/'/g, "");
+  const seps = t.match(/[.,;]/g);
+  if (seps && seps.length >= 2) {
+    // Two or more separators — either MIXED ("." + ",") or a single thousands
+    // separator that OCR rendered repeatedly. The killer case: US "983,252.80"
+    // mis-read as "983.252.80" (comma→dot) → the old regex stopped at the first
+    // dot → 983.252. Rule: the LAST separator is the decimal point IFF its
+    // trailing group is 1–2 digits; otherwise EVERY separator is thousands
+    // grouping (trailing 3-digit group → no decimal, e.g. "1.234.567" →
+    // 1234567). Locale-free: covers US, BRL/EU, and comma→dot mis-OCR at once.
+    const lastPos = Math.max(t.lastIndexOf("."), t.lastIndexOf(","), t.lastIndexOf(";"));
+    const intPart = t.slice(0, lastPos).replace(/[.,;]/g, "");
+    const fracPart = t.slice(lastPos + 1).replace(/[.,;]/g, "");
+    return /^\d{1,2}$/.test(fracPart) ? `${intPart}.${fracPart}` : intPart + fracPart;
   }
-  return t.replace(/[,;']/g, "");
+  // 0–1 separator: legacy behavior — a lone "," / ";" is thousands (stripped),
+  // a lone "." is the decimal (kept). Single-group locale ambiguity ("0,40")
+  // stays unchanged by design.
+  return t.replace(/[,;]/g, "");
 }
 
 /** Try to read a run of ADJACENT numeric tokens as ONE number whose thousands
