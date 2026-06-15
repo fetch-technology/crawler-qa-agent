@@ -62,25 +62,34 @@ export function ingestFrame(
   // separate spins (autoplay 10 → 12+ captured) unless caught by markers.
   //
   // Continuation markers (any one ⇒ this frame belongs to the previous round):
-  //   - na === "c"   — explicit cascade-continue frame (#7/#12 in swordofares)
-  //   - rs_t > 0     — running cascade-tier flag (set on na=c frames)
+  //   - rs_t > 0     — running cascade-tier flag (set on tumble frames)
   //   - rs_p > 0     — tumble phase advanced past the round-start
   //   - rs_c > 1     — tumble-frame counter past the first
-  // Round-start frames are na=s with rs_c=1/rs_p=0 and no rs_t → NOT a
-  // continuation. Classic line games have none of these → Number(undefined)=NaN
-  // / na=s → no false positives. Markers work even when balance-continuity is
-  // disabled (case-executor turns it off to avoid mis-merging distinct autoplay
-  // rounds). A continuation merges into the LAST appended round, since frames
-  // arrive contiguously before the next bet's doSpin.
+  // Round-start frames are rs_c=1/rs_p=0 and no rs_t → NOT a continuation.
+  // Classic line games have none of these → Number(undefined)=NaN → no false
+  // positives. Markers work even when balance-continuity is disabled
+  // (case-executor turns it off to avoid mis-merging distinct autoplay rounds).
+  // A continuation merges into the LAST appended round, since frames arrive
+  // contiguously before the next bet's doSpin.
+  //
+  // NOTE (2026-06-15): `na === "c"` was REMOVED as a standalone marker. In PP
+  // `na` is "next action" — `na=c` means "this spin produced a win, next action
+  // is doCollect", which is true of EVERY winning line-spin, NOT just tumble
+  // continuations. On vs10hottuna (line game, BRL) consecutive winning spins
+  // (#5 lose → #6 win, distinct roundIds, each its own bet+collect) were being
+  // merged because #6 carried na=c → the merged record showed bet=90 (45+45),
+  // the spin count undercounted (collectedSpins didn't grow → executor logged
+  // "debounced"), and the bet-consistency assertion saw false drift. A genuine
+  // tumble continuation ALWAYS carries a tumble marker (swordofares frames pair
+  // na=c WITH rs_t>0), so requiring rs_t/rs_p/rs_c keeps tumble merges working
+  // while no longer fusing independent winning spins.
   const raw = spin.raw as Record<string, unknown> | undefined;
   const toNum = (v: unknown): number => (v == null ? NaN : Number(v));
   const rsPhase = toNum(raw?.["rs_p"]);
   const rsCount = toNum(raw?.["rs_c"]);
   const rsTier = toNum(raw?.["rs_t"]);
-  const naVal = raw?.["na"] == null ? "" : String(raw["na"]);
   const isCascadeContinuation =
-    naVal === "c"
-    || (Number.isFinite(rsTier) && rsTier > 0)
+    (Number.isFinite(rsTier) && rsTier > 0)
     || (Number.isFinite(rsPhase) && rsPhase > 0)
     || (Number.isFinite(rsCount) && rsCount > 1);
   const matchByCascadeMarker = isCascadeContinuation && last ? state.spins.length - 1 : -1;

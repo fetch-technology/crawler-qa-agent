@@ -213,3 +213,35 @@ test("autoplay-10 with 2 winning tumble rounds → 10 logical spins (not 12)", (
   expect(captured).toBe(12);          // 12 raw responses observed
   expect(state.spins.length).toBe(10); // but only 10 logical rounds
 });
+
+// REGRESSION (2026-06-15) — vs10hottuna (PP line game, BRL). `na=c` means
+// "this spin won, next action is doCollect" — it is set on EVERY winning
+// line-spin, NOT only on tumble continuations. The old code treated bare
+// na=c as a continuation marker, so a losing spin followed by a winning spin
+// (distinct bets, distinct roundIds, NO tumble markers) was wrongly merged:
+// the merged record showed bet=90 (45+45) and the executor's spin count never
+// grew (logged "debounced"). A genuine tumble ALWAYS carries rs_t/rs_p/rs_c,
+// so independent winning spins must now stay separate.
+test("na=c winning spins WITHOUT tumble markers do NOT merge (vs10hottuna)", () => {
+  const state = createDedupState();
+  const opts = { allowBalanceContinuity: false };
+  // Spin #5: lose (na=s, bet 45), balance 984806.6 → 984761.6.
+  ingestFrame(state, synthSpin({ roundId: "rid-5", bet: 45, balanceBefore: 984806.6, balanceAfter: 984761.6, raw: { na: "s" } }), opts);
+  // Spin #6: WIN 90 (na=c, no rs_* markers), NEW bet, distinct roundId.
+  ingestFrame(state, synthSpin({ roundId: "rid-6", bet: 45, balanceBefore: 984761.6, balanceAfter: 984806.6, raw: { na: "c" } }), opts);
+  expect(state.spins.length).toBe(2);       // two independent paid spins
+  expect(state.spins[0]!.bet).toBe(45);
+  expect(state.spins[1]!.bet).toBe(45);     // NOT fused into 90
+});
+
+test("genuine tumble (na=c WITH rs_t) still merges into its round-start", () => {
+  const state = createDedupState();
+  const opts = { allowBalanceContinuity: false };
+  // Round-start: na=s, rs_c=1/rs_p=0, bet deducted (vs10hottuna #16).
+  ingestFrame(state, synthSpin({ roundId: "rid-16", bet: 45, balanceBefore: 984689.6, balanceAfter: 984644.6, raw: { na: "s", rs_c: "1", rs_p: "0" } }), opts);
+  // Auto-tumble: na=c + rs_t=1, win credited, distinct roundId (#17).
+  ingestFrame(state, synthSpin({ roundId: "rid-17", bet: 45, balanceBefore: 984644.6, balanceAfter: 984689.6, raw: { na: "c", rs_t: "1" } }), opts);
+  expect(state.spins.length).toBe(1);       // one paid round
+  expect(state.spins[0]!.bet).toBe(45);
+  expect(state.spins[0]!.win).toBe(45);     // balance-derived: 984689.6-984644.6+45
+});

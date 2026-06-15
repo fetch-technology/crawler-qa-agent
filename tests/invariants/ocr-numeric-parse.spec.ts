@@ -133,3 +133,29 @@ test("two distinct ints are NOT merged: '50 10' → 50 (10 is not a 3-digit grou
 test("badge + bet without currency symbols: '13 0.20' → 0.2 (0.20 breaks grouping)", () => {
   expect(parseNumericFromOcr("13 0.20")).toBe(0.2);
 });
+
+// REGRESSION (2026-06-15) — BRL / European number format. These locales use
+// "." for thousands and "," for the decimal, the OPPOSITE of US. The balance
+// widget on vs10hottuna (BRL) showed "984.482,60" but the old parser assumed
+// US format, stripped the "," and kept "." as decimal → 984.4826 (off by 1000×),
+// failing the final-balance check against network 984482.6. Rule: when a token
+// has BOTH separators, the LAST one is the decimal — handles US and BRL/EU with
+// one rule, no per-game locale config.
+test("BRL balance '984.482,60' → 984482.6 (comma is decimal, dot is grouping)", () => {
+  expect(parseNumericFromOcr("984.482,60")).toBe(984482.6);
+});
+
+test("BRL with currency 'R$ 1.234.567,89' → 1234567.89", () => {
+  expect(parseNumericFromOcr("R$ 1.234.567,89")).toBe(1234567.89);
+});
+
+test("US format still works after locale fix: '1,234,567.89' → 1234567.89", () => {
+  expect(parseNumericFromOcr("1,234,567.89")).toBe(1234567.89);
+});
+
+test("BRL small decimal '0,40' stays grouping-ambiguous (single sep, unchanged)", () => {
+  // Single-separator tokens remain ambiguous by design; only MIXED-separator
+  // tokens get last-sep-wins. Documents the boundary so a future EU-decimal
+  // fix is a deliberate change, not an accident.
+  expect(parseNumericFromOcr("0,40")).toBe(40);
+});

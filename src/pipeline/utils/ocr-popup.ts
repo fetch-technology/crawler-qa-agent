@@ -134,6 +134,34 @@ export async function ocrBuffer(buf: Buffer): Promise<{ text: string; durationMs
  *     small fonts where Tesseract reads "." as ":")
  *   - Apostrophe mis-OCR (some Swiss locales use ' as thousand sep)
  */
+/** Normalize ONE numeric token into a plain JS-parseable string, locale-aware.
+ *  Tesseract mis-reads "." as ":" → mapped back first. The hard case is the
+ *  THOUSANDS-vs-DECIMAL separator, which is locale-dependent:
+ *    - US  "984,482.60"  → "." is decimal, "," is grouping
+ *    - BRL/EU "984.482,60" → "," is decimal, "." is grouping
+ *  When a token carries BOTH separators we don't need to know the locale: the
+ *  separator that appears LAST is always the decimal point (no locale puts the
+ *  decimal before the final thousands group). All earlier separators are
+ *  grouping → stripped. This is what fixes the BRL balance "984.482,60" being
+ *  read as 984.4826 (it used to strip "," and keep "." as decimal). When only
+ *  ONE separator type is present it stays ambiguous ("1,234" / "1.234") → we
+ *  keep the long-standing behavior (`,`/`;`/`'` = grouping → strip; `.` = decimal)
+ *  and let tryThousandGrouping handle the 3-digit-group case. */
+function cleanNumericToken(tok: string): string {
+  const t = tok.replace(/:/g, ".");
+  const hasDot = t.includes(".");
+  const hasComma = /[,;]/.test(t);
+  if (hasDot && hasComma) {
+    const lastDot = t.lastIndexOf(".");
+    const lastComma = Math.max(t.lastIndexOf(","), t.lastIndexOf(";"));
+    const decPos = Math.max(lastDot, lastComma);
+    const intPart = t.slice(0, decPos).replace(/[.,;']/g, "");
+    const fracPart = t.slice(decPos + 1).replace(/[.,;']/g, "");
+    return `${intPart}.${fracPart}`;
+  }
+  return t.replace(/[,;']/g, "");
+}
+
 /** Try to read a run of ADJACENT numeric tokens as ONE number whose thousands
  *  separators OCR mangled into spaces: "1 000,004.31" → 1000004.31. Valid
  *  grouping = first group 1-3 digits, every later group EXACTLY 3 digits, the
@@ -172,7 +200,7 @@ export function parseNumericFromOcr(text: string): number | null {
     const tokens = segment.split(/\s+/).filter(Boolean);
     let i = 0;
     while (i < tokens.length) {
-      const cleaned0 = tokens[i]!.replace(/[,;']/g, "").replace(/:/g, ".");
+      const cleaned0 = cleanNumericToken(tokens[i]!);
       const m0 = cleaned0.match(/-?\d+(\.\d+)?/);
       if (!m0) { i++; continue; }
       // Collect the adjacent purely-numeric run after this token.
@@ -187,7 +215,7 @@ export function parseNumericFromOcr(text: string): number | null {
         candidates.push(grouped);
       } else {
         for (const tok of run) {
-          const cleaned = tok.replace(/[,;']/g, "").replace(/:/g, ".");
+          const cleaned = cleanNumericToken(tok);
           const m = cleaned.match(/-?\d+(\.\d+)?/);
           if (!m) continue;
           const n = Number(m[0]);
