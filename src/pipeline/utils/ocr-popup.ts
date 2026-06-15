@@ -122,7 +122,75 @@ async function binarizePng(buf: Buffer, channel: PixelChannel, inkIsHigh: boolea
     dst.data[o] = dst.data[o + 1] = dst.data[o + 2] = c;
     dst.data[o + 3] = 255;
   }
-  return PNG.sync.write(dst);
+  return cropPngToContentBand(PNG, dst);
+}
+
+/** Pick the LONGEST contiguous run of indices whose fraction is "glyph-like":
+ *  in [lo, hi]. Near-empty rows (background) and near-solid rows (a binarized
+ *  noise BAND or filled bar) fall outside the window, so the text band — which
+ *  has medium ink density — is isolated from both. Pure; exported for tests. */
+export function pickLongestBand(frac: ReadonlyArray<number>, lo: number, hi: number): [number, number] | null {
+  let bestStart = -1, bestLen = 0, curStart = -1;
+  const close = (end: number) => {
+    if (curStart < 0) return;
+    const len = end - curStart;
+    if (len > bestLen) { bestLen = len; bestStart = curStart; }
+    curStart = -1;
+  };
+  for (let i = 0; i < frac.length; i++) {
+    if (frac[i]! >= lo && frac[i]! <= hi) { if (curStart < 0) curStart = i; }
+    else close(i);
+  }
+  close(frac.length);
+  return bestStart < 0 ? null : [bestStart, bestStart + bestLen - 1];
+}
+
+/** Crop a binarized PNG (black ink on white) to the bounding box of the text,
+ *  trimming empty margins AND a noise band that bleeds in from the busy game
+ *  background (the #1 cause of garbage reads on WHITE-text widgets: Tesseract
+ *  reads the jagged top strip + the digits as ONE line → "$983,252.80" →
+ *  "0003.257"). Vertical: keep the longest glyph-density row band. Horizontal:
+ *  trim to columns carrying ink within that band, + small padding. Returns the
+ *  full PNG buffer unchanged when no clean band is found (fail-open). */
+function cropPngToContentBand(PNG: typeof import("pngjs").PNG, png: import("pngjs").PNG): Buffer {
+  const W = png.width, H = png.height;
+  const rowFrac = new Array<number>(H).fill(0);
+  for (let y = 0; y < H; y++) {
+    let ink = 0;
+    for (let x = 0; x < W; x++) if (png.data[(y * W + x) << 2]! < 128) ink++;
+    rowFrac[y] = ink / W;
+  }
+  const band = pickLongestBand(rowFrac, 0.03, 0.92);
+  if (!band) return PNG.sync.write(png);
+  const [r0, r1] = band;
+  // Horizontal extent: columns with ANY ink inside the row band.
+  let c0 = W, c1 = -1;
+  for (let y = r0; y <= r1; y++) {
+    for (let x = 0; x < W; x++) {
+      if (png.data[(y * W + x) << 2]! < 128) { if (x < c0) c0 = x; if (x > c1) c1 = x; }
+    }
+  }
+  if (c1 < c0) return PNG.sync.write(png);
+  const padY = Math.round((r1 - r0 + 1) * 0.15);
+  const padX = Math.round((r1 - r0 + 1) * 0.25); // pad X by glyph-height scale
+  const x0 = Math.max(0, c0 - padX), x1 = Math.min(W - 1, c1 + padX);
+  const y0 = Math.max(0, r0 - padY), y1 = Math.min(H - 1, r1 + padY);
+  const cw = x1 - x0 + 1, ch = y1 - y0 + 1;
+  // No-op guard: if the trim barely changes anything, keep the original.
+  if (cw >= W * 0.95 && ch >= H * 0.95) return PNG.sync.write(png);
+  if (cw < 8 || ch < 8) return PNG.sync.write(png);
+  const out = new PNG({ width: cw, height: ch });
+  for (let y = 0; y < ch; y++) {
+    for (let x = 0; x < cw; x++) {
+      const si = ((y + y0) * W + (x + x0)) << 2;
+      const di = (y * cw + x) << 2;
+      out.data[di] = png.data[si]!;
+      out.data[di + 1] = png.data[si + 1]!;
+      out.data[di + 2] = png.data[si + 2]!;
+      out.data[di + 3] = 255;
+    }
+  }
+  return PNG.sync.write(out);
 }
 
 export type OcrCandidate = { name: string; text: string };
