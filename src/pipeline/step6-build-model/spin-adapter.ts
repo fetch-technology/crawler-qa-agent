@@ -29,7 +29,26 @@ import type { NormalizedSpinResult } from "./normalized.js";
 export type AdaptedSpin = Record<string, unknown>;
 
 export function adaptSpinForAssertions(spin: NormalizedSpinResult): AdaptedSpin {
-  const na = (spin.raw as Record<string, unknown> | undefined)?.na;
+  const raw = spin.raw as Record<string, unknown> | undefined;
+  // A frame is the END of a paid round UNLESS it is a tumble CONTINUATION.
+  // `na` alone is not enough: PP sets na="c" ("next action = collect") on BOTH
+  // (a) a mid-cascade tumble frame AND (b) a completed WINNING line-spin whose
+  // win just needs collecting. Treating na="c" as "not ended" wrongly dropped
+  // every winning line-spin from the round-end set (vs10hottuna autoplay: 3 of
+  // 10 winning rounds excluded → "at least 10 round-end" failed at 7, and the
+  // round-end-only balance reconciliation was off by the excluded wins). A real
+  // tumble continuation always carries a tumble marker (rs_t>0 / rs_p>0 /
+  // rs_c>1) — same discriminator as cascade-dedup — so only THOSE are non-end.
+  // Post-dedup the surviving frame of a merged tumble round is its na="s" start,
+  // which is correctly an end-round here too.
+  const toNum = (v: unknown): number => (v == null ? NaN : Number(v));
+  const rsTier = toNum(raw?.["rs_t"]);
+  const rsPhase = toNum(raw?.["rs_p"]);
+  const rsCount = toNum(raw?.["rs_c"]);
+  const isTumbleContinuation =
+    (Number.isFinite(rsTier) && rsTier > 0)
+    || (Number.isFinite(rsPhase) && rsPhase > 0)
+    || (Number.isFinite(rsCount) && rsCount > 1);
 
   // Balance-derived win (2026-06-05). Providers like Pragmatic Play debit the
   // bet on `doSpin` but credit the win asynchronously on `doCollect` (round
@@ -77,7 +96,7 @@ export function adaptSpinForAssertions(spin: NormalizedSpinResult): AdaptedSpin 
     matrix: spin.reels,
     grid: spin.reels,
     status: "RESOLVED",
-    isEndRound: na === "s" || na === undefined,
+    isEndRound: !isTumbleContinuation,
 
     raw: spin.raw,
 

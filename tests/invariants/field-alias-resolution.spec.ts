@@ -83,13 +83,25 @@ test("legacy status field is 'RESOLVED' constant", () => {
   expect(a.status).toBe("RESOLVED");
 });
 
-test("isEndRound is true when raw.na is 's' OR raw.na is undefined", () => {
+// UPDATED (2026-06-15): isEndRound is now driven by TUMBLE markers, not by
+// `na` alone. `na="c"` means "next action = collect" and is set on BOTH a
+// mid-cascade frame AND a completed WINNING line-spin — so na="c" without a
+// tumble marker (rs_t/rs_p/rs_c>1) is a finished round (round-end=true). Only a
+// genuine tumble continuation (carrying a tumble marker) is non-end.
+test("isEndRound: a frame is round-end unless it carries a tumble-continuation marker", () => {
   const aWithS = adaptSpinForAssertions(synthSpin({ raw: { na: "s" } }));
   expect(aWithS.isEndRound).toBe(true);
   const aWithUndefined = adaptSpinForAssertions(synthSpin({ raw: {} }));
   expect(aWithUndefined.isEndRound).toBe(true);
-  const aWithC = adaptSpinForAssertions(synthSpin({ raw: { na: "c" } }));
-  expect(aWithC.isEndRound).toBe(false);
+  // Winning LINE spin: na="c", NO tumble markers → finished round → round-end.
+  const aWinLine = adaptSpinForAssertions(synthSpin({ raw: { na: "c" } }));
+  expect(aWinLine.isEndRound).toBe(true);
+  // Genuine tumble CONTINUATION: na="c" + rs_t>0 → mid-round → NOT round-end.
+  const aTumble = adaptSpinForAssertions(synthSpin({ raw: { na: "c", rs_t: "1" } }));
+  expect(aTumble.isEndRound).toBe(false);
+  // Tumble advanced via rs_p / rs_c>1 (even with na="s") → NOT round-end.
+  const aTumble2 = adaptSpinForAssertions(synthSpin({ raw: { na: "s", rs_p: "1", rs_c: "2" } }));
+  expect(aTumble2.isEndRound).toBe(false);
 });
 
 test("adapter is pure — same input twice → same output structure", () => {
