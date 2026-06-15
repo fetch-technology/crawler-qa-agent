@@ -64,6 +64,113 @@ async function upscalePng(buf: Buffer, factor: number): Promise<Buffer> {
   return PNG.sync.write(dst);
 }
 
+/** Otsu's method: find the 0–255 threshold that maximizes between-class
+ *  variance of a 256-bin histogram. No magic constants — the threshold is
+ *  derived from the crop's own pixel distribution, so it adapts per game /
+ *  per widget. Pure. */
+export function otsuThreshold(hist: ReadonlyArray<number>, total: number): number {
+  if (total <= 0) return 127;
+  let sum = 0;
+  for (let i = 0; i < 256; i++) sum += i * hist[i]!;
+  let sumB = 0, wB = 0, maxVar = -1, thr = 127;
+  for (let t = 0; t < 256; t++) {
+    wB += hist[t]!;
+    if (wB === 0) continue;
+    const wF = total - wB;
+    if (wF === 0) break;
+    sumB += t * hist[t]!;
+    const mB = sumB / wB;
+    const mF = (sum - sumB) / wF;
+    const between = wB * wF * (mB - mF) * (mB - mF);
+    if (between > maxVar) { maxVar = between; thr = t; }
+  }
+  return thr;
+}
+
+// Per-pixel feature channels (0–255). Each isolates text differently; trying
+// several + consensus handles colored text (yellow/gold/white) on busy game
+// backgrounds without any per-game color config.
+type PixelChannel = (r: number, g: number, b: number) => number;
+const CH_LUM: PixelChannel = (r, g, b) => 0.299 * r + 0.587 * g + 0.114 * b;
+const CH_SAT: PixelChannel = (r, g, b) => Math.max(r, g, b) - Math.min(r, g, b);
+const CH_WARM: PixelChannel = (r, g, b) => Math.max(0, (r + g) / 2 - b);
+
+/** Binarize an upscaled PNG buffer to black-ink-on-white using one feature
+ *  channel + Otsu, with explicit ink polarity. Returns a new PNG buffer.
+ *  Pure-ish (only the pngjs dynamic import is async). */
+async function binarizePng(buf: Buffer, channel: PixelChannel, inkIsHigh: boolean): Promise<Buffer> {
+  const mod = await import("pngjs");
+  const PNG = (mod as { PNG?: typeof import("pngjs").PNG }).PNG
+    ?? (mod as { default?: { PNG: typeof import("pngjs").PNG } }).default!.PNG;
+  const src = PNG.sync.read(buf);
+  const n = src.width * src.height;
+  const vals = new Uint8Array(n);
+  const hist = new Array<number>(256).fill(0);
+  for (let i = 0; i < n; i++) {
+    const o = i << 2;
+    const v = Math.max(0, Math.min(255, Math.round(channel(src.data[o]!, src.data[o + 1]!, src.data[o + 2]!))));
+    vals[i] = v;
+    hist[v]!++;
+  }
+  const thr = otsuThreshold(hist, n);
+  const dst = new PNG({ width: src.width, height: src.height });
+  for (let i = 0; i < n; i++) {
+    const high = vals[i]! > thr;
+    const isInk = inkIsHigh ? high : !high;
+    const c = isInk ? 0 : 255; // black ink on white paper
+    const o = i << 2;
+    dst.data[o] = dst.data[o + 1] = dst.data[o + 2] = c;
+    dst.data[o + 3] = 255;
+  }
+  return PNG.sync.write(dst);
+}
+
+export type OcrCandidate = { name: string; text: string };
+
+/**
+ * Pick the best numeric OCR read from several preprocessing strategies.
+ * Strategy:
+ *   1. CONSENSUS — if ≥2 strategies parse to the SAME value (to the cent),
+ *      that value almost certainly correct → return the first such read.
+ *   2. Else MOST DIGITS — among reads that parse to a finite number, the one
+ *      whose text has the most digit characters (a truncated read like "00"
+ *      loses to a complete "45.00"). Absurd lengths (>12 digits) are noise →
+ *      dropped.
+ *   3. Else the first non-empty text (lets the caller's parse fail loudly).
+ * Pure — exported for tests.
+ */
+export function selectBestOcrCandidate(candidates: ReadonlyArray<OcrCandidate>): { text: string; name: string } {
+  const scored = candidates.map((c) => {
+    const value = parseNumericFromOcr(c.text);
+    const digits = (c.text.match(/\d/g) ?? []).length;
+    return { ...c, value, digits };
+  });
+  const finite = scored.filter((c) => c.value != null && Number.isFinite(c.value) && c.digits <= 12);
+  // 1. Consensus on a parsed value (rounded to cents).
+  const votes = new Map<string, number>();
+  for (const c of finite) {
+    const key = (Math.round(c.value! * 100) / 100).toString();
+    votes.set(key, (votes.get(key) ?? 0) + 1);
+  }
+  let bestKey: string | null = null;
+  let bestVotes = 1; // need ≥2 to count as consensus
+  for (const [key, v] of votes) {
+    if (v > bestVotes) { bestVotes = v; bestKey = key; }
+  }
+  if (bestKey != null) {
+    const win = finite.find((c) => (Math.round(c.value! * 100) / 100).toString() === bestKey)!;
+    return { text: win.text, name: win.name };
+  }
+  // 2. Most digit characters among finite reads.
+  if (finite.length > 0) {
+    const win = finite.reduce((a, b) => (b.digits > a.digits ? b : a));
+    return { text: win.text, name: win.name };
+  }
+  // 3. Nothing parsed — return the first non-empty so the caller sees real text.
+  const nonEmpty = scored.find((c) => c.text.length > 0);
+  return { text: nonEmpty?.text ?? "", name: nonEmpty?.name ?? "raw" };
+}
+
 /**
  * OCR a specific region of the page (vs full viewport). Cheaper than
  * full-screen OCR + dramatically less noise — region content is the only
@@ -71,11 +178,18 @@ async function upscalePng(buf: Buffer, factor: number): Promise<Buffer> {
  * widgets where the surrounding game art / animations cause flaky output
  * if OCRed wholesale.
  *
+ * NUMERIC widgets run a small ensemble of preprocessing strategies (raw +
+ * Otsu binarizations over luminance / saturation / warm-chroma channels) and
+ * pick the best read by consensus — colored slot text (yellow/gold/white) on
+ * photographic backgrounds defeats single-pass color OCR (observed: clear
+ * "R$983,621.80" → Tesseract read just ","; "45.00" → "00"). Early-exits as
+ * soon as two strategies agree, so the common case stays ~2–3 OCR passes.
+ *
  * Returns the cropped PNG buffer alongside the OCR text so callers can
  * persist it as evidence (case-executor saves per-region PNGs for the
  * dashboard "OCR Evidence" panel — QA sees the exact pixels Tesseract
  * was looking at, helps spot when bbox is mis-aligned or covered by an
- * animation).
+ * animation). For numeric reads the WINNING strategy's image is returned.
  */
 export async function ocrRegion(
   page: import("playwright").Page,
@@ -90,19 +204,49 @@ export async function ocrRegion(
   // Upscale small crops (target ~120px tall, 2–4×) — vanilla Tesseract is
   // unreliable on tiny glyphs. Falls back to the raw buffer if upscale fails.
   const factor = Math.max(1, Math.min(4, Math.round(120 / Math.max(1, region.h))));
-  let imageBuf = raw;
+  let baseBuf = raw;
   if (factor > 1) {
-    try { imageBuf = await upscalePng(raw, factor); } catch { imageBuf = raw; }
+    try { baseBuf = await upscalePng(raw, factor); } catch { baseBuf = raw; }
   }
-  // Numeric widgets use the digit-whitelisted single-line worker; everything
-  // else (popup keywords, error/paytable text) uses the general text worker.
-  const w = opts.numeric ? await getNumericWorker() : await getWorker();
-  const result = await w.recognize(imageBuf);
-  return {
-    text: (result.data.text ?? "").trim(),
-    durationMs: Date.now() - start,
-    imageBuf,
-  };
+
+  // Non-numeric (popup keywords, paytable/error text): single pass, text worker.
+  if (!opts.numeric) {
+    const w = await getWorker();
+    const result = await w.recognize(baseBuf);
+    return { text: (result.data.text ?? "").trim(), durationMs: Date.now() - start, imageBuf: baseBuf };
+  }
+
+  // Numeric: ensemble of preprocessing strategies + consensus. `raw` first so
+  // a clean crop is accepted immediately when a binarization agrees with it.
+  const w = await getNumericWorker();
+  const strategies: Array<{ name: string; build: () => Promise<Buffer> }> = [
+    { name: "raw", build: async () => baseBuf },
+    { name: "lum-dark", build: () => binarizePng(baseBuf, CH_LUM, false) },
+    { name: "lum-bright", build: () => binarizePng(baseBuf, CH_LUM, true) },
+    { name: "sat", build: () => binarizePng(baseBuf, CH_SAT, true) },
+    { name: "warm", build: () => binarizePng(baseBuf, CH_WARM, true) },
+  ];
+  const tried: Array<OcrCandidate & { buf: Buffer }> = [];
+  for (const s of strategies) {
+    let buf: Buffer;
+    try { buf = await s.build(); } catch { continue; }
+    let text = "";
+    try { text = ((await w.recognize(buf)).data.text ?? "").trim(); } catch { /* keep "" */ }
+    tried.push({ name: s.name, text, buf });
+    // Early-exit: two strategies already agree on a finite value.
+    const counts = new Map<string, number>();
+    for (const c of tried) {
+      const v = parseNumericFromOcr(c.text);
+      if (v != null && Number.isFinite(v)) {
+        const key = (Math.round(v * 100) / 100).toString();
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+    }
+    if ([...counts.values()].some((n) => n >= 2)) break;
+  }
+  const best = selectBestOcrCandidate(tried);
+  const winBuf = tried.find((c) => c.name === best.name)?.buf ?? baseBuf;
+  return { text: best.text, durationMs: Date.now() - start, imageBuf: winBuf };
 }
 
 /**
