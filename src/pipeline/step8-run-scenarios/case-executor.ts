@@ -1009,7 +1009,21 @@ export async function executeCase(
           if (collectedSpins.length === beforeCount) return false;
           // Post-capture: choose silence threshold by win value of last spin.
           const lastSpin = collectedSpins[collectedSpins.length - 1];
-          const isNoWin = lastSpin && (typeof lastSpin.win !== "number" || lastSpin.win === 0);
+          // A losing CASCADE/tumble round (rs_* markers) still plays a multi-
+          // frame tumble animation even though win=0 — the short no-win silence
+          // (800ms) can declare "ready" while the reels are still resolving, so
+          // the NEXT spin click lands mid-animation and the game swallows it
+          // (observed on vs10hottuna: losing tumble round #3 → next click
+          // dropped). Treat any round that carried tumble markers like a win →
+          // use the longer settle window. Read from the round's own frames, so
+          // this adapts per game with no hardcoding.
+          const lastRaw = lastSpin?.raw as Record<string, unknown> | undefined;
+          const lastWasCascade =
+            (lastSpin?.cascadeFrames?.length ?? 0) > 0
+            || (!!lastRaw && Object.keys(lastRaw).some((k) => k.startsWith("rs_")));
+          const isNoWin = lastSpin
+            && (typeof lastSpin.win !== "number" || lastSpin.win === 0)
+            && !lastWasCascade;
           const silenceTarget = isNoWin ? NO_WIN_SILENCE_MS : WIN_SILENCE_MS;
           // Round-end signal (provider config) is a strong "ready" signal —
           // skip the silence wait when it arrives.
@@ -1064,28 +1078,34 @@ export async function executeCase(
                 console.log(`[spin-retry] substate keywords detected (matched=[${popup.matchedKeywords.join(",")}]) — ignoring (likely button labels)`);
               }
               // ANIMATION-DEBOUNCE retry (2026-05-25, Option B fix).
-              // When no popup detected AND no response captured AND we've
+              // When no INTERSTITIAL popup AND no response captured AND we've
               // waited ≥ half the timeout, suspect the click was eaten by an
               // ongoing canvas animation (cascade explode + win counter on
               // PP cluster/ways games). Re-click after a 2s settle so the
               // case progresses instead of dropping the spin.
               //
-              // Distinct from popup retry — uses the SAME retries counter so
-              // total retry budget is bounded (max MAX_SPIN_RETRIES across
-              // both paths). Only fires when:
-              //   1. No interstitial popup (would have hit the if above)
-              //   2. No substate keywords (suggesting paytable/auto open)
-              //   3. We've burned ≥ 50% of PRE_CAPTURE_TIMEOUT_MS waiting
-              //   4. Still no captured spin response
-              //   5. Spin button coords known (sb)
-              else if (
+              // 2026-06-15: this was previously gated on !popup.substate, so
+              // when OCR matched permanent button LABELS ("autoplay"/"history")
+              // the re-click NEVER fired and the swallowed click was lost for
+              // good (vs10hottuna: 2 spins dropped → count 13/15, warnings
+              // showed "0 popup-retries"). Substate keywords are almost always
+              // button labels, not a blocking popup — they must NOT suppress
+              // the re-click. A genuine interstitial is handled above (+continues),
+              // and we re-click the SPIN BUTTON coords (never the canvas centre),
+              // so even if a real substate panel were open this can't trigger a
+              // stray spin. Uses the SAME retries counter (≤ MAX_SPIN_RETRIES).
+              // Fires when:
+              //   1. No interstitial popup (handled + continued above)
+              //   2. We've burned ≥ 50% of PRE_CAPTURE_TIMEOUT_MS waiting
+              //   3. Still no captured spin response
+              //   4. Spin button coords known (sb)
+              if (
                 !popup.interstitial
-                && !popup.substate
                 && elapsedInPhase >= PRE_CAPTURE_TIMEOUT_MS * 0.5
                 && collectedSpins.length === beforeCount
                 && sb
               ) {
-                const msg = `spin ${beforeCount + 1}: animation-debounce suspected (no popup detected, no response after ${(elapsedInPhase / 1000).toFixed(1)}s) — re-click ${retries + 1}/${MAX_SPIN_RETRIES}`;
+                const msg = `spin ${beforeCount + 1}: animation-debounce suspected (no new response after ${(elapsedInPhase / 1000).toFixed(1)}s, substate=${popup.substate}) — re-click ${retries + 1}/${MAX_SPIN_RETRIES}`;
                 console.warn(`[spin-retry] ${msg}`);
                 warnings.push(msg);
                 await ctx.page.waitForTimeout(2000); // extra settle for any tail animation
