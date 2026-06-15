@@ -878,6 +878,23 @@ export async function executeCase(
   }
 
   let actionsExecuted = 0;
+  // Autoplay target round count, derived from a `autoButton__autoCountSlide-N`
+  // click in the action list. Passed to wait_until_no_spin_response so the wait
+  // does NOT conclude the batch is done during a mid-round pause > quietMs (a
+  // win celebration / slow autoplay cadence) — otherwise the following
+  // stop_autoplay_if_running would kill the still-running batch (observed on
+  // vs10hottuna: batch of 10 stopped at 4, log "1 stop click(s)"). undefined
+  // when this isn't an autoplay-by-count case.
+  const autoplayTargetCount = (() => {
+    let n: number | undefined;
+    for (const a of input.actions) {
+      if (a.kind === "click" && typeof a.uiKey === "string") {
+        const m = /__autoCountSlide-(\d+)\b/.exec(a.uiKey);
+        if (m) n = Number(m[1]); // last one wins if multiple
+      }
+    }
+    return n;
+  })();
   // Evidence: per-action telemetry. Each action push entry with timing +
   // success outcome so dashboard can render the sequence + spot slow / failed
   // actions. Mutated inside the action loop below.
@@ -969,6 +986,7 @@ export async function executeCase(
               const last = collectedSpins[collectedSpins.length - 1];
               return !!last && ((last.freeSpinsRemaining ?? 0) > 0 || last.isFreeSpin === true);
             },
+            minSpins: autoplayTargetCount,
           });
         } catch (err) {
           actionError = err instanceof Error ? err.message : String(err);
@@ -1160,6 +1178,7 @@ export async function executeCase(
               const last = collectedSpins[collectedSpins.length - 1];
               return !!last && ((last.freeSpinsRemaining ?? 0) > 0 || last.isFreeSpin === true);
             },
+            minSpins: autoplayTargetCount,
           });
         } catch (err) {
           actionError = err instanceof Error ? err.message : String(err);
@@ -2492,6 +2511,14 @@ export type WaitUntilNoSpinResponseOpts = {
    *  transition gap longer than quietMs mid-chain must not end the wait before
    *  the feature finishes. Still bounded by maxMs. */
   fsActive?: () => boolean;
+  /** Expected autoplay round count. When set, a quiet gap ≥ quietMs does NOT
+   *  end the wait until `minSpins` spins are captured — UNLESS the gap reaches
+   *  `hardQuietMs` (autoplay genuinely stopped early). Prevents a mid-batch
+   *  pause > quietMs from truncating the batch. */
+  minSpins?: number;
+  /** Quiet gap that ends the wait even when minSpins isn't reached. Defaults to
+   *  max(quietMs*3, 15000). */
+  hardQuietMs?: number;
 };
 
 export type WaitUntilNoSpinResponseResult = {
@@ -2509,6 +2536,9 @@ export async function waitUntilNoSpinResponse(
   const startCount = opts.spinResponseCount();
   let lastLoggedCount = startCount;
   let fsWaitLoggedAt = 0;
+  let batchWaitLoggedAt = 0;
+  const target = opts.minSpins ?? 0;
+  const hardQuietMs = opts.hardQuietMs ?? Math.max(opts.quietMs * 3, 15_000);
   while (opts.now() - start < opts.maxMs) {
     const gap = opts.now() - opts.lastSpinResponseAt();
     const captured = opts.spinResponseCount() - startCount;
@@ -2521,9 +2551,24 @@ export async function waitUntilNoSpinResponse(
     // Otherwise, if action execution before this wait took > quietMs,
     // lastSpinResponseAt can be stale and the wait exits immediately.
     // (allowZeroSpins waives this for idle-confirm waits.)
-    if ((captured > 0 || opts.allowZeroSpins === true) && gap >= opts.quietMs && !fsBusy) {
-      console.log(`[case-action]   quiet for ${gap}ms — captured ${captured} spin response(s) during wait; exiting after ${opts.now() - start}ms`);
+    // Count-aware: for an autoplay batch (target>0), a quiet gap ≥ quietMs only
+    // ends the wait once the target rounds are captured. If the target ISN'T met
+    // yet, the batch is mid-run (paused between rounds) → keep waiting, UNLESS
+    // the gap reaches hardQuietMs (autoplay genuinely stopped early — game-side
+    // stop / count not honoured), which avoids hanging to maxMs.
+    const countReached = captured >= target; // target 0 → always true (non-batch)
+    const earlyStop = gap >= hardQuietMs;
+    const countSatisfied = countReached || earlyStop;
+    if ((captured > 0 || opts.allowZeroSpins === true) && gap >= opts.quietMs && !fsBusy && countSatisfied) {
+      const note = !countReached && earlyStop ? ` (target ${target} NOT reached — autoplay stopped early)` : target > 0 ? `/${target}` : "";
+      console.log(`[case-action]   quiet for ${gap}ms — captured ${captured}${target > 0 && countReached ? `/${target}` : ""} spin response(s)${!countReached && earlyStop ? note : ""} during wait; exiting after ${opts.now() - start}ms`);
       return { exitReason: "quiet", elapsedMs: opts.now() - start, spinsCapturedDuringWait: captured, lastGapMs: gap };
+    }
+    // Batch mid-run: target not met, paused between rounds (gap ≥ quietMs but
+    // < hardQuiet) → log + keep waiting so stop_autoplay doesn't kill it later.
+    if (target > 0 && !countReached && gap >= opts.quietMs && !earlyStop && opts.now() - batchWaitLoggedAt >= 5000) {
+      console.log(`[case-action]   autoplay batch ${captured}/${target} captured, gap ${gap}ms (< hardQuiet ${hardQuietMs}ms) — still running, extending wait`);
+      batchWaitLoggedAt = opts.now();
     }
     if (fsBusy && opts.now() - fsWaitLoggedAt >= 5000) {
       console.log(`[case-action]   FS/bonus chain still active (gap ${gap}ms) — extending wait past quietMs until the feature finishes (max ${opts.maxMs}ms)`);
@@ -2686,6 +2731,9 @@ async function executeAction(
     /** True while the latest captured spin is still inside an FS/bonus chain —
      *  used to keep wait_until_no_spin_response running through the feature. */
     fsActive?: () => boolean;
+    /** Expected autoplay round count (from autoCountSlide-N). Passed to
+     *  wait_until_no_spin_response so it doesn't conclude the batch mid-run. */
+    minSpins?: number;
   },
 ): Promise<void> {
   if (action.kind === "wait_ms") {
@@ -3118,6 +3166,7 @@ async function executeAction(
       quietMs,
       maxMs: max,
       allowZeroSpins: action.allowZeroSpins,
+      minSpins: extras.minSpins,
       lastSpinResponseAt: extras.lastSpinResponseAt,
       spinResponseCount: extras.spinResponseCount,
       fsActive: extras.fsActive,

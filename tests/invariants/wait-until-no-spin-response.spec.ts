@@ -232,3 +232,69 @@ test("WITHOUT allowZeroSpins: zero-spin wait runs to maxMs (stale-timestamp guar
   expect(result.exitReason).toBe("timeout");
   expect(result.spinsCapturedDuringWait).toBe(0);
 });
+
+// COUNT-AWARE autoplay batch (2026-06-16) — vs10hottuna regression.
+// A batch of N must NOT be declared "done" during a mid-round pause > quietMs
+// (win celebration / slow autoplay cadence). Otherwise the wait returns at
+// spin #4, then stop_autoplay_if_running observes the resuming spins and clicks
+// the autoplay button — killing the batch (log: "1 stop click(s)"). minSpins
+// gates the quiet exit until the target is captured, with a hardQuietMs escape
+// hatch for genuine early stops.
+
+test("count-aware: a mid-batch pause > quietMs does NOT end the wait before minSpins", async () => {
+  // 4 spins, then a 6s pause (> quietMs 5000, < hardQuiet 15000), then 6 more.
+  const events = [
+    { atFakeMs: 1000 }, { atFakeMs: 2000 }, { atFakeMs: 3000 }, { atFakeMs: 4000 },
+    // 6s gap here — OLD behavior would exit "quiet" at 4 captured.
+    { atFakeMs: 10000 }, { atFakeMs: 11000 }, { atFakeMs: 12000 },
+    { atFakeMs: 13000 }, { atFakeMs: 14000 }, { atFakeMs: 15000 },
+  ];
+  const clk = makeFakeClock({ events });
+  const result = await waitUntilNoSpinResponse({
+    quietMs: 5000,
+    maxMs: 300000,
+    minSpins: 10,
+    lastSpinResponseAt: clk.lastSpinResponseAt,
+    spinResponseCount: clk.spinResponseCount,
+    sleep: clk.sleep,
+    now: clk.now,
+  });
+  expect(result.exitReason).toBe("quiet");
+  expect(result.spinsCapturedDuringWait).toBe(10); // full batch, NOT truncated at 4
+});
+
+test("count-aware: exits 'quiet' once minSpins captured + quietMs of silence", async () => {
+  const events = Array.from({ length: 10 }, (_, i) => ({ atFakeMs: (i + 1) * 500 }));
+  const clk = makeFakeClock({ events });
+  const result = await waitUntilNoSpinResponse({
+    quietMs: 5000,
+    maxMs: 300000,
+    minSpins: 10,
+    lastSpinResponseAt: clk.lastSpinResponseAt,
+    spinResponseCount: clk.spinResponseCount,
+    sleep: clk.sleep,
+    now: clk.now,
+  });
+  expect(result.exitReason).toBe("quiet");
+  expect(result.spinsCapturedDuringWait).toBe(10);
+});
+
+test("count-aware: genuine early stop (target never reached) exits at hardQuietMs, no hang to maxMs", async () => {
+  // Only 4 spins ever arrive (autoplay stopped early game-side). Must conclude
+  // at hardQuiet (default 15000), NOT run to maxMs.
+  const events = [{ atFakeMs: 1000 }, { atFakeMs: 2000 }, { atFakeMs: 3000 }, { atFakeMs: 4000 }];
+  const clk = makeFakeClock({ events });
+  const result = await waitUntilNoSpinResponse({
+    quietMs: 5000,
+    maxMs: 300000,
+    minSpins: 10,
+    lastSpinResponseAt: clk.lastSpinResponseAt,
+    spinResponseCount: clk.spinResponseCount,
+    sleep: clk.sleep,
+    now: clk.now,
+  });
+  expect(result.exitReason).toBe("quiet");
+  expect(result.spinsCapturedDuringWait).toBe(4);
+  expect(result.elapsedMs).toBeLessThan(300000);      // did NOT hang to maxMs
+  expect(result.lastGapMs).toBeGreaterThanOrEqual(15000); // ended via hardQuiet
+});
