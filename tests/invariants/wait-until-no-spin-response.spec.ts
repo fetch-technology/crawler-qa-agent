@@ -300,6 +300,48 @@ test("count-aware: genuine early stop (target never reached) exits at hardQuietM
   expect(result.lastGapMs).toBeGreaterThanOrEqual(20000); // ended via hardQuiet
 });
 
+test("onLongQuiet fires MID-BATCH during a quiet stall, NOT once the target is reached", async () => {
+  // 3 spins quick, then a long stall (potential interstitial block), then it
+  // resumes to the target. onLongQuiet should be invoked during the stall
+  // (count < target, gap ≥ quietMs) and NOT after the target is reached.
+  const events = [
+    { atFakeMs: 1000 }, { atFakeMs: 2000 }, { atFakeMs: 3000 },
+    // stall 3000 → 20000 (interstitial would block here on a non-auto game)
+    { atFakeMs: 20000 }, { atFakeMs: 21000 },
+  ];
+  const clk = makeFakeClock({ events });
+  let longQuietCalls = 0;
+  const result = await waitUntilNoSpinResponse({
+    quietMs: 5000,
+    maxMs: 600000,
+    minSpins: 5,
+    lastSpinResponseAt: clk.lastSpinResponseAt,
+    spinResponseCount: clk.spinResponseCount,
+    onLongQuiet: async () => { longQuietCalls++; },
+    sleep: clk.sleep,
+    now: clk.now,
+  });
+  expect(result.exitReason).toBe("quiet");
+  expect(result.spinsCapturedDuringWait).toBe(5);
+  expect(longQuietCalls).toBeGreaterThanOrEqual(1); // fired during the stall
+});
+
+test("onLongQuiet is NOT called for a non-batch (no minSpins) idle wait", async () => {
+  const clk = makeFakeClock();
+  let longQuietCalls = 0;
+  await waitUntilNoSpinResponse({
+    quietMs: 5000,
+    maxMs: 60000,
+    allowZeroSpins: true,            // idle-confirm, no minSpins
+    lastSpinResponseAt: clk.lastSpinResponseAt,
+    spinResponseCount: clk.spinResponseCount,
+    onLongQuiet: async () => { longQuietCalls++; },
+    sleep: clk.sleep,
+    now: clk.now,
+  });
+  expect(longQuietCalls).toBe(0); // no autoplay target → never polls for popups
+});
+
 test("count-aware: a long WIN-CELEBRATION pause (≈19s) does NOT trip the 60s hardQuiet", async () => {
   // Reproduces vs10hottuna: 33 spins, then a ~19s big-win celebration, then the
   // batch resumes to 50. The OLD 15s hardQuiet falsely concluded "stopped
