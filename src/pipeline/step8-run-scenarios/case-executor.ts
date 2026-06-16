@@ -3277,48 +3277,45 @@ async function executeAction(
     return;
   }
   if (action.kind === "dismiss") {
-    // DETECT-AND-RETRY (2026-06-16) — replaces the old blind "wait Ns then click
-    // center ×2". A celebration ("CONGRATULATIONS … PRESS ANYWHERE TO CONTINUE")
-    // animates in after a VARIABLE delay; a fixed pre-wait either fires the
-    // clicks too early (misses it → game stuck on the popup, the FS chain never
-    // starts) or wastes time. Instead: poll via OCR until the interstitial
-    // actually APPEARS, click viewport centre ("press anywhere") to advance,
-    // re-check until it's gone. Handles slow celebrations, multi-stage popups,
-    // and the already-auto-advanced case — all bounded by budgets.
-    const appearBudgetMs = timing?.dismissPreWaitMs ?? 10000; // max wait for the popup to show up
+    // NETWORK-CONFIRMED dismiss (2026-06-16). The celebration
+    // ("CONGRATULATIONS … PRESS ANYWHERE TO CONTINUE") is rendered in stylized
+    // outlined text on a busy net/coral/water background that Tesseract often
+    // CANNOT read — so OCR keyword detection misses it entirely (observed:
+    // "no interstitial within 10s" while the game sat stuck on the popup → FS
+    // never started → 120s timeout). And the popup is a CARD IN THE CENTRE, not
+    // a full-viewport overlay (the corners show the underlying BET/art), so a
+    // corner click misses it. So: don't rely on OCR or corners. Click the
+    // CENTRE (where the "press anywhere" card is) and use the strongest signal
+    // that it worked — a NEW SPIN RESPONSE, i.e. the feature actually started
+    // auto-spinning. Stop the moment that arrives; bound by maxClicks so an
+    // already-cleared / nothing-to-dismiss screen can't be over-clicked into
+    // stray spins. During a celebration the reels are covered, so a centre
+    // click can't trigger a spin; the maxClicks bound caps the rare edge case.
     const interClickMs = timing?.dismissInterClickMs ?? 800;
-    const clearBudgetMs = 20000; // max time to keep clicking once it has appeared
-    console.log(`[case-action] dismiss${action.reason ? ` — ${action.reason}` : ""} (detect-and-retry: appear≤${appearBudgetMs}ms, clear≤${clearBudgetMs}ms)`);
+    const settleMs = 900; // wait after each click for the feature to react
+    const maxClicks = 6;
+    const maxMs = (timing?.dismissPreWaitMs ?? 10000) + 12000;
     const vp = ctx.page.viewportSize() ?? { width: 1280, height: 720 };
     const cx = Math.round(vp.width / 2);
     const cy = Math.round(vp.height / 2);
+    const beforeCount = extras?.spinResponseCount?.() ?? 0;
+    console.log(`[case-action] dismiss${action.reason ? ` — ${action.reason}` : ""} (press-anywhere: centre-click until a new spin response, ≤${maxClicks} clicks / ${maxMs}ms)`);
     const start = Date.now();
-    let sawPopup = false;
     let clicks = 0;
-    while (Date.now() - start < appearBudgetMs + clearBudgetMs) {
-      let interstitial = false;
-      try {
-        const popup = await detectAnyPopup(ctx.page);
-        interstitial = popup.interstitial;
-      } catch { /* OCR hiccup — treat as not-detected, retry */ }
-      if (interstitial) {
-        sawPopup = true;
-        try { await ctx.page.mouse.click(cx, cy); clicks++; } catch { /* ignore */ }
-        await ctx.page.waitForTimeout(interClickMs);
-        continue;
-      }
-      if (sawPopup) {
-        // Appeared and is now cleared → done.
-        console.log(`[case-action] dismiss: interstitial cleared after ${clicks} click(s) (${Date.now() - start}ms)`);
+    let confirmed = false;
+    while (clicks < maxClicks && Date.now() - start < maxMs) {
+      if (extras && extras.spinResponseCount() > beforeCount) {
+        confirmed = true;
         break;
       }
-      if (Date.now() - start >= appearBudgetMs) {
-        // Never showed within the appear budget → autoplay/game auto-advanced
-        // it, or there was nothing to dismiss. Proceed.
-        console.log(`[case-action] dismiss: no interstitial within ${appearBudgetMs}ms — assuming auto-advanced/none`);
-        break;
-      }
-      await ctx.page.waitForTimeout(700);
+      try { await ctx.page.mouse.click(cx, cy); clicks++; } catch { /* ignore */ }
+      await ctx.page.waitForTimeout(interClickMs + settleMs);
+    }
+    if (!confirmed && extras && extras.spinResponseCount() > beforeCount) confirmed = true;
+    if (confirmed) {
+      console.log(`[case-action] dismiss: feature started (new spin response) after ${clicks} click(s) — celebration cleared (${Date.now() - start}ms)`);
+    } else {
+      console.log(`[case-action] dismiss: ${clicks} centre-click(s), no new spin response — celebration may have auto-advanced, or no spins follow (e.g. a result banner)`);
     }
     return;
   }
