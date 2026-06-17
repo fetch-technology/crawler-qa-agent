@@ -10,6 +10,7 @@ import path from "node:path";
 import type { Page } from "playwright";
 import {
   transcribeHistoryRows,
+  transcribeHistoryRowDetail,
   type TranscribedHistoryRow,
 } from "../../ai/vision.js";
 import { snapshot, waitUntilStable, decodePng, pixelDiff } from "../utils/pixel-diff/index.js";
@@ -24,6 +25,21 @@ export type HistoryMismatch = {
   detail: string;
 };
 
+/** AI-vision detail check on ONE expanded history row (Spin/Respin breakdown).
+ *  Advisory: surfaces internal-arithmetic / collapsed-vs-expanded mismatches
+ *  without failing the case (mirrors the win-vs-paytable advisory). */
+export type HistoryRowDetailCheck = {
+  rowKey: string;
+  spinWin: number | null;
+  respinWin: number | null;
+  totalWin: number | null;
+  /** The matching collapsed table row's win (expanded total should equal it). */
+  collapsedWin: number | null;
+  /** true = consistent, false = a real mismatch, null = couldn't read enough. */
+  consistent: boolean | null;
+  detail: string;
+};
+
 export type HistoryVerifyResult = {
   ok: boolean;
   opened: boolean;
@@ -31,6 +47,8 @@ export type HistoryVerifyResult = {
   spinsCount: number;
   matchedCount: number;
   mismatches: HistoryMismatch[];
+  /** AI-vision spot-checks on 1-2 representative expanded rows (advisory). */
+  rowDetailChecks?: HistoryRowDetailCheck[];
   reason?: string;
   /** Repo-relative path to the popup screenshot saved during verification.
    *  Always populated when the popup opens. Points to the FIRST page when
@@ -325,6 +343,15 @@ export async function verifyHistory(
 
   const { mismatches, matchedCount, ordering } = reconcileSpinsWithRows(spins, rows);
 
+  // EXPANDED-ROW DETAIL (advisory, AI-vision on 1-2 representative rows). The
+  // table reconciliation above checks the COLLAPSED columns (bet/win/balance);
+  // it can't see the per-round Spin/Respin breakdown. Expand the top 1-2 rows,
+  // AI-read their breakdown, and verify the internal arithmetic — Total ==
+  // Spin + Σ Respin, and expanded Total == the collapsed row's win. Surfaced
+  // for QA; does NOT fail `ok` (vision can misread; row-level reconcile is the
+  // verdict). The expandRow-<N> keys are positional + replay-stable.
+  const rowDetailChecks = await verifyExpandedRowDetails(inspectPage, uiRegistry, rows, screenshotPath);
+
   await cleanupPopup();
 
   return {
@@ -334,11 +361,81 @@ export async function verifyHistory(
     spinsCount: spins.length,
     matchedCount,
     mismatches,
+    rowDetailChecks: rowDetailChecks.length > 0 ? rowDetailChecks : undefined,
     screenshotPath: screenshotRel,
     rows,
     ordering,
     pagesScanned,
   };
+}
+
+function expandRowIndex(key: string): number {
+  const m = key.match(/(\d+)$/);
+  return m ? Number(m[1]) : 0;
+}
+
+/** Expand up to 2 representative history rows and AI-read each one's Spin/Respin
+ *  breakdown, returning advisory consistency checks. Best-effort: any failure on
+ *  a row records a null-consistent entry and moves on (never throws). */
+async function verifyExpandedRowDetails(
+  inspectPage: Page,
+  uiRegistry: UiRegistry,
+  rows: TranscribedHistoryRow[],
+  refScreenshotPath: string,
+): Promise<HistoryRowDetailCheck[]> {
+  const checks: HistoryRowDetailCheck[] = [];
+  const reg = uiRegistry as Record<string, UiElement | undefined>;
+  const expandKeys = Object.keys(reg)
+    .filter((k) => /(?:^|__)expandRow-\d+$/.test(k) && reg[k] != null)
+    .sort((a, b) => expandRowIndex(a) - expandRowIndex(b))
+    .slice(0, 2);
+  if (expandKeys.length === 0) return checks;
+  const dir = path.dirname(refScreenshotPath);
+  for (const rowKey of expandKeys) {
+    const el = reg[rowKey]!;
+    const idx = expandRowIndex(rowKey) - 1; // expandRow-1 → top table row (rows[0])
+    try {
+      await inspectPage.mouse.click(el.x, el.y);
+      await inspectPage.waitForTimeout(900);
+      const detailPath = path.join(dir, `rowdetail-${rowKey.replace(/[^a-zA-Z0-9_-]/g, "_")}.png`);
+      await writeFile(detailPath, await inspectPage.screenshot({ type: "png" }));
+      const d = await transcribeHistoryRowDetail({ screenshotPath: detailPath });
+      const collapsedWin = idx >= 0 && idx < rows.length ? rows[idx]!.win : null;
+      // Internal arithmetic: Total == Spin + Σ Respin. But vision can't reliably
+      // SPLIT a single win value into spin/respin on a base-only round (no real
+      // feature) — it tends to echo the same number under several labels. Treat
+      // as consistent when the components are genuinely additive OR when each
+      // reported component just equals the total (degenerate single-win round,
+      // no real respin). Only flag when the sum truly diverges from the total —
+      // i.e. a real decomposition that doesn't add up.
+      let internalOk = null;
+      if (d.totalWin != null && d.spinWin != null && d.respinWin != null) {
+        const components = [d.spinWin, d.respinWin];
+        const additive = Math.abs(d.totalWin - (d.spinWin + d.respinWin)) <= TOLERANCE;
+        const echoed = components.every((v) => Math.abs(v - d.totalWin!) <= TOLERANCE);
+        internalOk = additive || echoed;
+      }
+      const vsRowOk = d.totalWin != null && collapsedWin != null
+        ? Math.abs(d.totalWin - collapsedWin) <= TOLERANCE : null;
+      const consistent = internalOk === null && vsRowOk === null ? null : internalOk !== false && vsRowOk !== false;
+      const parts: string[] = [];
+      if (internalOk != null) parts.push(`total ${d.totalWin} ${internalOk ? "=" : "≠"} spin ${d.spinWin} + respin ${d.respinWin}`);
+      if (vsRowOk != null) parts.push(`expanded total ${d.totalWin} ${vsRowOk ? "=" : "≠"} table-row win ${collapsedWin}`);
+      checks.push({
+        rowKey, spinWin: d.spinWin, respinWin: d.respinWin, totalWin: d.totalWin, collapsedWin,
+        consistent, detail: parts.join("; ") || `could not read row detail (raw: ${d.raw.slice(0, 60)})`,
+      });
+      // Collapse the row back so the next expand's coord isn't shifted.
+      await inspectPage.mouse.click(el.x, el.y).catch(() => undefined);
+      await inspectPage.waitForTimeout(300);
+    } catch (err) {
+      checks.push({
+        rowKey, spinWin: null, respinWin: null, totalWin: null, collapsedWin: null,
+        consistent: null, detail: `detail read failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+  }
+  return checks;
 }
 
 /** Pure reconciliation — match captured spins against OCR'd history rows,

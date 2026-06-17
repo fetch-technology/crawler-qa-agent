@@ -322,6 +322,46 @@ function humanizeKey(key: string): string {
   return key.replace(/([a-z])([A-Z])/g, "$1 $2");
 }
 
+/** A `<base>-<suffix>` key's suffix is VOLATILE (a per-session id) when it is
+ *  NOT a clean number — a row's session/spin ID changes every run, so a key
+ *  like `expandRow-01KV9GTV…` breaks replay. Numeric suffixes (`bet-0.40`,
+ *  `autoCountSlide-10`) are meaningful + stable → never volatile. */
+function isVolatileKeySuffix(suffix: string): boolean {
+  if (/^\d+(?:\.\d+)?$/.test(suffix)) return false; // clean number → stable value/index
+  return suffix.length >= 4; // an id-like token (letters / mixed alnum)
+}
+
+/**
+ * Replay-stability normalizer for discovered repeated-row keys. Groups elements
+ * by the base before the LAST '-'; for any base where a member carries a
+ * VOLATILE (id-like) suffix, renumbers EVERY member of that base to a positional
+ * index by vertical row order (top→bottom, then left→right): `<base>-1..N`.
+ * Bases whose suffixes are all numeric/value-based (bet chips, autoplay counts)
+ * are left untouched. Mutates `els` in place. Pure + exported for tests.
+ */
+export function normalizeVolatileRowKeys<T extends { key: string; x: number; y: number }>(els: T[]): T[] {
+  const split = (k: string): { base: string; suffix: string } | null => {
+    const i = k.lastIndexOf("-");
+    if (i <= 0 || i >= k.length - 1) return null;
+    return { base: k.slice(0, i), suffix: k.slice(i + 1) };
+  };
+  const byBase = new Map<string, T[]>();
+  for (const e of els) {
+    const sp = split(e.key);
+    if (!sp) continue;
+    const g = byBase.get(sp.base);
+    if (g) g.push(e); else byBase.set(sp.base, [e]);
+  }
+  for (const [base, group] of byBase) {
+    const hasVolatile = group.some((e) => { const sp = split(e.key); return sp != null && isVolatileKeySuffix(sp.suffix); });
+    if (!hasVolatile) continue;
+    const sorted = [...group].sort((a, b) => (a.y - b.y) || (a.x - b.x));
+    sorted.forEach((e, i) => { e.key = `${base}-${i + 1}`; });
+    console.log(`[manual/discover] normalized ${group.length} volatile "${base}-<id>" key(s) → ${base}-1..${group.length} (positional, replay-stable)`);
+  }
+  return els;
+}
+
 function computeSuggestions(registry: UiRegistry | null): SubStateSuggestion[] {
   if (!registry) return [];
   const keys = Object.keys(registry);
@@ -1042,6 +1082,15 @@ export class ManualSessionManager {
       }
       // Use the FILTERED list from here on (snapshot + registry).
       const aiElements = filtered.kept;
+
+      // Replay-stable row keys: the AI sometimes names a repeated row list with
+      // the row's SESSION/SPIN ID (e.g. `expandRow-01KV9GTV…` / `expandRow-Xhsa…`)
+      // instead of a positional index. Those IDs change every session, so a
+      // testcase referencing them never matches on replay. Deterministically
+      // renumber any base whose suffix is an ID (non-numeric) to a positional
+      // index by vertical row order (`expandRow-1..N`). Numeric/value suffixes
+      // (`bet-0.40`, `autoCountSlide-10`) are meaningful + stable → left alone.
+      normalizeVolatileRowKeys(aiElements);
 
       // Persist the AI's view of this state for visual QA review. Save with
       // NAMESPACED keys (matching the registry) so the dashboard can cross-ref

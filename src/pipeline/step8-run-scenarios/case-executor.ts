@@ -2081,6 +2081,15 @@ export async function executeCase(
   // given the paytable. Advisory by default (a clear high-confidence "no"
   // fails the case; "uncertain"/low-confidence only warns) because vision can
   // misread a busy reel. Disable with QA_WIN_PAYTABLE_CHECK=0.
+  //
+  // SKIP for FREE_SPIN / feature frames (2026-06-17): on a buy/FS case the
+  // representative spin is the chain-end frame and the end-of-case screenshot
+  // is a CELEBRATION overlay (reels hidden) showing a CUMULATIVE feature total
+  // against scatter/bonus symbols that aren't in the line-pay paytable — so the
+  // check can NEVER verify there and only emits "uncertain" noise. FS payout is
+  // already covered by serverTotalWin + balance conservation (deferred) +
+  // buy-cost-ratio. The check stays active for normal line-win spins where it
+  // is meaningful.
   let winPaytableCheck: CaseResult["winPaytableCheck"];
   let winPaytableInconsistent = false;
   if (
@@ -2089,6 +2098,7 @@ export async function executeCase(
     && screenshotPath
     && spin
     && spin.win > 0
+    && !spin.isFreeSpin
   ) {
     try {
       const { paytable: paytableStore } = await import("../registry/paytable.js");

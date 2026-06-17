@@ -808,6 +808,59 @@ Other:
   return parsed?.rows ?? [];
 }
 
+/** Win breakdown read from ONE EXPANDED history row (Spin + Respin/feature
+ *  sections + round Total). All values are AI-read off the panel; the caller
+ *  cross-checks them deterministically (internal arithmetic + vs the collapsed
+ *  row's win + vs the network round). */
+export type HistoryRowDetail = {
+  /** Win from the base Spin step (0 when it shows no win). */
+  spinWin: number | null;
+  /** SUM of win across all Respin / feature / bonus steps shown. */
+  respinWin: number | null;
+  /** The round's Total Win / Amount Won as shown in the expanded detail. */
+  totalWin: number | null;
+  /** All win-related text the model saw (debugging). */
+  raw: string;
+};
+
+/**
+ * Transcribe the EXPANDED detail of a single history round — the Spin + Respin
+ * (feature) breakdown and the round Total. Used by the history verifier to
+ * check internal arithmetic (Total == Spin + Σ Respin) on 1-2 representative
+ * rows, which the row-level table reconciliation can't see.
+ */
+export async function transcribeHistoryRowDetail(args: {
+  screenshotPath: string;
+}): Promise<HistoryRowDetail> {
+  const imageBase64 = readFileSync(args.screenshotPath).toString("base64");
+  const prompt = `This screenshot shows the EXPANDED DETAIL of ONE round in a slot game's history. It typically has a "Spin" section (the base reels) and one or more "Respin"/feature/bonus sections, EACH with its own win, plus the round's overall "Total Win" / "Amount Won".
+
+Return ONLY this JSON:
+{
+  "spin_win": number | null,    // win from the base Spin step (0 if it shows $0.00 / no win)
+  "respin_win": number | null,  // SUM of win across ALL Respin/feature/bonus steps shown (0 if there are none)
+  "total_win": number | null,   // the round's Total Win / Amount Won
+  "raw": string                 // all win-related text you can see
+}
+
+Rules:
+- Strip currency symbols / thousands separators: "$16.02" → 16.02, "1,234.50" → 1234.50.
+- All wins are NON-NEGATIVE. Dash "-" / "—" / blank → 0.
+- Sum EVERY respin/feature/collect step win into "respin_win" (if you see several, add them).
+- IMPORTANT: if there is ONLY a single "Spin" win and NO separate Respin/feature/bonus section, set "respin_win" to 0. Do NOT echo the spin or total value into respin_win. A base-game round typically has respin_win = 0 and spin_win == total_win.
+- The decomposition should add up: spin_win + respin_win should equal total_win.
+- If a value genuinely isn't visible, use null (prefer null over guessing).
+- Output ONLY the JSON object.`;
+  const raw = await askClaudeVision(prompt, imageBase64);
+  const parsed = extractJson<{ spin_win?: number | null; respin_win?: number | null; total_win?: number | null; raw?: string }>(raw);
+  return {
+    spinWin: typeof parsed?.spin_win === "number" ? parsed.spin_win : null,
+    respinWin: typeof parsed?.respin_win === "number" ? parsed.respin_win : null,
+    totalWin: typeof parsed?.total_win === "number" ? parsed.total_win : null,
+    raw: typeof parsed?.raw === "string" ? parsed.raw : "",
+  };
+}
+
 /**
  * Output từ transcribePlayScreenValues — số liệu OCR từ play-screen sau spin.
  * Numeric fields được parse đã (strip currency/commas), dùng để so với API response.
