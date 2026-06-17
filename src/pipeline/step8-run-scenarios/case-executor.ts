@@ -1769,6 +1769,42 @@ export async function executeCase(
     } catch { /* no overlay → default verified */ }
   }
 
+  // SELF-LEARN fsCreditTiming from THIS run's FS chain when the game hasn't
+  // certified it yet. A buy/FS case captures a real free-spin chain — if every
+  // winning FS frame is unanimously deferred (flat) or immediate, certify it
+  // (same self-validating rule as Calibrate) and persist to parser-overlay, so
+  // BOTH this run's conservation checks AND future FS cases verify instead of
+  // returning INCONCLUSIVE. Conservative: writes only on a TRUSTED unanimous
+  // verdict; never clobbers an existing trusted-but-different value (that signals
+  // a real change worth manual review). This is why FS deferred-credit games no
+  // longer need a separate Calibrate-with-FS pass to leave INCONCLUSIVE.
+  if (ctx.gameSlug && fsCreditTiming == null && collectedSpins.some((s) => s.isFreeSpin === true)) {
+    try {
+      const { detectFsCreditTimingFromSpins } = await import("./spec-learner.js");
+      const det = detectFsCreditTimingFromSpins(collectedSpins);
+      if (det.trusted && det.value) {
+        const { loadOverlay } = await import("../step6-build-model/providers/spec-loader.js");
+        const existing = await loadOverlay(ctx.gameSlug);
+        if (existing?.fsCreditTiming?.trusted && existing.fsCreditTiming.value !== det.value) {
+          console.warn(`[case-exec] fsCreditTiming conflict: overlay=${existing.fsCreditTiming.value} vs this chain=${det.value} — keeping overlay (manual review)`);
+          fsCreditTiming = existing.fsCreditTiming.value;
+        } else {
+          fsCreditTiming = det.value; // apply to THIS run's conservation checks
+          const overlay: import("../step6-build-model/providers/spec-types.js").ParserOverlay =
+            existing ?? { schemaVersion: 1, basedOnProvider: "(learned from FS case run)" };
+          overlay.fsCreditTiming = { value: det.value, trusted: true };
+          const overlayFile = path.join(dirForGame(ctx.gameSlug), "parser-overlay.json");
+          await writeFile(overlayFile, JSON.stringify(overlay, null, 2) + "\n", "utf8");
+          console.log(`[case-exec] learned fsCreditTiming=${det.value} (trusted) from this FS chain → parser-overlay (${det.reason})`);
+        }
+      } else if (det.evidence.winningFsFrames > 0) {
+        console.log(`[case-exec] fsCreditTiming NOT certified from this run: ${det.reason}`);
+      }
+    } catch (err) {
+      console.warn(`[case-exec] fsCreditTiming self-learn failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   // Evaluate assertions with ALL collected spins (autoplay/cascade) in
   // collector. Single-spin cases work too (collector has 1 entry).
   const userAssertions = evaluateAssertions(spin, collectedSpins, input.custom_assertions ?? [], {

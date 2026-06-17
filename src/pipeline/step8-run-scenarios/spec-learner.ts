@@ -85,25 +85,45 @@ export function detectFsCreditTiming(
   samples: ReplaySample[],
   tol = 0.01,
 ): FsTimingDetection {
+  const spins: NormalizedSpinResult[] = [];
+  for (const s of samples) {
+    try {
+      const spin = parser.parseSpinPair
+        ? parser.parseSpinPair(s.request ?? null, s.response, s.url)
+        : parser.parseResponse(s.response);
+      if (spin) spins.push(spin);
+    } catch { /* skip unparseable */ }
+  }
+  return detectFsCreditTimingFromSpins(spins, tol);
+}
+
+/**
+ * Same FS-credit-timing classification as detectFsCreditTiming, but over
+ * ALREADY-PARSED spins — so it can run on the collector's spins at the end of a
+ * live case (a buy/FS case captures a real chain) without re-parsing raw
+ * samples. Self-validating: trusted only when EVERY winning FS frame is
+ * unanimously immediate (ba≈bb+win) or unanimously deferred (ba≈bb, flat).
+ *
+ * Safe for the cumulative-win shape: a deferred game has every winning FS frame
+ * flat (ba≈bb) → all deferred → trusted "deferred" regardless of whether `win`
+ * is per-frame or cumulative. An immediate game with a cumulative `win` would
+ * land neither bucket → "not trusted" (conservative — never a false positive).
+ */
+export function detectFsCreditTimingFromSpins(
+  spins: ReadonlyArray<NormalizedSpinResult>,
+  tol = 0.01,
+): FsTimingDetection {
   let fsFrames = 0;
   let winningFsFrames = 0;
   let immediateHits = 0;
   let deferredHits = 0;
-  let prev: NormalizedSpinResult | null = null;
-  for (const s of samples) {
-    let spin: NormalizedSpinResult | null = null;
-    try {
-      spin = parser.parseSpinPair
-        ? parser.parseSpinPair(s.request ?? null, s.response, s.url)
-        : parser.parseResponse(s.response);
-    } catch { continue; }
+  let prevBalanceAfter: number | null = null;
+  for (const spin of spins) {
     if (!spin) continue;
-    if (spin.balanceBefore == null && prev && typeof prev.balanceAfter === "number") {
-      spin.balanceBefore = prev.balanceAfter;
-    }
+    let bb = spin.balanceBefore;
+    if (bb == null && prevBalanceAfter != null) bb = prevBalanceAfter;
     if (spin.isFreeSpin === true) {
       fsFrames++;
-      const bb = spin.balanceBefore;
       const ba = spin.balanceAfter;
       const win = spin.win;
       if (bb != null && Number.isFinite(ba) && typeof win === "number" && win > tol) {
@@ -112,7 +132,7 @@ export function detectFsCreditTiming(
         else if (Math.abs(ba - bb) <= tol) deferredHits++;
       }
     }
-    prev = spin;
+    if (typeof spin.balanceAfter === "number") prevBalanceAfter = spin.balanceAfter;
   }
   const evidence = { fsFrames, winningFsFrames, immediateHits, deferredHits };
   if (winningFsFrames === 0) {
