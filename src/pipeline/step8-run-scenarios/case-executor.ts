@@ -2417,7 +2417,20 @@ export async function executeCase(
       })),
     });
     spinBreakdownMarkdown = traceToMarkdown(spinBreakdown);
-    const badRounds = spinBreakdown.filter((r) => r.status === "FALSE");
+    // Only count GENUINE mismatches. The immediate-credit reconciliation that
+    // buildTrace uses legitimately "fails" on (a) DEFERRED FS frames (balance
+    // flat mid-chain — total credited at chain end) and (b) the BUY round (the
+    // deduction is the feature purchase cost, not a per-round wager). Those are
+    // verified elsewhere (balance-multi-signal fsCreditTiming + buy-cost-ratio +
+    // chain-end total) — excluding them here stops a noisy false "mismatch"
+    // warning from dragging a correct buy/FS case into FLAKY/uncertain.
+    const badRounds = spinBreakdown.filter((r) => {
+      if (r.status !== "FALSE") return false;
+      const drop = r.openingBalance - r.observedClosing;
+      if (r.isFreeSpin === true && Math.abs(drop) <= 0.01 && r.win > 0.01) return false; // deferred FS frame
+      if (!r.isFreeSpin && r.bet > 0.01 && drop > r.bet * 1.5) return false;             // buy/purchase round
+      return true;
+    });
     if (badRounds.length > 0) {
       warnings.push(
         `per-round balance mismatch on ${badRounds.length}/${spinBreakdown.length} round(s): ` +
@@ -3838,7 +3851,15 @@ function explainFailure(
         const win = num(s.winAmount);
         const drop = bb - ba;
         const expectedDrop = bet - win;
-        const mismatch = Math.abs(drop - expectedDrop) > 0.01 ? " ⚠" : "";
+        // The immediate-credit model (drop == bet − win) does NOT hold for two
+        // legitimate cases — flag them as such instead of a misleading ⚠:
+        //   • DEFERRED FS frame: balance flat mid-chain (drop≈0) while win
+        //     accrues — the total is credited at the chain-end frame.
+        //   • BUY round: the deduction is the feature PURCHASE cost (≫ bet),
+        //     not a per-round wager.
+        const isDeferredFsFrame = s.isFreeSpin === true && Math.abs(drop) <= 0.01 && win > 0.01;
+        const isBuyRound = !s.isFreeSpin && bet > 0.01 && drop > bet * 1.5;
+        const mismatch = (Math.abs(drop - expectedDrop) > 0.01 && !isDeferredFsFrame && !isBuyRound) ? " ⚠" : "";
         const endTag = usesRoundEnds ? (endRoundIds.has(s.roundId) ? " [end]" : " [·]") : "";
         const extra = extraFields.length > 0
           ? " " + extraFields.map((f) => `${f}=${jsonShort(s[f])}`).join(" ")

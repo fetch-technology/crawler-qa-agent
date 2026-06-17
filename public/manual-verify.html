@@ -3250,7 +3250,13 @@
                   const ba = s.balanceAfter;
                   const drop = (typeof bb === "number" && typeof ba === "number") ? bb - ba : null;
                   const expected = s.bet - s.win;
-                  const mismatch = drop !== null && Math.abs(drop - expected) > 0.01;
+                  // The immediate-credit model (drop == bet − win) legitimately
+                  // doesn't hold for a DEFERRED FS frame (balance flat mid-chain,
+                  // total credited at chain end) or the BUY round (deduction is
+                  // the purchase cost, not a wager) — don't flag those as ⚠.
+                  const isDeferredFsFrame = drop !== null && s.isFreeSpin && Math.abs(drop) <= 0.01 && s.win > 0.01;
+                  const isBuyRound = drop !== null && !s.isFreeSpin && s.bet > 0.01 && drop > s.bet * 1.5;
+                  const mismatch = drop !== null && Math.abs(drop - expected) > 0.01 && !isDeferredFsFrame && !isBuyRound;
                   const fs = s.isFreeSpin ? ' <span style="color:#7da3d8;">FS</span>' : "";
                   return `<div style="font-family:ui-monospace,monospace;font-size:10px;padding:1px 0;color:${mismatch ? '#d97706' : '#c8d0d8'};">`
                     + `<span style="opacity:0.55;">#${i + 1}</span> `
