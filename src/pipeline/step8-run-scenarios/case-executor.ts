@@ -3313,45 +3313,47 @@ async function executeAction(
     return;
   }
   if (action.kind === "dismiss") {
-    // NETWORK-CONFIRMED dismiss (2026-06-16). The celebration
-    // ("CONGRATULATIONS … PRESS ANYWHERE TO CONTINUE") is rendered in stylized
-    // outlined text on a busy net/coral/water background that Tesseract often
-    // CANNOT read — so OCR keyword detection misses it entirely (observed:
-    // "no interstitial within 10s" while the game sat stuck on the popup → FS
-    // never started → 120s timeout). And the popup is a CARD IN THE CENTRE, not
-    // a full-viewport overlay (the corners show the underlying BET/art), so a
-    // corner click misses it. So: don't rely on OCR or corners. Click the
-    // CENTRE (where the "press anywhere" card is) and use the strongest signal
-    // that it worked — a NEW SPIN RESPONSE, i.e. the feature actually started
-    // auto-spinning. Stop the moment that arrives; bound by maxClicks so an
-    // already-cleared / nothing-to-dismiss screen can't be over-clicked into
-    // stray spins. During a celebration the reels are covered, so a centre
-    // click can't trigger a spin; the maxClicks bound caps the rare edge case.
-    const interClickMs = timing?.dismissInterClickMs ?? 800;
-    const settleMs = 900; // wait after each click for the feature to react
-    const maxClicks = 6;
-    const maxMs = (timing?.dismissPreWaitMs ?? 10000) + 12000;
+    // NETWORK-CONFIRMED dismiss (2026-06-17). The celebration ("CONGRATULATIONS
+    // … PRESS ANYWHERE TO CONTINUE") can't be read by OCR (stylized text), so we
+    // don't detect it — we just click a known on-canvas point and watch the
+    // network: a NEW SPIN RESPONSE means the feature actually started
+    // auto-spinning ⇒ the popup was cleared.
+    //
+    // Two lessons from the live buy run that this version fixes:
+    //   1. TARGET — a viewport-centre computed from page.viewportSize() can land
+    //      off the popup card (or be wrong if viewportSize is unexpected). The
+    //      `spinButton` registry coord is a KNOWN on-canvas point in the SAME
+    //      coordinate space as the buyBonus/confirm clicks that already land
+    //      correctly, and the celebration card sits right over it → clicking it
+    //      = "press anywhere", reliably. Centre is only a fallback.
+    //   2. TIMING — the buy→reveal→celebration sequence can take well over 10s
+    //      to surface the popup, so 6 clicks in ~10s can all fire BEFORE it
+    //      appears. Keep clicking across a longer window (until a spin response
+    //      or ~35s), so a late popup is still caught.
+    // Network-stop halts at the first FS spin, so we never over-click into the
+    // base game once the feature is running (FS auto-plays; clicks are absorbed).
+    const interClickMs = (timing?.dismissInterClickMs ?? 800) + 700; // ~1.5s spacing
+    const maxMs = (timing?.dismissPreWaitMs ?? 10000) + 25000; // up to ~35s for a slow celebration
+    const sb = ctx.uiMap.spinButton;
     const vp = ctx.page.viewportSize() ?? { width: 1280, height: 720 };
-    const cx = Math.round(vp.width / 2);
-    const cy = Math.round(vp.height / 2);
+    const tx = sb?.x ?? Math.round(vp.width / 2);
+    const ty = sb?.y ?? Math.round(vp.height / 2);
+    const targetLabel = sb ? "spinButton" : "viewport-centre";
     const beforeCount = extras?.spinResponseCount?.() ?? 0;
-    console.log(`[case-action] dismiss${action.reason ? ` — ${action.reason}` : ""} (press-anywhere: centre-click until a new spin response, ≤${maxClicks} clicks / ${maxMs}ms)`);
+    console.log(`[case-action] dismiss${action.reason ? ` — ${action.reason}` : ""} (press-anywhere: click (${tx},${ty}) [${targetLabel}] until a new spin response, ≤${maxMs}ms; viewport=${vp.width}x${vp.height})`);
     const start = Date.now();
     let clicks = 0;
     let confirmed = false;
-    while (clicks < maxClicks && Date.now() - start < maxMs) {
-      if (extras && extras.spinResponseCount() > beforeCount) {
-        confirmed = true;
-        break;
-      }
-      try { await ctx.page.mouse.click(cx, cy); clicks++; } catch { /* ignore */ }
-      await ctx.page.waitForTimeout(interClickMs + settleMs);
+    while (Date.now() - start < maxMs) {
+      if (extras && extras.spinResponseCount() > beforeCount) { confirmed = true; break; }
+      try { await ctx.page.mouse.click(tx, ty); clicks++; } catch { /* ignore */ }
+      await ctx.page.waitForTimeout(interClickMs);
     }
-    if (!confirmed && extras && extras.spinResponseCount() > beforeCount) confirmed = true;
+    if (extras && extras.spinResponseCount() > beforeCount) confirmed = true;
     if (confirmed) {
-      console.log(`[case-action] dismiss: feature started (new spin response) after ${clicks} click(s) — celebration cleared (${Date.now() - start}ms)`);
+      console.log(`[case-action] dismiss: feature started (new spin response) after ${clicks} click(s) on (${tx},${ty}) — celebration cleared (${Date.now() - start}ms)`);
     } else {
-      console.log(`[case-action] dismiss: ${clicks} centre-click(s), no new spin response — celebration may have auto-advanced, or no spins follow (e.g. a result banner)`);
+      console.log(`[case-action] dismiss: ${clicks} click(s) on (${tx},${ty}) [${targetLabel}], no new spin response within ${maxMs}ms — popup may not have appeared or the click point misses it`);
     }
     return;
   }
