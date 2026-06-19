@@ -23,6 +23,15 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 
+/** Minimal authenticated-user identity carried per request. Populated by the
+ *  auth gate in server/index.ts from the qa_session cookie. Null for the
+ *  login route and the public machine-to-machine rtp-callback. */
+export type AuthIdentity = {
+  id: string;
+  username: string;
+  role: "admin" | "qa";
+};
+
 /** Shape of data threaded through the async call chain for one HTTP req. */
 export type RequestContext = {
   /** Raw token from X-Claude-Token header. Null when header not set
@@ -32,6 +41,9 @@ export type RequestContext = {
    *  usage attribution + logs without exposing the raw token. Null when
    *  no QA token (master used). Phase 5 will populate this. */
   qaHash?: string | null;
+  /** The logged-in QA user for this request (auth cookie resolved). Null
+   *  on unauthenticated routes. */
+  user?: AuthIdentity | null;
 };
 
 export const requestContext = new AsyncLocalStorage<RequestContext>();
@@ -49,6 +61,11 @@ export function getCurrentClaudeToken(): string | null {
  *  the context, downstream loggers read this without re-hashing. */
 export function getCurrentQaHash(): string | null {
   return requestContext.getStore()?.qaHash ?? null;
+}
+
+/** Read the logged-in QA user from the active request context, or null. */
+export function getCurrentUser(): AuthIdentity | null {
+  return requestContext.getStore()?.user ?? null;
 }
 
 /** Helper: snapshot the current context so a background task can re-enter

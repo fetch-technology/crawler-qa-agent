@@ -58,7 +58,34 @@
   <div class="topbar">
     <h1>QA · Games Overview</h1>
     <span class="topbar-status" id="poolStatus">— sessions</span>
+    <span style="margin-left:auto; display:flex; align-items:center; gap:8px; font-size:12px; color:#cbd5e1;">
+      <span id="authUserLabel" style="font-weight:600;">…</span>
+      <button id="btnLogout" style="font-size:11px; padding:3px 8px; background:#3a2530; color:#f0c8c8; border:1px solid #5b3742; border-radius:4px; cursor:pointer;">Logout</button>
+    </span>
   </div>
+
+  <script>
+    // Auth header for the overview page: show current user + logout. /api/qa/auth/me
+    // 401 → redirect to login (matches the api() guard at line ~97).
+    (function () {
+      async function bootAuth() {
+        try {
+          const r = await fetch("/api/qa/auth/me");
+          if (r.status === 401) { location.href = "/login?next=" + encodeURIComponent(location.pathname); return; }
+          const d = await r.json().catch(() => ({}));
+          if (d.ok && d.user) {
+            window.__qaAuthUser = d.user;
+            document.getElementById("authUserLabel").textContent = "👤 " + d.user.username + (d.user.role === "admin" ? " (admin)" : "");
+          }
+        } catch (_) {}
+      }
+      document.getElementById("btnLogout").addEventListener("click", async () => {
+        try { await fetch("/api/qa/auth/logout", { method: "POST" }); } catch (_) {}
+        location.href = "/login";
+      });
+      if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", bootAuth); else bootAuth();
+    })();
+  </script>
 
   <main>
     <div class="header-row">
@@ -93,6 +120,10 @@
     async function fetchJson(path, opts) {
       const r = await fetch(path, opts);
       const body = await r.json().catch(() => ({}));
+      if (r.status === 401 && !/claude token/i.test(body.error || "")) {
+        location.href = "/login?next=" + encodeURIComponent(location.pathname + location.search);
+        throw new Error("authentication required");
+      }
       if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
       return body;
     }
@@ -268,5 +299,6 @@
     // Auto-refresh every 5s so live sessions tick.
     setInterval(refresh, 5000);
   </script>
+  <script src="/auth-widget.js"></script>
 </body>
 </html>

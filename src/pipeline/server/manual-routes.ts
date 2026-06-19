@@ -3,7 +3,55 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { listRegisteredGames, updateGameUrl, deleteGame, ManualSessionManager } from "./manual-session.js";
-import { getOrCreate, set as setSession, getDefaultOrThrow, listSessions } from "./session-pool.js";
+import { getOrCreate, get as peekSession, set as setSession, getDefaultOrThrow, listSessions } from "./session-pool.js";
+import { getCurrentUser } from "../../server/request-context.js";
+
+/** Resolve the target game slug from header/query WITHOUT consuming the request
+ *  body (the body stream can only be read once). The per-game dashboard always
+ *  sends `x-game-slug`; some routes carry `?gameSlug=` or a `/game/<slug>` path. */
+function slugFromRequestNoBody(req: IncomingMessage, urlStr: string): string | null {
+  const h = req.headers["x-game-slug"];
+  if (typeof h === "string" && h) return h;
+  try {
+    const q = new URL(urlStr, "http://localhost").searchParams.get("gameSlug");
+    if (q) return q;
+  } catch { /* ignore */ }
+  const pathOnly = urlStr.split("?")[0]!;
+  if (pathOnly.startsWith("/api/qa/manual/game/")) {
+    return decodeURIComponent(pathOnly.slice("/api/qa/manual/game/".length));
+  }
+  return null;
+}
+
+// Control routes that CLAIM/own the lease themselves or are user-global — exempt
+// from the central ownership guard (start/resume claim; the rest are harmless).
+const LEASE_EXEMPT_PATHS = new Set([
+  "/api/qa/manual/start",
+  "/api/qa/manual/resume",
+  "/api/qa/manual/validate-token",
+]);
+
+/** Hard-lease guard: when a live session is owned by another QA, reject any
+ *  mutating (non-GET) request to that game. Returns an error string to send as
+ *  409, or null to allow. GET (read-only) is always allowed. `stop` is allowed
+ *  for the owner OR an admin (escape hatch so an abandoned session can be
+ *  released without a takeover-to-drive). */
+function leaseBlockReason(req: IncomingMessage, urlStr: string, method: string): string | null {
+  if (method === "GET") return null;
+  const pathOnly = urlStr.split("?")[0]!;
+  if (pathOnly.startsWith("/api/qa/rtp-callback")) return null;
+  if (LEASE_EXEMPT_PATHS.has(pathOnly)) return null;
+  const slug = slugFromRequestNoBody(req, urlStr);
+  if (!slug) return null; // can't resolve a target → let the route's own logic handle it
+  const sess = peekSession(slug);
+  if (!sess) return null;
+  const owner = sess.getOwner();
+  if (!owner) return null; // unleased
+  const me = getCurrentUser();
+  if (me && owner.userId === me.id) return null; // the owner — allowed
+  if (me && me.role === "admin" && pathOnly === "/api/qa/manual/stop") return null; // admin may release
+  return `Phiên game này đang được "${owner.username}" điều khiển (từ ${owner.since}).`;
+}
 
 /** Resolve which ManualSessionManager the request targets.
  *  Priority: explicit `gameSlug` (body / x-game-slug header / ?gameSlug=…)
@@ -68,6 +116,13 @@ export async function handleManualRoute(
   if (!url.startsWith("/api/qa/manual") && !url.startsWith("/api/qa/rtp-callback")) return false;
   console.log(`[manual] ${method} ${url}`);
 
+  // Hard-lease guard — block control actions on a game another QA is driving.
+  const leaseReason = leaseBlockReason(req, url, method);
+  if (leaseReason) {
+    const owner = peekSession(slugFromRequestNoBody(req, url) ?? "")?.getOwner() ?? null;
+    return sendJson(res, 409, { ok: false, error: leaseReason, owner }), true;
+  }
+
   try {
     // GET /api/qa/manual/games — list previously registered games
     if (url === "/api/qa/manual/games" && method === "GET") {
@@ -96,8 +151,14 @@ export async function handleManualRoute(
       if (!body.gameSlug) return sendJson(res, 400, { error: "gameSlug required" }), true;
       try {
         const sess = getOrCreate(body.gameSlug);
+        const me = getCurrentUser();
+        const existingOwner = sess.getOwner();
+        if (existingOwner && me && existingOwner.userId !== me.id) {
+          return sendJson(res, 409, { ok: false, error: `Phiên game này đang được "${existingOwner.username}" điều khiển.`, owner: existingOwner }), true;
+        }
         const status = await sess.resume(body.gameSlug);
-        return sendJson(res, 200, status), true;
+        if (me) sess.claimOwner({ id: me.id, username: me.username });
+        return sendJson(res, 200, sess.status()), true;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         const code = /already active/.test(msg) ? 409 : /No registry|No ui-registry/.test(msg) ? 404 : 500;
@@ -117,9 +178,16 @@ export async function handleManualRoute(
         // don't spin up a second browser for the same game; otherwise
         // build a transient and register after start() resolves the slug.
         const sess = body.gameSlug ? getOrCreate(body.gameSlug) : new ManualSessionManager();
+        // Hard lease: refuse to (re)start a game another QA is driving.
+        const me = getCurrentUser();
+        const existingOwner = sess.getOwner();
+        if (existingOwner && me && existingOwner.userId !== me.id) {
+          return sendJson(res, 409, { ok: false, error: `Phiên game này đang được "${existingOwner.username}" điều khiển.`, owner: existingOwner }), true;
+        }
         const status = await sess.start(body.url, { autoDiscover: body.autoDiscover ?? true });
         if (status.gameSlug) setSession(status.gameSlug, sess);
-        return sendJson(res, 200, status), true;
+        if (me) sess.claimOwner({ id: me.id, username: me.username });
+        return sendJson(res, 200, sess.status()), true;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         const code = /already active/.test(msg) ? 409 : 500;

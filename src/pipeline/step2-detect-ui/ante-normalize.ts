@@ -112,6 +112,99 @@ function classifyOcrText(raw: string): "off" | "on" | "unknown" {
   return "unknown";
 }
 
+/** Some games' "ante" is NOT a toggle — clicking the button (when OFF) opens a
+ *  "SELECT A SPECIAL BET" chooser popup (ANTE BET / SUPER SPIN options + a base
+ *  bet stepper); a selection must be made for it to turn ON. Clicking the
+ *  button when ON turns it OFF directly. For normalize, the OFF baseline is
+ *  simply "no special bet selected, chooser closed" — so when our probe click
+ *  opens this chooser, we just close it (Escape) and we're still OFF.
+ *
+ *  These keywords identify the chooser (read off the popup, NOT the small ante
+ *  crop) — deliberately broad: any two of them, or the unambiguous title, is a
+ *  confident match. */
+export function isSpecialBetPopupText(raw: string): boolean {
+  const t = raw.toLowerCase();
+  if (!t.trim()) return false;
+  if (/select a (special|bet)/.test(t)) return true;
+  if (/special bet/.test(t) && /option|ante|super|base bet/.test(t)) return true;
+  const hits = [
+    /special bet/, /super spin/, /ante bet/, /base bet/,
+    /\boptions?\b/, /guaranteed/, /higher chance/,
+  ].filter((re) => re.test(t)).length;
+  return hits >= 2;
+}
+
+/** Wide central region likely to contain a centered modal's title + option
+ *  labels. Falls back to a fixed 1280×720-ish band when the viewport size is
+ *  unavailable. */
+function popupScanRegion(page: Page): { x: number; y: number; w: number; h: number } {
+  const vp = page.viewportSize();
+  const W = vp?.width ?? 1280;
+  const H = vp?.height ?? 720;
+  return {
+    x: Math.round(W * 0.08),
+    y: Math.round(H * 0.1),
+    w: Math.round(W * 0.84),
+    h: Math.round(H * 0.45),
+  };
+}
+
+/** Detect whether a "select a special bet" chooser popup is currently open by
+ *  OCR-ing the wide central band. Returns the match + raw text for debugging. */
+async function detectSpecialBetPopup(page: Page): Promise<{ open: boolean; rawText: string }> {
+  try {
+    const { text } = await ocrRegion(page, popupScanRegion(page));
+    return { open: isSpecialBetPopupText(text), rawText: text };
+  } catch {
+    return { open: false, rawText: "" };
+  }
+}
+
+/** Find the discovered close/cancel control for the ante chooser. Discovery
+ *  namespaces the popup's children under the ante key (e.g.
+ *  "anteButton__closeButton"), so we look for a close/cancel/X sibling there.
+ *  Returns its coord, or null when none was discovered. */
+function findAntePopupCloseCoord(registry: UiRegistry): { x: number; y: number } | null {
+  const prefix = "anteButton__";
+  // Prefer an explicit closeButton, then cancel, then a bare "x".
+  const ranked = (k: string): number =>
+    /__closebutton$/i.test(k) ? 0 : /__cancel/i.test(k) ? 1 : /__(x|close|dismiss)/i.test(k) ? 2 : 99;
+  const candidates = Object.keys(registry)
+    .filter((k) => k.startsWith(prefix) && /close|cancel|dismiss|^anteButton__x$/i.test(k))
+    .sort((a, b) => ranked(a) - ranked(b));
+  for (const key of candidates) {
+    const el = registry[key];
+    if (el && typeof el.x === "number" && typeof el.y === "number") return { x: el.x, y: el.y };
+  }
+  return null;
+}
+
+/** Close the special-bet chooser WITHOUT selecting anything (keeps ante OFF).
+ *  These modals don't dismiss on Escape — they need the popup's CLOSE (X)
+ *  button, which Discover maps as `anteButton__closeButton`. Click that first;
+ *  fall back to Escape only if no close control was discovered. Re-detect to
+ *  confirm. Returns true when the popup is gone. */
+async function closeSpecialBetPopup(page: Page, registry: UiRegistry, settleMs = 600): Promise<boolean> {
+  const closeCoord = findAntePopupCloseCoord(registry);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (closeCoord) {
+      await page.mouse.click(closeCoord.x, closeCoord.y).catch(() => undefined);
+    } else {
+      await page.keyboard.press("Escape").catch(() => undefined);
+    }
+    await page.waitForTimeout(settleMs);
+    const still = await detectSpecialBetPopup(page);
+    if (!still.open) return true;
+    // Second pass: if the discovered close didn't work, also try Escape.
+    if (closeCoord && attempt === 0) {
+      await page.keyboard.press("Escape").catch(() => undefined);
+      await page.waitForTimeout(settleMs);
+      if (!(await detectSpecialBetPopup(page)).open) return true;
+    }
+  }
+  return false;
+}
+
 /** Read the current TOTAL bet via OCR. Prefers the saved betArea OCR region;
  *  falls back to the readout BETWEEN betMinus and betPlus. Returns null when
  *  no usable region or OCR yields no number. This is the authoritative ante
@@ -222,6 +315,11 @@ type AnteMeta = {
    *  ante toggle), learned whenever a toggle-probe sees the bet move. Lets
    *  classifyBetRatio use the game's real factor instead of a generic band. */
   anteFactor?: number | null;
+  /** True when this game's ante is a POPUP-SELECT chooser ("SELECT A SPECIAL
+   *  BET") rather than a plain toggle — learned during normalize. Runtime
+   *  ensure-OFF must NOT click when already OFF (that would re-open the
+   *  chooser); it only clicks to turn an ON state off. */
+  popupSelect?: boolean;
 };
 
 async function writeAnteMeta(slug: string, meta: AnteMeta): Promise<void> {
@@ -410,6 +508,9 @@ export type NormalizeResult = {
   toggledCount: number;
   /** Which tier produced the final verdict. */
   detectionTier: "ocr" | "toggle-observe" | "skipped" | "failed";
+  /** True when this game's ante is a popup-select chooser, not a toggle —
+   *  persisted to ante-baseline.json so runtime ensure-OFF won't re-open it. */
+  popupSelect?: boolean;
 };
 
 /**
@@ -476,6 +577,9 @@ export async function normalizeAnteOff(
   let toggledCount = 0;
   let finalState: "off" | "on" | "unknown" = initialOcr.verdict;
   let detectionTier: NormalizeResult["detectionTier"] = "ocr";
+  // Set when the probe click reveals a "SELECT A SPECIAL BET" chooser — this
+  // game's ante is popup-select, not a toggle (see isSpecialBetPopupText).
+  let popupSelect = false;
 
   if (initialOcr.verdict === "on") {
     // Confidently ON → click once to flip OFF, re-verify.
@@ -547,6 +651,37 @@ export async function normalizeAnteOff(
       betAfter,
     });
     console.log(`[ante-normalize] ${slug}: STEP 3/4 — click→pixel-diff ratio=${ratio.toFixed(3)} threshold=${CLICK_EFFECT_THRESHOLD}; bet ${betBefore ?? "?"}→${betAfter ?? "?"}`);
+
+    // ── Popup-select ante: the click opened a "SELECT A SPECIAL BET" chooser
+    // instead of toggling. That only happens from the OFF state (you pick an
+    // option to turn it ON), so we were already OFF — close the chooser WITHOUT
+    // selecting and we stay OFF. This must run BEFORE the bet-delta path: the
+    // bet doesn't change just by opening the chooser (e.g. 7.5→7.5), so that
+    // path would fall through to a recheck-OCR that reads popup text = unknown
+    // = false FAIL (the bug this fixes). ──
+    const popup = await detectSpecialBetPopup(page);
+    if (popup.open) {
+      console.log(`[ante-normalize] ${slug}: STEP 3/4 — special-bet chooser opened → popup-select ante (not a toggle); closing without selecting to stay OFF`);
+      const closed = await closeSpecialBetPopup(page, registry);
+      const closedBuf = await capturePngBuffer(page, entry);
+      await saveDebugCrop(slug, runStamp, "03e-popup-select-close", closedBuf, {
+        step: "Tier 2: popup-select ante — chooser closed (stays OFF)",
+        popupText: popup.rawText.replace(/\s+/g, " ").slice(0, 120),
+        closed,
+      });
+      if (!closed) {
+        console.log(`[ante-normalize] ${slug}: ❌ FAIL — special-bet chooser would not close (Escape didn't dismiss)`);
+        return {
+          ok: false,
+          reason: `special-bet chooser opened but could not be closed (Escape did not dismiss it) — QA must inspect; ante stays in an undefined state`,
+          initialState: initialOcr.verdict,
+          toggledCount,
+          detectionTier: "toggle-observe",
+        };
+      }
+      popupSelect = true;
+      finalState = "off";
+    }
 
     // ── Authoritative path: decide by bet delta when both reads succeeded ──
     if (
@@ -654,9 +789,9 @@ export async function normalizeAnteOff(
   // Record the OFF-state total bet as the authoritative ground truth for
   // runtime checks (pixel-diff alone can't reliably tell ante ON from OFF).
   const offBet = await readTotalBet(page, slug, registry);
-  await writeAnteMeta(slug, { offBet });
-  console.log(`[ante-normalize] ${slug}: STEP 4/4 — baseline saved (${finalBuf.length} bytes) → ${outPath}; offBet=${offBet ?? "?"}`);
-  console.log(`[ante-normalize] ${slug}: ✅ DONE — tier=${detectionTier} toggled=${toggledCount}× initial=${initialOcr.verdict}`);
+  await writeAnteMeta(slug, { offBet, ...(popupSelect ? { popupSelect: true } : {}) });
+  console.log(`[ante-normalize] ${slug}: STEP 4/4 — baseline saved (${finalBuf.length} bytes) → ${outPath}; offBet=${offBet ?? "?"}${popupSelect ? " (popup-select ante)" : ""}`);
+  console.log(`[ante-normalize] ${slug}: ✅ DONE — tier=${detectionTier} toggled=${toggledCount}× initial=${initialOcr.verdict}${popupSelect ? " popupSelect=true" : ""}`);
   console.log(`[ante-normalize] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
 
   return {
@@ -665,6 +800,7 @@ export async function normalizeAnteOff(
     initialState: initialOcr.verdict === "unknown" ? "unknown" : initialOcr.verdict,
     toggledCount,
     detectionTier,
+    popupSelect,
   };
 }
 
@@ -826,6 +962,33 @@ async function forceAnteOffByBet(
   await page.waitForTimeout(700);
   const b1 = await readBetStable();
   console.log(`[ensure-ante-off] ${slug}: toggle probe reads b0=${b0 ?? "?"} → click → b1=${b1 ?? "?"}`);
+
+  // POPUP-SELECT ANTE: the probe click opened a "SELECT A SPECIAL BET" chooser
+  // instead of toggling — that only happens from the OFF state (a selection is
+  // needed to turn it ON), so we were already OFF. Close the chooser WITHOUT
+  // selecting (stays OFF) and report success. Without this the unchanged bet
+  // (e.g. 7.5→7.5, the chooser's base-bet stepper) reads as "no-change" = a
+  // false "coordinate is not the ante toggle" FAIL, and the popup is left open
+  // contaminating the rest of the case. Also self-learns popupSelect for games
+  // whose baseline predates that flag.
+  const probePopup = await detectSpecialBetPopup(page);
+  if (probePopup.open) {
+    console.log(`[ensure-ante-off] ${slug}: special-bet chooser opened by probe → popup-select ante; was already OFF, closing without selecting`);
+    const closed = await closeSpecialBetPopup(page, registry);
+    if (!closed) {
+      return {
+        ok: false, toggledCount: toggled, resolvedByBet: false, wasAlreadyOff: false,
+        reason: `special-bet chooser opened but could not be closed (Escape did not dismiss it)`,
+      };
+    }
+    const prev = await readAnteMeta(slug);
+    await writeAnteMeta(slug, {
+      offBet: prev?.offBet ?? b0 ?? null,
+      ...(prev?.anteFactor != null ? { anteFactor: prev.anteFactor } : {}),
+      popupSelect: true,
+    });
+    return { ok: true, toggledCount: toggled, resolvedByBet: false, wasAlreadyOff: true };
+  }
 
   const plan = planAnteToggle(b0, b1, BET_DELTA_MIN_RATIO);
   if (plan.kind === "changed") {

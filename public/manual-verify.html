@@ -81,7 +81,142 @@
     <div id="claudeTokenBadge" style="margin-left: auto; cursor: pointer; padding: 6px 12px; background: #1f2937; border: 1px solid #374151; border-radius: 4px; font-size: 12px; color: #9ca3af; font-family: ui-monospace, monospace;" title="Click to set/replace your Claude token. AI calls during your session bill back to YOUR Claude account.">
       🔑 <span id="claudeTokenLabel">(not set)</span>
     </div>
+    <!-- Auth: current QA user + logout (+ Users admin panel). Populated by bootAuth(). -->
+    <div id="authBadge" style="display: flex; align-items: center; gap: 8px; padding: 6px 12px; background: #1f2937; border: 1px solid #374151; border-radius: 4px; font-size: 12px; color: #cbd5e1;">
+      <span id="authUserLabel" style="font-weight: 600;">…</span>
+      <button id="btnUsers" style="display:none; font-size: 11px; padding: 3px 8px; background:#374151; color:#e5e7eb; border:none; border-radius:4px; cursor:pointer;" title="Quản lý tài khoản QA (admin)">Users</button>
+      <button id="btnLogout" style="font-size: 11px; padding: 3px 8px; background:#3a2530; color:#f0c8c8; border:1px solid #5b3742; border-radius:4px; cursor:pointer;">Logout</button>
+    </div>
   </div>
+
+  <!-- Users admin modal (admin only) -->
+  <div id="usersModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:9999; align-items:center; justify-content:center;">
+    <div style="background:#0d1117; border:1px solid #2a3140; border-radius:8px; padding:22px; max-width:640px; width:92%; max-height:84vh; overflow:auto;">
+      <div style="display:flex; align-items:center; margin-bottom:12px;">
+        <h3 style="margin:0; color:#c8d0d8;">QA Users</h3>
+        <button id="usersClose" style="margin-left:auto; font-size:12px; padding:4px 10px; background:#374151; color:#e5e7eb; border:none; border-radius:4px; cursor:pointer;">Đóng</button>
+      </div>
+      <div id="usersList" style="font-size:12px; color:#cbd5e1;">…</div>
+      <div style="margin-top:16px; padding-top:14px; border-top:1px solid #232a35;">
+        <div style="color:#8b939c; font-size:11px; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:8px;">Tạo tài khoản mới</div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+          <input id="newUserName" placeholder="username" style="padding:7px 9px; background:#111827; border:1px solid #374151; border-radius:4px; color:#e5e7eb; font-size:12px;" autocomplete="off" />
+          <input id="newUserPass" type="password" placeholder="password (≥6)" style="padding:7px 9px; background:#111827; border:1px solid #374151; border-radius:4px; color:#e5e7eb; font-size:12px;" autocomplete="new-password" />
+          <input id="newUserDisplay" placeholder="display name (tùy chọn)" style="padding:7px 9px; background:#111827; border:1px solid #374151; border-radius:4px; color:#e5e7eb; font-size:12px;" autocomplete="off" />
+          <select id="newUserRole" style="padding:7px 9px; background:#111827; border:1px solid #374151; border-radius:4px; color:#e5e7eb; font-size:12px;">
+            <option value="qa">qa</option>
+            <option value="admin">admin</option>
+          </select>
+        </div>
+        <button id="btnCreateUser" style="margin-top:10px; font-size:12px; padding:7px 14px; background:#3a6fc4; color:#fff; border:none; border-radius:4px; cursor:pointer;">Tạo</button>
+        <div id="usersErr" style="margin-top:8px; color:#e8807f; font-size:12px; min-height:14px;"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ── Auth header: current user, logout, and (admin) Users management. Runs
+    // standalone (plain fetch + cookie); independent of the api() helper. ──
+    (function () {
+      const userLabel = document.getElementById("authUserLabel");
+      const btnUsers = document.getElementById("btnUsers");
+      const btnLogout = document.getElementById("btnLogout");
+      const modal = document.getElementById("usersModal");
+      const usersErr = document.getElementById("usersErr");
+
+      async function authFetch(path, opts) {
+        const r = await fetch(path, opts);
+        if (r.status === 401) { location.href = "/login?next=" + encodeURIComponent(location.pathname + location.search); throw new Error("401"); }
+        return r;
+      }
+
+      async function bootAuth() {
+        try {
+          const r = await authFetch("/api/qa/auth/me");
+          const data = await r.json().catch(() => ({}));
+          if (!data.ok || !data.user) { location.href = "/login"; return; }
+          window.__qaAuthUser = data.user;
+          userLabel.textContent = "👤 " + data.user.username + (data.user.role === "admin" ? " (admin)" : "");
+          if (data.user.role === "admin") btnUsers.style.display = "";
+        } catch (_) { /* 401 already redirected */ }
+      }
+
+      btnLogout.addEventListener("click", async () => {
+        try { await fetch("/api/qa/auth/logout", { method: "POST" }); } catch (_) {}
+        location.href = "/login";
+      });
+
+      function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+
+      async function renderUsers() {
+        const listEl = document.getElementById("usersList");
+        listEl.innerHTML = "Đang tải…";
+        try {
+          const r = await authFetch("/api/qa/auth/users");
+          const data = await r.json().catch(() => ({}));
+          const me = window.__qaAuthUser;
+          const rows = (data.users || []).map((u) => {
+            const isMe = me && u.id === me.id;
+            const dim = u.disabled ? "opacity:0.5;" : "";
+            return `<div style="display:flex; align-items:center; gap:8px; padding:7px 0; border-bottom:1px solid #1b212b; ${dim}">
+              <span style="flex:1;"><strong>${esc(u.username)}</strong> <span style="color:#8b939c;">${esc(u.role)}</span>${u.disabled ? ' <span style="color:#e8807f;">· disabled</span>' : ""}${isMe ? ' <span style="color:#9be0bc;">· bạn</span>' : ""}</span>
+              <button data-act="pw" data-id="${esc(u.id)}" style="font-size:11px; padding:3px 8px; background:#374151; color:#e5e7eb; border:none; border-radius:4px; cursor:pointer;">Đổi mật khẩu</button>
+              <button data-act="dis" data-id="${esc(u.id)}" data-dis="${u.disabled ? "0" : "1"}" ${isMe ? "disabled" : ""} style="font-size:11px; padding:3px 8px; background:${u.disabled ? "#2d4a35" : "#3a2530"}; color:#e5e7eb; border:none; border-radius:4px; cursor:${isMe ? "default" : "pointer"}; ${isMe ? "opacity:0.4;" : ""}">${u.disabled ? "Bật lại" : "Vô hiệu hóa"}</button>
+            </div>`;
+          }).join("");
+          listEl.innerHTML = rows || "<span style='color:#8b939c;'>Chưa có user nào.</span>";
+          listEl.querySelectorAll("button[data-act]").forEach((b) => b.addEventListener("click", onUserAction));
+        } catch (_) { listEl.innerHTML = "<span style='color:#e8807f;'>Lỗi tải danh sách.</span>"; }
+      }
+
+      async function onUserAction(e) {
+        const btn = e.currentTarget;
+        const userId = btn.getAttribute("data-id");
+        const act = btn.getAttribute("data-act");
+        usersErr.textContent = "";
+        try {
+          if (act === "pw") {
+            const pw = prompt("Mật khẩu mới (≥6 ký tự):");
+            if (!pw) return;
+            const r = await authFetch("/api/qa/auth/users/password", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, password: pw }) });
+            const d = await r.json().catch(() => ({}));
+            if (!d.ok) { usersErr.textContent = d.error || "Đổi mật khẩu thất bại"; return; }
+          } else if (act === "dis") {
+            const disabled = btn.getAttribute("data-dis") === "1";
+            const r = await authFetch("/api/qa/auth/users/disable", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, disabled }) });
+            const d = await r.json().catch(() => ({}));
+            if (!d.ok) { usersErr.textContent = d.error || "Thao tác thất bại"; return; }
+          }
+          await renderUsers();
+        } catch (_) {}
+      }
+
+      btnUsers.addEventListener("click", () => { modal.style.display = "flex"; usersErr.textContent = ""; renderUsers(); });
+      document.getElementById("usersClose").addEventListener("click", () => { modal.style.display = "none"; });
+      modal.addEventListener("click", (e) => { if (e.target === modal) modal.style.display = "none"; });
+
+      document.getElementById("btnCreateUser").addEventListener("click", async () => {
+        usersErr.textContent = "";
+        const username = document.getElementById("newUserName").value.trim();
+        const password = document.getElementById("newUserPass").value;
+        const displayName = document.getElementById("newUserDisplay").value.trim();
+        const role = document.getElementById("newUserRole").value;
+        if (!username || !password) { usersErr.textContent = "Cần username và password"; return; }
+        try {
+          const r = await authFetch("/api/qa/auth/users", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ username, password, displayName, role }) });
+          const d = await r.json().catch(() => ({}));
+          if (!d.ok) { usersErr.textContent = d.error || "Tạo thất bại"; return; }
+          document.getElementById("newUserName").value = "";
+          document.getElementById("newUserPass").value = "";
+          document.getElementById("newUserDisplay").value = "";
+          await renderUsers();
+        } catch (_) {}
+      });
+
+      if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", bootAuth);
+      else bootAuth();
+    })();
+  </script>
   <!-- Token Settings Modal -->
   <div id="claudeTokenModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 9999; align-items: center; justify-content: center;">
     <div style="background: #0d1117; border: 1px solid #2a3140; border-radius: 8px; padding: 24px; max-width: 580px; width: 90%;">
@@ -574,6 +709,12 @@
         console.log(tag, "→", r.status, body);
         appendLog(`${tag} → ${r.status} ${JSON.stringify(body).slice(0, 200)}`);
         if (!r.ok) {
+          // 401 "authentication required" → not logged in (or session expired).
+          // Bounce to the login page, preserving where we were.
+          if (r.status === 401 && !/claude token/i.test(body.error || body.reason || "")) {
+            location.href = "/login?next=" + encodeURIComponent(location.pathname + location.search);
+            throw new Error("authentication required");
+          }
           // 401 with MissingClaudeTokenError → server tried to call Claude
           // but neither header nor master env had a usable token. Prompt
           // QA to set theirs before retrying.
@@ -1078,7 +1219,13 @@
 
       // Lazy-load OCR regions for the active game
       renderOcrRegions().catch(() => {});
-      sessionInfo.innerHTML = `Active · slug=<code>${status.gameSlug}</code> · started ${status.startedAt}`;
+      const me = window.__qaAuthUser;
+      const owner = status.owner;
+      const ownedByOther = owner && me && owner.userId !== me.id;
+      const ownerTag = owner
+        ? ` · <span style="color:${ownedByOther ? "#e8807f" : "#9be0bc"};">🔒 ${ownedByOther ? `đang được ${owner.username} điều khiển` : "bạn đang điều khiển"}</span>`
+        : "";
+      sessionInfo.innerHTML = `Active · slug=<code>${status.gameSlug}</code> · started ${status.startedAt}${ownerTag}`;
 
       const keys = Object.keys(status.registry || {}).sort();
       if (keys.length === 0) {
@@ -5839,5 +5986,6 @@
     // Initial load
     refresh();
   </script>
+  <script src="/auth-widget.js"></script>
 </body>
 </html>

@@ -200,6 +200,11 @@ export type SessionStatus = {
     detectedText: string;
     detectedAt: string;
   } | null;
+  /** Lease owner — the QA user currently driving this game's live browser
+   *  session. Set on start/resume, cleared on stop. While set, control
+   *  endpoints reject other users (hard block) so two QA can't fight over the
+   *  same page. Null when no one holds the session. */
+  owner: { userId: string; username: string; since: string } | null;
 };
 
 export type SubStateSuggestion = {
@@ -517,6 +522,31 @@ export class ManualSessionManager {
    */
   private lastBalance: number | null = null;
 
+  /** Lease owner — the QA user driving this live session. See SessionStatus.owner.
+   *  Claimed on start/resume, released on stop. */
+  private owner: { userId: string; username: string; since: string } | null = null;
+
+  /** Current lease owner (read-only snapshot), or null when unleased. */
+  getOwner(): { userId: string; username: string; since: string } | null {
+    return this.owner ? { ...this.owner } : null;
+  }
+
+  /** Claim the lease for a user. No-op if the same user already holds it.
+   *  Throws when a DIFFERENT user holds it (hard block — caller maps to 409). */
+  claimOwner(user: { id: string; username: string }): void {
+    if (this.owner && this.owner.userId !== user.id) {
+      throw new Error(`session is in use by "${this.owner.username}"`);
+    }
+    if (!this.owner) {
+      this.owner = { userId: user.id, username: user.username, since: new Date().toISOString() };
+    }
+  }
+
+  /** Release the lease unconditionally (called on stop). */
+  releaseOwner(): void {
+    this.owner = null;
+  }
+
   /**
    * Game spec extracted from doInit response — used by case-action-translator
    * to generate correct actions (ladder-aware bet adjustment, multi-spin, etc.).
@@ -657,6 +687,7 @@ export class ManualSessionManager {
       gameSpec: this.gameSpec ? { ...this.gameSpec } : null,
       gameSpecOverride: this.gameSpecOverrideCached ? { ...this.gameSpecOverrideCached } : null,
       gameError: this.gameError ? { ...this.gameError } : null,
+      owner: this.owner ? { ...this.owner } : null,
     };
   }
 
@@ -6020,6 +6051,7 @@ CHECK_CODE RULES
     this.registry = null;
     this.verifyState = {};
     this.lastBalance = null;
+    this.owner = null;
   }
 }
 

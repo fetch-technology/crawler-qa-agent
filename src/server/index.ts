@@ -4,7 +4,11 @@ import { join, extname, normalize } from "node:path";
 import { config as loadEnv } from "dotenv";
 import { handleQaRoute } from "../pipeline/server/qa-routes.js";
 import { handleManualRoute } from "../pipeline/server/manual-routes.js";
-import { requestContext } from "./request-context.js";
+import { handleAuthRoute } from "../pipeline/server/auth/auth-routes.js";
+import { ensureSeedAdmin, findById } from "../pipeline/server/auth/user-store.js";
+import { resolveSession } from "../pipeline/server/auth/session-store.js";
+import { getSessionToken } from "../pipeline/server/auth/cookie.js";
+import { requestContext, getCurrentUser, type AuthIdentity } from "./request-context.js";
 
 loadEnv();
 
@@ -32,6 +36,8 @@ const URL_ALIASES: Record<string, string> = {
   "/dashboard/": "/index.html",
   "/dashboard_new": "/index.html",
   "/dashboard_new/": "/index.html",
+  "/login": "/login.html",
+  "/login/": "/login.html",
 };
 
 /** Rewrite `/game/<slug>` → `/manual-verify.html?gameSlug=<slug>` so the
@@ -96,7 +102,20 @@ const server = createServer(async (req, res) => {
     const { createHash } = await import("node:crypto");
     qaHash = createHash("sha256").update(claudeToken).digest("hex").slice(0, 8);
   }
-  await requestContext.run({ claudeToken, qaHash }, async () => {
+  // Resolve the logged-in QA user from the qa_session cookie (sliding TTL).
+  // Disabled users resolve to null (no access). Threaded into context so all
+  // downstream code (gate, lease, attribution) sees the same identity.
+  let user: AuthIdentity | null = null;
+  try {
+    const userId = await resolveSession(getSessionToken(req));
+    if (userId) {
+      const u = await findById(userId);
+      if (u && !u.disabled) user = { id: u.id, username: u.username, role: u.role };
+    }
+  } catch (err) {
+    console.error(`[auth] session resolve failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  await requestContext.run({ claudeToken, qaHash, user }, async () => {
     try {
       await routeRequest(req, res, url, method);
     } catch (err) {
@@ -119,6 +138,29 @@ const server = createServer(async (req, res) => {
 });
 
 async function routeRequest(req: import("node:http").IncomingMessage, res: ServerResponse, url: string, method: string): Promise<void> {
+  const pathOnly0 = url.split("?")[0] ?? "/";
+
+  // --- Auth routes (/api/qa/auth/*) — login reachable while logged out ---
+  if (await handleAuthRoute(req, res, url, method)) return;
+
+  // --- Login gate: everything below requires an authenticated QA user, EXCEPT
+  // the public rtp-callback (machine-to-machine, token-guarded) and the login
+  // page itself + its bare static deps. Unauthenticated API → 401 JSON;
+  // unauthenticated page/static → 302 to /login. ---
+  const authed = getCurrentUser() != null;
+  const isRtpCallback = pathOnly0.startsWith("/api/qa/rtp-callback");
+  const isLoginPage = pathOnly0 === "/login" || pathOnly0 === "/login.html";
+  if (!authed && !isRtpCallback && !isLoginPage) {
+    if (pathOnly0.startsWith("/api/")) {
+      res.writeHead(401, { "content-type": "application/json", "cache-control": "no-store" });
+      res.end(JSON.stringify({ ok: false, error: "authentication required" }));
+      return;
+    }
+    res.writeHead(302, { Location: "/login" });
+    res.end();
+    return;
+  }
+
   // --- Pipeline routes (/api/qa/*) — cold/warm start + task streaming + runs ---
   if (await handleQaRoute(req, res, url, method)) return;
 
@@ -158,10 +200,21 @@ async function routeRequest(req: import("node:http").IncomingMessage, res: Serve
   res.end("not found");
 }
 
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
+  // Seed the first admin from QA_ADMIN_USER / QA_ADMIN_PASSWORD when the user
+  // store is empty. Idempotent — once any user exists this is a no-op.
+  try {
+    const seeded = await ensureSeedAdmin();
+    if (seeded) console.log(`  [auth] seeded admin user "${seeded}" from env`);
+    else if (!process.env.QA_ADMIN_USER) {
+      console.log(`  [auth] no QA_ADMIN_USER set — set QA_ADMIN_USER & QA_ADMIN_PASSWORD to seed the first admin`);
+    }
+  } catch (err) {
+    console.error(`  [auth] seed failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
   console.log(`\n  crawler-qa-agent dashboard`);
   console.log(`  http://localhost:${PORT}/dashboard_new`);
-  console.log(`  (/ and /dashboard alias to /dashboard_new)\n`);
+  console.log(`  (/ and /dashboard alias to /dashboard_new · login at /login)\n`);
 });
 
 process.on("SIGINT", () => {
