@@ -124,7 +124,7 @@
     chip.innerHTML = `
       <span title="${esc(user.username)}">👤 ${esc(user.displayName)}${isAdmin ? ' <span style="color:#d9b35c;">admin</span>' : ""}</span>
       ${isAdmin ? '<button id="qaUsersBtn" style="font-size:11px;cursor:pointer;">Users</button>' : ""}
-      <button id="qaLogoutBtn" style="font-size:11px;cursor:pointer;">Đăng xuất</button>`;
+      <button id="qaLogoutBtn" style="font-size:11px;cursor:pointer;">Log out</button>`;
     const ub = document.getElementById("qaUsersBtn");
     if (ub) ub.addEventListener("click", openAdminModal);
     document.getElementById("qaLogoutBtn").addEventListener("click", logout);

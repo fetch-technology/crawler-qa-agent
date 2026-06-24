@@ -282,8 +282,13 @@
     // HTTP 504" even though the work succeeded). Returns final status or null.
     async function pollStartUntilDone(startIso) {
       const deadline = Date.now() + 5 * 60 * 1000; // 5 min cap
+      const startMs = Date.now();
       while (Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 3000));
+        const elapsedS = Math.round((Date.now() - startMs) / 1000);
+        // Live elapsed time so the user knows the session is still being
+        // prepared (browser launch + game load + AI discovery), not hung.
+        showLoading(`Starting session… (${elapsedS}s)`, "Launching Chrome, loading the game, running AI UI discovery. This can take 30–90s — please wait.");
         let status = null;
         try { status = await fetchJson("/api/qa/manual/status"); } catch { /* transient */ }
         if (!status) continue;

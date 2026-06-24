@@ -1211,6 +1211,7 @@
             await maybeRunLevel1QaPicker(status);
           } catch (err) {
             console.warn("level-1 picker auto-open failed:", err);
+            hideLoading(); // don't leave the prep overlay stuck on error
           } finally {
             level1PickerRunning = false;
           }
@@ -4709,6 +4710,12 @@
 
     async function maybeRunLevel1QaPicker(status, opts = {}) {
       if (!status?.active) return;
+      // Show a status while we prepare the picker — ensure-main (which may run
+      // recovery taps), status re-read, OCR fetch and screenshot load can take
+      // several seconds. Without this the page (esp. right after a redirect to
+      // ?gameSlug=…) looks idle until the picker popup suddenly appears.
+      // hideLoading() is called the moment the modal is rendered (below).
+      showLoading("Preparing element picker…", "Making sure the game is on its main screen and loading the latest screenshot…");
       // AUTO-DETECT SCREEN before asking QA to pick. A freshly-opened game often
       // sits on an intro/splash ("TAP ANYWHERE TO START") or a leftover popup —
       // then EVERY element reads "missing" and QA would be picking against the
@@ -4765,7 +4772,7 @@
             ...pendingElements.map((key) => ({ kind: "element", key })),
             ...missingOcr.map((key) => ({ kind: "ocr", key })),
           ];
-      if (queue.length === 0) return;
+      if (queue.length === 0) { hideLoading(); return; }
 
       const existing = document.getElementById("level1QaPickerModal");
       if (existing) existing.remove();
@@ -4794,6 +4801,7 @@
         };
       }
 
+      hideLoading(); // picker is ready — drop the prep overlay as the modal opens
       await new Promise((resolve) => {
         const modal = document.createElement("div");
         modal.id = "level1QaPickerModal";
@@ -5309,6 +5317,11 @@
       let lastLogMs = 0;
       while (Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, POLL_MS));
+        const elapsedS = Math.round((Date.now() - startMs) / 1000);
+        // Keep the overlay alive with live elapsed time so QA can see the
+        // session is still being prepared (browser + game load + AI UI
+        // discovery) and hasn't hung — shown before the element picker opens.
+        showLoading(`Starting session… (${elapsedS}s)`, "Launching Chrome, loading the game, running AI UI discovery. This can take 30–90s — please wait.");
         let status = null;
         try { status = await api("/api/qa/manual/status"); } catch { /* transient */ }
         if (!status) continue;
@@ -5317,7 +5330,6 @@
           && status.startLastFinishedAt > startIso;
         if (finished) return status;
         if (Date.now() - lastLogMs > 15000) {
-          const elapsedS = ((Date.now() - startMs) / 1000).toFixed(0);
           appendLog(`[start] polling… ${elapsedS}s elapsed${status.startInProgress ? " (server still launching)" : ""}`);
           lastLogMs = Date.now();
         }
@@ -6191,8 +6203,20 @@
     window.removeOcrRegion = removeOcrRegion;
     window.testOcrRegionExisting = testOcrRegionExisting;
 
-    // Initial load
-    refresh();
+    // Initial load. When scoped to a game (arrived here via redirect right
+    // after a start), show a status immediately so QA isn't staring at an idle
+    // page during the gap before the element picker opens. The picker
+    // (maybeRunLevel1QaPicker, auto-triggered from renderStatus) takes over the
+    // overlay and hides it when its modal renders; if no picker is needed we
+    // hide it once the initial refresh settles.
+    if (SCOPED_GAME_SLUG) {
+      showLoading(`Loading ${SCOPED_GAME_SLUG}…`, "Fetching session status and preparing the element picker…");
+    }
+    refresh().finally(() => {
+      // Give the picker's setTimeout(…, 0) auto-trigger a tick to claim the
+      // overlay; if it didn't (no wizard needed), drop the loading state.
+      setTimeout(() => { if (!level1PickerRunning) hideLoading(); }, 150);
+    });
   </script>
   <script src="/auth-widget.js"></script>
 </body>
