@@ -8,6 +8,7 @@
 import path from "node:path";
 import { mkdir, readdir, rm } from "node:fs/promises";
 import { openBrowser, closeBrowser, type BrowserSession } from "../orchestrator/browser.js";
+import { requestContext } from "../../server/request-context.js";
 import { crawl } from "../step1-crawl/crawler.js";
 import { discoverUi } from "../step2-detect-ui/resolver.js";
 import { resolveExpectedUiElements } from "../registry/expected-ui-elements.js";
@@ -143,6 +144,15 @@ export type SessionStatus = {
    *  never started because mutex was held". */
   previewCaseLastFinishedId: string | null;
   previewCaseLastFinishedAt: string | null;
+  /** Session-start endpoint state — for client polling fallback when the
+   *  long-running POST (browser launch + crawl + AI UI discovery, often >60s)
+   *  gets cut by a proxy 504. The dashboard polls /status: start is done when
+   *  `startInProgress` is false and `startLastFinishedAt` advanced past the
+   *  client's request time; `startError` is non-null on failure. */
+  startInProgress: boolean;
+  startStartedAt: string | null;
+  startLastFinishedAt: string | null;
+  startError: string | null;
   /** Generate-catalog endpoint state — for client polling fallback when
    *  the long-running POST gets cut by proxy 504. */
   generateCatalogInProgress: boolean;
@@ -486,6 +496,13 @@ export class ManualSessionManager {
    *  Same pattern as previewCase: long-running endpoint (30-90s typical)
    *  often dies behind proxies at 60s timeout, so client falls back to
    *  polling /status with these flags to detect completion. */
+  /** Polling-pattern bookkeeping for /api/qa/manual/start. Browser launch +
+   *  crawl + AI UI discovery often exceeds a 60s proxy timeout, so the client
+   *  falls back to polling /status with these flags (mirrors generateCatalog). */
+  private startInProgress = false;
+  private startStartedAt: string | null = null;
+  private startLastFinishedAt: string | null = null;
+  private startError: string | null = null;
   private generateCatalogInProgress = false;
   private generateCatalogStartedAt: string | null = null;
   private generateCatalogLastFinishedAt: string | null = null;
@@ -658,6 +675,50 @@ export class ManualSessionManager {
     return this.status();
   }
 
+  /** True while a background start() is running (idempotency guard for the
+   *  route + read by the dashboard's 504 polling fallback). */
+  isStarting(): boolean {
+    return this.startInProgress;
+  }
+
+  /** Fire-and-forget wrapper around start() with status-flag bookkeeping, so
+   *  the /start route can return 202 immediately and the dashboard can poll
+   *  /status to detect completion when the long start (>60s) is cut by a proxy
+   *  504. Mirrors the generateCatalog / previewCase polling pattern.
+   *
+   *  Because the work outlives the HTTP request, we SNAPSHOT the request context
+   *  (per-QA Claude token etc.) and re-enter it so AI calls inside discoverUi
+   *  still use the right token — see src/server/request-context.ts.
+   *
+   *  `onResolved` fires once the slug is known (success) so the caller can
+   *  register the manager in the session pool under its real slug. */
+  startInBackground(
+    url: string,
+    opts: { autoDiscover?: boolean } = {},
+    hooks: { onResolved?: (slug: string | null) => void; owner?: { id: string; username: string } | null } = {},
+  ): void {
+    if (this.startInProgress) return; // already starting — idempotent
+    this.startInProgress = true;
+    this.startStartedAt = new Date().toISOString();
+    this.startError = null;
+    const ctx = requestContext.getStore();
+    const run = <T>(fn: () => Promise<T>): Promise<T> =>
+      ctx ? requestContext.run(ctx, fn) : fn();
+    void run(() => this.start(url, opts))
+      .then(() => {
+        if (hooks.owner) this.claimOwner(hooks.owner);
+        hooks.onResolved?.(this.gameSlug);
+      })
+      .catch((err) => {
+        this.startError = err instanceof Error ? err.message : String(err);
+        console.error(`[manual/start-bg] start failed for ${url}: ${this.startError}`);
+      })
+      .finally(() => {
+        this.startInProgress = false;
+        this.startLastFinishedAt = new Date().toISOString();
+      });
+  }
+
   status(): SessionStatus {
     return {
       active: this.session !== null,
@@ -679,6 +740,10 @@ export class ManualSessionManager {
       previewCaseId: this.previewCaseId,
       previewCaseLastFinishedId: this.previewCaseLastFinishedId,
       previewCaseLastFinishedAt: this.previewCaseLastFinishedAt,
+      startInProgress: this.startInProgress,
+      startStartedAt: this.startStartedAt,
+      startLastFinishedAt: this.startLastFinishedAt,
+      startError: this.startError,
       generateCatalogInProgress: this.generateCatalogInProgress,
       generateCatalogStartedAt: this.generateCatalogStartedAt,
       generateCatalogLastFinishedAt: this.generateCatalogLastFinishedAt,
@@ -1089,7 +1154,14 @@ export class ManualSessionManager {
       if (matched?.discoverHint) {
         console.log(`[manual/discover] applied discover-hint for "${safeLabel}" (${matched.discoverHint.length} chars)`);
       }
-      const result = await aiDiscoverState(opts.sourcePage ?? this.session.page, debugDir, Date.now(), prompt);
+      // Settle before the AI screenshot — popups/sub-states fade/slide in over
+      // a few hundred ms, and capturing mid-animation gives the model a blurred
+      // or half-rendered frame (missed/misplaced controls). One short wait here
+      // covers every caller (discoverVia, /discover-state, external tab).
+      const discoverPage = opts.sourcePage ?? this.session.page;
+      const settleMs = Number(process.env.QA_DISCOVER_SETTLE_MS ?? 1000);
+      if (settleMs > 0) await discoverPage.waitForTimeout(settleMs).catch(() => undefined);
+      const result = await aiDiscoverState(discoverPage, debugDir, Date.now(), prompt);
       if (result.elements.length === 0) {
         return { ok: false, reason: "AI returned 0 elements — popup may not be visible" };
       }
@@ -2922,6 +2994,9 @@ export class ManualSessionManager {
         ? `A "${stateLabel}" popup/sub-screen is currently open on top of the main game. Find the element INSIDE that popup, NOT in the background main controls.`
         : undefined;
 
+      // Settle before the recovery screenshot — same reason as discoverSubState.
+      const settleMs = Number(process.env.QA_DISCOVER_SETTLE_MS ?? 1000);
+      if (settleMs > 0) await this.session.page.waitForTimeout(settleMs).catch(() => undefined);
       const recovered = await aiRecoverLocator(this.session.page, uiKey, { contextHint });
       if (!recovered) return { ok: false, reason: "AI returned no coord — element may not be visible" };
 
@@ -3468,6 +3543,11 @@ export class ManualSessionManager {
     probe?: boolean;
     autoRecover?: boolean;
     maxRecoverAttempts?: number;
+    /** Escalate to the AI-vision dismissal tier when deterministic recovery
+     *  (keyword/Escape/corner) can't clear a blocker — handles promo splashes
+     *  whose only dismiss control is a play/continue/skip button the blind taps
+     *  miss. Off by default (costs an AI call); the QA wizard enables it. */
+    aiDismiss?: boolean;
   } = {}): Promise<{
     ok: boolean;
     onMain: boolean;
@@ -3485,6 +3565,7 @@ export class ManualSessionManager {
   }> {
     if (!this.session) return { ok: false, onMain: false, recovered: false, layers: {}, reason: "no active session", attempts: 0 };
     const page = this.session.page;
+    if (opts.aiDismiss) console.log(`[ensure-main] ▶ aiDismiss ENABLED — AI vision will classify ambiguous overlays + dismiss blockers (NEW CODE PATH)`);
     const maxAttempts = (opts.autoRecover === false ? 0 : (opts.maxRecoverAttempts ?? 2)) + 1;
     let fsActive = false;
     const layers: {
@@ -3536,7 +3617,21 @@ export class ManualSessionManager {
       // Policy: trust overlay on the FIRST attempt only (catches transient
       // dark popups + lets recovery try). On subsequent attempts, when OCR
       // remains "no popup", treat overlay as game-UI decoration and proceed.
-      const overlayBlocking = overlay.overlayPresent && (attempt === 1 || ocr.hasPopup);
+      let overlayBlocking = overlay.overlayPresent && (attempt === 1 || ocr.hasPopup);
+      // Ambiguous case: overlay persists but OCR is clean. Normally we downgrade
+      // to "game-UI decoration" and proceed — but that wrongly passes promo
+      // splashes whose stylized text OCR can't read (e.g. Playtech "WITH A MOVING
+      // CASH COLLECT"). When aiDismiss is on, ask AI vision to classify: a real
+      // play screen → proceed; a blocker → keep it blocking so recovery runs.
+      if (overlay.overlayPresent && !overlayBlocking && opts.aiDismiss) {
+        const ready = await this.aiIsPlayScreenReady();
+        if (ready === false) {
+          overlayBlocking = true;
+          console.log(`[ensure-main] attempt ${attempt}: AI says NOT the play screen → overlay is a blocker, recovering`);
+        } else {
+          console.log(`[ensure-main] attempt ${attempt}: AI confirms play screen (or inconclusive) → proceeding`);
+        }
+      }
       const popupSignalB = ocr.hasPopup || overlayBlocking;
       if (overlay.overlayPresent && !overlayBlocking) {
         console.log(`[ensure-main] attempt ${attempt}: overlay still present but OCR clean — treating as game-UI decoration (not a popup), proceeding`);
@@ -3569,7 +3664,15 @@ export class ManualSessionManager {
           console.log(`[ensure-main] attempt ${attempt}: free-spin chain in progress → waiting (no dismiss)`);
         } else {
           recovered = true;
-          await this.recoverToMain();
+          // Tier 1 (attempt 1): cheap deterministic recover. Tier 2 (attempt ≥2,
+          // when enabled): AI-vision locates the exact dismiss/continue control —
+          // for promo splashes the blind corner-tap can't hit.
+          if (opts.aiDismiss && attempt >= 2) {
+            const ai = await this.aiDismissToMain(3);
+            console.log(`[ensure-main] attempt ${attempt}: AI dismissal issued ${ai.clicked} click(s), ready=${ai.ready}`);
+          } else {
+            await this.recoverToMain();
+          }
         }
       }
     }
@@ -3602,7 +3705,7 @@ export class ManualSessionManager {
    *
    * Returns total elapsed + final state so dashboard can report.
    */
-  async waitForMainScreen(opts: { maxWaitMs?: number; pollMs?: number } = {}): Promise<{
+  async waitForMainScreen(opts: { maxWaitMs?: number; pollMs?: number; aiDismiss?: boolean } = {}): Promise<{
     onMain: boolean;
     elapsedMs: number;
     polls: number;
@@ -3616,9 +3719,22 @@ export class ManualSessionManager {
     const start = Date.now();
     let polls = 0;
     let recoveredCount = 0;
+    // Only escalate to AI on the FIRST poll's recovery — repeating the (costly)
+    // AI dismissal every 5s tick would burn vision calls; one shot is enough to
+    // clear a promo splash, and the deterministic recover handles the rest.
     while (Date.now() - start < maxWait) {
       polls++;
-      const r = await this.ensureMainScreen({ probe: false, autoRecover: true, maxRecoverAttempts: 1 });
+      // AI dismissal defaults ON (opt out with QA_DISMISS_AI=0). Cost is bounded:
+      // it only runs on the FIRST poll, and only actually calls AI when the OCR/
+      // overlay layers are ambiguous (overlay present + OCR clean) — a clean main
+      // screen never triggers a vision call. This is what gets promo splashes
+      // (Playtech, etc.) cleared in EVERY spin path (calibrate, case preflight,
+      // onboarding), so spins fire and the provider learner gets samples.
+      const useAi = opts.aiDismiss ?? (process.env.QA_DISMISS_AI !== "0");
+      const aiThisPoll = useAi && polls === 1;
+      // AI dismissal only fires on attempt ≥2, so give the first poll 2 recover
+      // attempts when AI is enabled (deterministic → AI). Other polls stay cheap.
+      const r = await this.ensureMainScreen({ probe: false, autoRecover: true, maxRecoverAttempts: aiThisPoll ? 2 : 1, aiDismiss: aiThisPoll });
       if (r.recovered) recoveredCount++;
       if (r.onMain) {
         console.log(`[wait-for-main] onMain after ${Date.now() - start}ms (${polls} polls, ${recoveredCount} recoveries)`);
@@ -4013,6 +4129,78 @@ export class ManualSessionManager {
     } catch (err) {
       console.warn(`[recover-main] esc+corner failed: ${err instanceof Error ? err.message : String(err)}`);
     }
+  }
+
+  /** AI-vision recovery tier: when keyword + Escape + corner-tap can't clear a
+   *  blocker (e.g. a Playtech feature-promo splash whose only dismiss control is
+   *  a centered ▶ play button, or a "DON'T SHOW NEXT TIME" dialog), screenshot
+   *  the page and let `decidePreGameDismissal` locate the exact dismiss/continue
+   *  control, then click it. Loops up to `maxClicks` until the model reports the
+   *  play screen is ready. Returns how many real clicks it issued. */
+  /** AI-vision readiness classifier — screenshots the page and asks whether it
+   *  is genuinely the play screen (reels + spin + balance + bet, no blocking
+   *  overlay). Used to disambiguate the "dark overlay persists but OCR is clean"
+   *  case: a real game UI with dark corners (decoration) vs an unreadable promo
+   *  splash. Returns true/false, or null when the AI call fails. */
+  private async aiIsPlayScreenReady(): Promise<boolean | null> {
+    if (!this.session) return null;
+    const page = this.session.page;
+    const vp = page.viewportSize() ?? { width: 1280, height: 720 };
+    try {
+      const { decidePreGameDismissal } = await import("../../ai/vision.js");
+      const os = await import("node:os");
+      const pathMod = await import("node:path");
+      const { writeFile } = await import("node:fs/promises");
+      const buf = await page.screenshot({ type: "png" });
+      const shotPath = pathMod.join(os.tmpdir(), `qa-ai-ready-${process.pid}.png`);
+      await writeFile(shotPath, buf);
+      const d = await decidePreGameDismissal({ screenshotPath: shotPath, viewport: vp, iteration: 1, dismissedSoFar: 0 });
+      console.log(`[ensure-main/ai-classify] play_screen_ready=${d.play_screen_ready} blocker=${d.blocker_type} elements=[${(d.visible_elements ?? []).join(",")}]`);
+      return d.play_screen_ready === true;
+    } catch (err) {
+      console.warn(`[ensure-main/ai-classify] failed: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    }
+  }
+
+  private async aiDismissToMain(maxClicks = 4): Promise<{ clicked: number; ready: boolean }> {
+    if (!this.session) return { clicked: 0, ready: false };
+    const page = this.session.page;
+    const vp = page.viewportSize() ?? { width: 1280, height: 720 };
+    const { decidePreGameDismissal } = await import("../../ai/vision.js");
+    const os = await import("node:os");
+    const pathMod = await import("node:path");
+    const { writeFile } = await import("node:fs/promises");
+    let clicked = 0;
+    for (let i = 0; i < maxClicks; i++) {
+      let shotPath: string;
+      try {
+        const buf = await page.screenshot({ type: "png" });
+        shotPath = pathMod.join(os.tmpdir(), `qa-ai-dismiss-${process.pid}-${i}.png`);
+        await writeFile(shotPath, buf);
+      } catch (err) {
+        console.warn(`[recover-main/ai] screenshot failed: ${err instanceof Error ? err.message : String(err)}`);
+        break;
+      }
+      let decision;
+      try {
+        decision = await decidePreGameDismissal({ screenshotPath: shotPath, viewport: vp, iteration: i + 1, dismissedSoFar: clicked });
+      } catch (err) {
+        console.warn(`[recover-main/ai] vision call failed: ${err instanceof Error ? err.message : String(err)}`);
+        break;
+      }
+      console.log(`[recover-main/ai] iter ${i + 1}: action=${decision.action} blocker=${decision.blocker_type} ready=${decision.play_screen_ready} conf=${decision.confidence?.toFixed?.(2) ?? "?"} (${decision.reason ?? ""})`);
+      if (decision.play_screen_ready || decision.action === "done") return { clicked, ready: true };
+      if (decision.action === "wait") { await page.waitForTimeout(1500); continue; }
+      if (decision.action === "click" && (decision.confidence ?? 0) >= 0.5 && decision.x > 0 && decision.y > 0) {
+        await page.mouse.click(decision.x, decision.y).catch(() => undefined);
+        clicked++;
+        await page.waitForTimeout(1200);
+      } else {
+        break; // low confidence / no actionable target
+      }
+    }
+    return { clicked, ready: false };
   }
 
   /**

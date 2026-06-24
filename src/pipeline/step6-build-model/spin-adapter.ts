@@ -50,6 +50,16 @@ export function adaptSpinForAssertions(spin: NormalizedSpinResult): AdaptedSpin 
     || (Number.isFinite(rsPhase) && rsPhase > 0)
     || (Number.isFinite(rsCount) && rsCount > 1);
 
+  // 3 Oaks (and similar providers) signal round completion EXPLICITLY via
+  // `context.round_finished`. A response with round_finished === false is a
+  // mid-round step (Hold-and-Win respin / feature step), NOT an end-round —
+  // honor it so multi-step rounds aren't split into separate rounds.
+  const ctxObj = raw?.["context"];
+  const roundFinished = ctxObj && typeof ctxObj === "object"
+    ? (ctxObj as Record<string, unknown>)["round_finished"]
+    : undefined;
+  const explicitNotFinished = roundFinished === false;
+
   // Balance-derived win (2026-06-05). Providers like Pragmatic Play debit the
   // bet on `doSpin` but credit the win asynchronously on `doCollect` (round
   // end), so the per-response `win` field can read 0 even when that round pays
@@ -96,7 +106,7 @@ export function adaptSpinForAssertions(spin: NormalizedSpinResult): AdaptedSpin 
     matrix: spin.reels,
     grid: spin.reels,
     status: "RESOLVED",
-    isEndRound: !isTumbleContinuation,
+    isEndRound: !isTumbleContinuation && !explicitNotFinished,
 
     raw: spin.raw,
 

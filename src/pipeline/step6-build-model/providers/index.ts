@@ -4,6 +4,7 @@ import { registerParser } from "../registry.js";
 import { PragmaticParser } from "./pragmatic-parser.js";
 import { GenericParser } from "./generic-parser.js";
 import { SpecDrivenParser } from "./spec-driven-parser.js";
+import { ThreeOaksParser } from "./threeoaks-parser.js";
 import { dirForGame } from "../../registry/paths.js";
 import type { ProviderSpec } from "./spec-types.js";
 
@@ -33,7 +34,8 @@ export function registerBuiltInParsers(): void {
     registerParser("PragmaticParser", () => new PragmaticParser());
   }
   registerParser("GenericParser", () => new GenericParser());
+  registerParser("ThreeOaksParser", () => new ThreeOaksParser());
   registered = true;
 }
 
-export { PragmaticParser, GenericParser, SpecDrivenParser };
+export { PragmaticParser, GenericParser, SpecDrivenParser, ThreeOaksParser };

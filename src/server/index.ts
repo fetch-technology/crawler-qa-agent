@@ -10,6 +10,12 @@ import { resolveSession } from "../pipeline/server/auth/session-store.js";
 import { getSessionToken } from "../pipeline/server/auth/cookie.js";
 import { requestContext, getCurrentUser, type AuthIdentity } from "./request-context.js";
 
+// Build marker — bump on each deploy-worthy change so `pm2 logs qa` (and
+// GET /api/qa/version) prove which code is actually running on the Mac mini.
+// "vẫn vậy" after a fix almost always = stale code; this makes it verifiable.
+export const BUILD_TAG = "2026-06-24d aidismiss-all-spin-paths+auto-learn-provider+bet-dropdown-safe";
+const BOOT_AT = new Date().toISOString();
+
 loadEnv();
 
 const PORT = Number(process.env.PORT ?? 3200);
@@ -140,6 +146,13 @@ const server = createServer(async (req, res) => {
 async function routeRequest(req: import("node:http").IncomingMessage, res: ServerResponse, url: string, method: string): Promise<void> {
   const pathOnly0 = url.split("?")[0] ?? "/";
 
+  // --- Build/version probe (public, no auth) — verify which code is running. ---
+  if (pathOnly0 === "/api/qa/version" && method === "GET") {
+    res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+    res.end(JSON.stringify({ build: BUILD_TAG, startedAt: BOOT_AT }));
+    return;
+  }
+
   // --- Auth routes (/api/qa/auth/*) — login reachable while logged out ---
   if (await handleAuthRoute(req, res, url, method)) return;
 
@@ -213,6 +226,7 @@ server.listen(PORT, async () => {
     console.error(`  [auth] seed failed: ${err instanceof Error ? err.message : String(err)}`);
   }
   console.log(`\n  crawler-qa-agent dashboard`);
+  console.log(`  build: ${BUILD_TAG}`);
   console.log(`  http://localhost:${PORT}/dashboard_new`);
   console.log(`  (/ and /dashboard alias to /dashboard_new · login at /login)\n`);
 });

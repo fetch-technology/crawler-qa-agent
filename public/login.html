@@ -37,12 +37,12 @@
 <body>
   <form class="card" id="loginForm" autocomplete="on">
     <h1>QA Dashboard</h1>
-    <p class="sub">Đăng nhập để tiếp tục</p>
+    <p class="sub">Sign in to continue</p>
     <label for="username">Username</label>
     <input id="username" name="username" type="text" autocomplete="username" autofocus required />
     <label for="password">Password</label>
     <input id="password" name="password" type="password" autocomplete="current-password" required />
-    <button id="submitBtn" type="submit">Đăng nhập</button>
+    <button id="submitBtn" type="submit">Sign in</button>
     <div class="err" id="err"></div>
     <div class="brand">crawler-qa-agent</div>
   </form>
@@ -74,11 +74,11 @@
         if (r.ok && data.ok) {
           location.href = nextUrl();
         } else {
-          errEl.textContent = data.error || "Đăng nhập thất bại";
+          errEl.textContent = data.error || "Sign-in failed";
           btn.disabled = false;
         }
       } catch (err) {
-        errEl.textContent = "Lỗi kết nối tới server";
+        errEl.textContent = "Could not reach the server";
         btn.disabled = false;
       }
     });

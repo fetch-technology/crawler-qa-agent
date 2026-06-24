@@ -229,3 +229,23 @@ test("FS keyword + buy bonus keyword → popup, NOT active chain", () => {
 test("FS keyword + autoplay keyword → popup, NOT active chain", () => {
   expect(isFreeSpinChainActive(["free spins", "autoplay"])).toBe(false);
 });
+
+// REGRESSION 2026-06-23 (Black Wolf 2): the pre-game intro splash "TAP ANYWHERE
+// TO START!" matched NONE of the interstitial keywords → ensure-main thought the
+// game was on-main → the main-screen QA picker opened against the splash and
+// every element read "missing". The intro splash must be a dismissable popup.
+test("intro splash 'TAP ANYWHERE TO START' is detected as an interstitial popup", () => {
+  const matched = matchPopupKeywords("Collect 20 BONUS symbols. TAP ANYWHERE TO START!", POPUP_KEYWORDS);
+  expect(matched.length).toBeGreaterThan(0);
+  expect(matched).toContain("tap anywhere");
+});
+
+test("intro splash variants are detected", () => {
+  expect(matchPopupKeywords("TAP TO START", POPUP_KEYWORDS)).toContain("tap to start");
+  expect(matchPopupKeywords("TAP TO PLAY", POPUP_KEYWORDS)).toContain("tap to play");
+  expect(matchPopupKeywords("CLICK TO START", POPUP_KEYWORDS)).toContain("click to start");
+});
+
+test("a plain main screen with bet/balance text is NOT a popup", () => {
+  expect(matchPopupKeywords("BALANCE 1000.00 BET 0.20 TOTAL BET", POPUP_KEYWORDS)).toEqual([]);
+});

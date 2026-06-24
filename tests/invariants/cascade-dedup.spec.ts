@@ -245,3 +245,33 @@ test("genuine tumble (na=c WITH rs_t) still merges into its round-start", () => 
   expect(state.spins[0]!.bet).toBe(45);
   expect(state.spins[0]!.win).toBe(45);     // balance-derived: 984689.6-984644.6+45
 });
+
+// LAYER 1 — FS-frame exclusion from the cascade-marker merge.
+//
+// A PP clone can OVERLOAD a tumble marker (rs_p) as the free-spin index. Without
+// the !isFreeSpin gate the free-respin frames (rs_p=1/2/3) match
+// isCascadeContinuation and get swallowed into the buy round → 1 spin captured
+// instead of 4, with a balance-derived bet polluting buy-cost-ratio. (vs20daydead)
+test("FS respin frames carrying rs_p>0 are NOT swallowed into the buy round", () => {
+  const state = createDedupState();
+  const opts = { allowBalanceContinuity: false };
+  // Buy spin: NORMAL, big deduction (the buy cost), rs_p=0/rs_c=1.
+  ingestFrame(state, synthSpin({ roundId: "req-250-4", bet: 0.4, win: 0, balanceBefore: 1000, balanceAfter: 960, state: "NORMAL", raw: { rs_p: "0", rs_c: "1" } }), opts);
+  // 3 free respins: isFreeSpin, flat balance, rs_p increments 1→3 (the overload).
+  ingestFrame(state, synthSpin({ roundId: "req-251-2", bet: 0, win: 0, balanceBefore: 960, balanceAfter: 960, state: "FREE_SPIN", isFreeSpin: true, raw: { rs_p: "1" } }), opts);
+  ingestFrame(state, synthSpin({ roundId: "req-252-2", bet: 0, win: 0, balanceBefore: 960, balanceAfter: 960, state: "FREE_SPIN", isFreeSpin: true, raw: { rs_p: "2" } }), opts);
+  ingestFrame(state, synthSpin({ roundId: "req-253-2", bet: 0, win: 11.58, balanceBefore: 960, balanceAfter: 971.58, state: "FREE_SPIN", isFreeSpin: true, raw: { rs_p: "3" } }), opts);
+  expect(state.spins.length).toBe(4);               // not collapsed to 1
+  expect(state.spins[0]!.bet).toBe(0.4);            // buy bet NOT balance-derived
+  expect(state.spins.filter((s) => s.isFreeSpin).length).toBe(3);
+});
+
+// REGRESSION — a genuine base-game tumble (rs_p>0 but isFreeSpin:false) must
+// still merge as a cascade continuation.
+test("base-game tumble with rs_p>0 and isFreeSpin:false still merges", () => {
+  const state = createDedupState();
+  const opts = { allowBalanceContinuity: false };
+  ingestFrame(state, synthSpin({ roundId: "t-1", bet: 1, win: 0, balanceBefore: 100, balanceAfter: 99, state: "NORMAL", raw: { rs_p: "0", rs_c: "1" } }), opts);
+  ingestFrame(state, synthSpin({ roundId: "t-2", bet: 1, win: 5, balanceBefore: 99, balanceAfter: 99, state: "NORMAL", isFreeSpin: false, raw: { rs_p: "1" } }), opts);
+  expect(state.spins.length).toBe(1);               // merged
+});

@@ -296,6 +296,15 @@ export const POPUP_KEYWORDS = [
   "to continue",
   "click to continue",
   "tap to continue",
+  // Pre-game intro / splash — "TAP ANYWHERE TO START", "TAP TO PLAY", etc. The
+  // game sits here after load until the player taps; it must be dismissed before
+  // any main-screen QA (else every element reads "missing"). Dismissed the same
+  // way as a continue-interstitial (center/corner tap).
+  "tap anywhere",
+  "tap to start",
+  "tap to play",
+  "press anywhere to start",
+  "click to start",
   "congratulations",
   "you have won",
   "you won",
@@ -343,6 +352,10 @@ export const ON_MAIN_RESULT_PHRASES = [
 const BLOCKING_AFFORDANCE_PHRASES = [
   "press anywhere",
   "tap anywhere",
+  "tap to start",
+  "tap to play",
+  "press anywhere to start",
+  "click to start",
   "to continue",
   "click to continue",
   "tap to continue",

@@ -8,7 +8,10 @@ export function registerParser(kind: ParserKind, factory: () => BaseParser): voi
 }
 
 export function pickParser(provider: ProviderName): BaseParser {
-  const kind: ParserKind = provider === "Pragmatic" ? "PragmaticParser" : "GenericParser";
+  const kind: ParserKind =
+    provider === "Pragmatic" ? "PragmaticParser"
+    : provider === "ThreeOaks" ? "ThreeOaksParser"
+    : "GenericParser";
   return pickParserByKind(kind);
 }
 

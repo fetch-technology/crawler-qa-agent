@@ -7,7 +7,7 @@
 
 import { test, expect } from "@playwright/test";
 import type { CaseAction } from "../../src/pipeline/step7-testcase-gen/case-action-translator.ts";
-import { findBetChip } from "../../src/pipeline/step8-run-scenarios/case-executor.ts";
+import { findBetChip, findBetChipExtreme } from "../../src/pipeline/step8-run-scenarios/case-executor.ts";
 import type { UiRegistry } from "../../src/pipeline/registry/types.ts";
 
 const el = (x = 1, y = 1) => ({ x, y, strategy: "coord" }) as unknown as UiRegistry[string];
@@ -88,6 +88,69 @@ test("findBetChip matches `__betAmount-<n>` chip keys (the vs20fruitsw shape)", 
 test("findBetChip returns null when no chip is within tolerance (→ OCR fallback)", () => {
   const reg = { betPlus: el(), "betPlus__betAmount-6.00": el() } as unknown as UiRegistry;
   expect(findBetChip(reg, 6.25, 0.01)).toBeNull(); // 6.25 (ante rung) not a real chip
+});
+
+// Popup-only games: NO betPlus/betMinus, a single `betButton` opens a chooser
+// whose chips are discovered as `betButton__bet-<n>`. set_bet_to_min/max pick
+// the extreme chip; set_bet_to_value picks the matching/nearest chip.
+test("findBetChip prefers a dedicated betButton opener over betPlus/betMinus", () => {
+  const reg = {
+    betPlus: el(), betMinus: el(), betButton: el(9, 9),
+    "betPlus__bet-1.00": el(1, 1),
+    "betButton__bet-1.00": el(2, 2),
+  } as unknown as UiRegistry;
+  const m = findBetChip(reg, 1.0, 0.01);
+  expect(m?.parentKey).toBe("betButton");
+  expect(m?.chipKey).toBe("betButton__bet-1.00");
+});
+
+test("findBetChipExtreme('min') returns the lowest chip (popup-only registry)", () => {
+  const reg = {
+    betButton: el(9, 9),
+    "betButton__bet-0.20": el(1, 1),
+    "betButton__bet-1.00": el(2, 2),
+    "betButton__bet-50.00": el(3, 3),
+  } as unknown as UiRegistry;
+  const m = findBetChipExtreme(reg, "min");
+  expect(m?.chipKey).toBe("betButton__bet-0.20");
+});
+
+test("findBetChipExtreme('max') returns the highest chip", () => {
+  const reg = {
+    betButton: el(9, 9),
+    "betButton__bet-0.20": el(1, 1),
+    "betButton__bet-1.00": el(2, 2),
+    "betButton__bet-50.00": el(3, 3),
+  } as unknown as UiRegistry;
+  const m = findBetChipExtreme(reg, "max");
+  expect(m?.chipKey).toBe("betButton__bet-50.00");
+});
+
+test("findBetChipExtreme picks up the discovered closeButton in the same namespace", () => {
+  const reg = {
+    betButton: el(9, 9),
+    "betButton__bet-0.20": el(1, 1),
+    "betButton__closeButton": el(8, 2),
+  } as unknown as UiRegistry;
+  const m = findBetChipExtreme(reg, "min");
+  expect(m?.closeKey).toBe("betButton__closeButton");
+  expect(m?.closeButton).toBeTruthy();
+});
+
+test("findBetChipExtreme returns null when there are no chips", () => {
+  const reg = { spinButton: el(), betButton: el() } as unknown as UiRegistry;
+  expect(findBetChipExtreme(reg, "min")).toBeNull();
+});
+
+test("findBetChip nearest (infinite tolerance) snaps to closest available chip", () => {
+  const reg = {
+    betButton: el(9, 9),
+    "betButton__bet-0.20": el(1, 1),
+    "betButton__bet-1.00": el(2, 2),
+  } as unknown as UiRegistry;
+  // target 0.9 has no exact chip; nearest is 1.00.
+  const m = findBetChip(reg, 0.9, Number.POSITIVE_INFINITY);
+  expect(m?.chipKey).toBe("betButton__bet-1.00");
 });
 
 test("regression for hardcoded count bug: user's example case", () => {

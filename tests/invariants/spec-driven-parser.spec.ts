@@ -485,3 +485,66 @@ test("PP roundEndSignal does NOT match regular doSpin request", async () => {
   // URL matches but body should NOT match (action=doSpin, not doCollect)
   expect(new RegExp(sig.bodyPattern!, "i").test(reqBody)).toBe(false);
 });
+
+// LAYER 3 — declarative free-spin signal (clones that don't use top-level fs=N).
+// vs20daydead packs state in `trail=mode~free;...;fs~N`.
+function ppSpecWithSignal(): ProviderSpec {
+  const s = ppSpec();
+  s.response.freeSpinSignal = { field: "trail", contains: "mode~free" };
+  return s;
+}
+
+test("freeSpinSignal (trail contains mode~free) + flat balance → FREE_SPIN, bet 0", () => {
+  const p = new SpecDrivenParser(ppSpecWithSignal(), "PragmaticParser");
+  const url = "https://x/gs2c/v3/gameService";
+  // No top-level fs; FS state only in trail. Balance flat (no deduction).
+  const body = "bb=960&ba=960&tw=0&index=1&trail=mode~free;wild_bar~1;fs~1&s=1,2,3";
+  const spin = p.parseResponse(body);
+  expect(spin.state).toBe("FREE_SPIN");
+  expect(spin.isFreeSpin).toBe(true);
+  expect(spin.bet).toBe(0);
+});
+
+test("BUY frame carries the same token but DEDUCTS → stays NORMAL (balance guard)", () => {
+  const p = new SpecDrivenParser(ppSpecWithSignal(), "PragmaticParser");
+  // trail has the FS token, but the wallet dropped 40 (the buy cost).
+  const body = "bb=1000&ba=960&tw=0&index=1&trail=mode~base;markers~fs_trig&s=1,2,3";
+  const spin = p.parseResponse(body);
+  expect(spin.state).toBe("NORMAL"); // mode~base anyway; guard also catches drops
+  const body2 = "bb=1000&ba=960&tw=0&index=1&trail=mode~free;fs~1&s=1,2,3";
+  expect(p.parseResponse(body2).state).toBe("NORMAL"); // token present but deducted
+});
+
+test("nestedExtractions pulls fs~N out of trail into freeSpinsRemaining", () => {
+  const s = ppSpec();
+  s.response.nestedExtractions = [{ sourceField: "trail", pattern: "fs~(\\d+)", targetField: "fs" }];
+  const p = new SpecDrivenParser(s, "PragmaticParser");
+  const body = "bb=960&ba=960&tw=0&index=1&trail=mode~free;wild_bar~1;fs~3&s=1,2,3";
+  const spin = p.parseResponse(body);
+  expect(spin.freeSpinsRemaining).toBe(3);
+  expect(spin.state).toBe("FREE_SPIN");
+});
+
+test("mergeSpec propagates trusted freeSpinSignal + nestedExtractions from overlay", () => {
+  const base = ppSpec();
+  const overlay: ParserOverlay = {
+    schemaVersion: 1,
+    basedOnProvider: "pragmatic",
+    freeSpinSignal: { value: { field: "trail", contains: "mode~free" }, trusted: true },
+    nestedExtractions: { value: [{ sourceField: "trail", pattern: "fs~(\\d+)", targetField: "fs" }], trusted: true },
+  };
+  const merged = mergeSpec(base, overlay);
+  expect(merged.response.freeSpinSignal).toEqual({ field: "trail", contains: "mode~free" });
+  expect(merged.response.nestedExtractions?.some((e) => e.targetField === "fs")).toBe(true);
+});
+
+test("mergeSpec DROPS an untrusted freeSpinSignal (fail-loud fallback to base)", () => {
+  const base = ppSpec();
+  const overlay: ParserOverlay = {
+    schemaVersion: 1,
+    basedOnProvider: "pragmatic",
+    freeSpinSignal: { value: { field: "trail", contains: "mode~free" }, trusted: false },
+  };
+  const merged = mergeSpec(base, overlay);
+  expect(merged.response.freeSpinSignal).toBeUndefined();
+});

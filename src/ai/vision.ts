@@ -311,6 +311,18 @@ Do NOT mark play_screen_ready=true even if reels/balance are technically visible
 4. WELCOME / INTRO POPUP — non-tutorial splash
    → CLICK close X or "Play" / "Start" / "Continue". blocker_type="welcome"
 
+4b. FEATURE-PROMO SPLASH (Playtech "Origins", etc.) — a marketing card shown on
+    load advertising a feature: big stylized title like "WITH A MOVING CASH
+    COLLECT" / game logo / mascot, a checkbox "DON'T SHOW NEXT TIME", and a
+    prominent CIRCULAR ▶ PLAY button (often center or center-right).
+    The game reels may be partly visible BEHIND it — that does NOT make it the
+    play screen. This IS a blocker → play_screen_ready=false.
+    → CLICK the circular ▶ PLAY button (its center) to dismiss into the game.
+      If you can't find the ▶ button, click the "DON'T SHOW NEXT TIME" checkbox
+      then look again next iteration. blocker_type="promo_popup".
+    → NEVER set action="done" while a ▶ play-overlay / "DON'T SHOW NEXT TIME"
+      card is visible, even if reels show behind it.
+
 5. TUTORIAL / HOW-TO-PLAY overlay
    → CLICK "Skip" / "Close" / "X". blocker_type="tutorial"
 

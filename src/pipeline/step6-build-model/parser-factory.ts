@@ -92,7 +92,9 @@ export async function createParserForGame(
           `No parser.json or provider-cache.json for "${gameSlug}". Run qa:cold or Auto-Onboard first, or pass { parserKind } override.`,
         );
       }
-      kind = provider.provider === "Pragmatic" ? "PragmaticParser" : "GenericParser";
+      kind = provider.provider === "Pragmatic" ? "PragmaticParser"
+        : provider.provider === "ThreeOaks" ? "ThreeOaksParser"
+        : "GenericParser";
       try {
         await parserCache.save(gameSlug, { parser: kind, version: 1 });
         console.log(`[parser-factory] persisted parser.json for "${gameSlug}" (derived from provider="${provider.provider}" → ${kind})`);
@@ -101,6 +103,19 @@ export async function createParserForGame(
         console.warn(`[parser-factory] failed to persist parser.json: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
+  }
+  // A game pinned to a LEARNED provider spec (AI-derived + arithmetic-verified)
+  // loads its own per-game spec from disk and runs the generic SpecDrivenParser
+  // over it — no built-in ParserKind needed.
+  if (kind === "LearnedSpecParser") {
+    const { readFile } = await import("node:fs/promises");
+    const pathMod = await import("node:path");
+    const { dirForGame } = await import("../registry/paths.js");
+    const { SpecDrivenParser } = await import("./providers/spec-driven-parser.js");
+    const specPath = pathMod.join(dirForGame(gameSlug), "learned-provider-spec.json");
+    const spec = JSON.parse(await readFile(specPath, "utf8")) as import("./providers/spec-types.js").ProviderSpec;
+    console.log(`[parser-factory] "${gameSlug}" → LearnedSpecParser (provider="${spec.name}")`);
+    return new SpecDrivenParser(spec, "GenericParser");
   }
   const parser = pickParserByKind(kind);
 

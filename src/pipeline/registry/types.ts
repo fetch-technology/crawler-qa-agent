@@ -66,7 +66,7 @@ export type UiRegistry = {
   [extra: string]: UiElement | undefined;
 };
 
-export type ProviderName = "Pragmatic" | "Generic";
+export type ProviderName = "Pragmatic" | "Generic" | "ThreeOaks";
 
 export type ProviderCache = {
   provider: ProviderName;

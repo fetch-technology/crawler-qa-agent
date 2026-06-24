@@ -33,6 +33,13 @@ export const EXPECTED_UI_ELEMENTS_DEFAULTS: ExpectedUiElement[] = [
   { key: "menuButton", description: "☰ hamburger lines, top-left corner" },
   { key: "betPlus", description: "a '+' icon button immediately to the RIGHT of the bet value display" },
   { key: "betMinus", description: "a '−' icon button immediately to the LEFT of the bet value display" },
+  // betButton is the single bet-level opener for games WITHOUT +/- step buttons:
+  // one tappable control (often the TOTAL BET / BET value itself, or a small
+  // coin/stack/▾ button next to it) that opens a popup listing selectable bet
+  // levels. Non-critical — most PP games use betPlus/betMinus instead; AI vision
+  // returns null when the game has explicit +/- steppers. When found, the graph
+  // explorer clicks it to discover the bet-level chips as `betButton__bet-<n>`.
+  { key: "betButton", description: "BET / TOTAL BET level selector — a single tappable control (the bet value readout itself, or a small coin/stack/▾ button beside it) that OPENS A POPUP of selectable bet amounts. ONLY when there are NO separate '+'/'−' step buttons; return null if the game has betPlus/betMinus steppers." },
   // anteButton is non-critical: many slot titles don't expose it. AI vision
   // returns null when absent; presence triggers ante-normalize (enforce OFF
   // + baseline crop) BEFORE sub-state exploration so popups like

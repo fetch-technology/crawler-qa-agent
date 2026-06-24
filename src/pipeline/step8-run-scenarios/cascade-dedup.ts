@@ -92,7 +92,17 @@ export function ingestFrame(
     (Number.isFinite(rsTier) && rsTier > 0)
     || (Number.isFinite(rsPhase) && rsPhase > 0)
     || (Number.isFinite(rsCount) && rsCount > 1);
-  const matchByCascadeMarker = isCascadeContinuation && last ? state.spins.length - 1 : -1;
+  // FS-frame exclusion (mirrors the balance-continuity gate below): a clone may
+  // OVERLOAD a tumble marker as a free-spin index — vs20daydead's free respins
+  // carry rs_p=1/2/3, which would (wrongly) match isCascadeContinuation and
+  // swallow the whole FS chain into the buy round (1 spin captured instead of N,
+  // bet balance-derived). A genuine tumble continuation is never a free spin
+  // (base-game tumbles keep state=NORMAL; cascades WITHIN a free spin share a
+  // roundId and merge on the matchByRid path above), so gating on !isFreeSpin is
+  // safe and keeps real tumble merges working. Requires upstream FS detection
+  // (parser fs field / Layer-4 heuristic / learned signal) to have run first.
+  const matchByCascadeMarker =
+    isCascadeContinuation && !spin.isFreeSpin && last ? state.spins.length - 1 : -1;
 
   // Balance-continuity fallback: merges frames where balance flow is continuous
   // (last.ba ≈ spin.bb) AND no deduction (spin.ba ≈ spin.bb). Designed for

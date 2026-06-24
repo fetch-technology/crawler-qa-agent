@@ -93,3 +93,50 @@ test("zero-win frames don't count as winning rounds (coverage guard)", () => {
   expect(r.itemization.coverageMet).toBe(false);
   expect(r.itemization.trusted).toBe(false); // can't certify itemization with no wins
 });
+
+// INV4 — state-signal discrimination. The wallet is the answer key: a frame the
+// parser calls FREE_SPIN must not deduct, a paid base frame must, and BOTH
+// classes must be present (signal can't trivially match everything/nothing).
+function ppSpecWithSignal(): ProviderSpec {
+  const s = ppSpec();
+  s.response.freeSpinSignal = { field: "trail", contains: "mode~free" };
+  return s;
+}
+
+// 1 base paid + 1 buy (both deduct) + 3 free respins (flat / credit-only).
+function buyAndFsSamples(): ReplaySample[] {
+  return [
+    { request: "action=doSpin&c=0.02&l=20&index=1&counter=2", response: "tw=0&bb=100&ba=99.6&index=1&s=1,2,3" },
+    { request: "action=doSpin&c=0.02&l=20&index=2&counter=2", response: "tw=0&bb=99.6&ba=59.6&trail=mode~base;markers~fs_trig&index=1&s=1,2,3" },
+    { request: "action=doSpin&c=0.02&l=20&index=3&counter=2", response: "tw=0&bb=59.6&ba=59.6&trail=mode~free;fs~1&index=1&s=1,2,3" },
+    { request: "action=doSpin&c=0.02&l=20&index=4&counter=2", response: "tw=0&bb=59.6&ba=59.6&trail=mode~free;fs~2&index=1&s=1,2,3" },
+    { request: "action=doSpin&c=0.02&l=20&index=5&counter=2", response: "tw=11.58&bb=59.6&ba=71.18&trail=mode~free;fs~3&index=1&s=1,2,3" },
+  ];
+}
+
+test("discriminating signal (3 FS flat + 2 deducting base) → stateSignal trusted", () => {
+  const parser = new SpecDrivenParser(ppSpecWithSignal(), "PragmaticParser");
+  const r = replayGate(parser, buyAndFsSamples());
+  expect(r.stateSignal.freeFrames).toBe(3);
+  expect(r.stateSignal.baseFrames).toBe(2);
+  expect(r.stateSignal.freeFramesThatDeducted).toBe(0);
+  expect(r.stateSignal.discriminationMet).toBe(true);
+  expect(r.stateSignal.trusted).toBe(true);
+});
+
+test("no FREE_SPIN frames observed → state signal not trusted (coverage)", () => {
+  const parser = new SpecDrivenParser(ppSpecWithSignal(), "PragmaticParser");
+  const r = replayGate(parser, winningSamples()); // base wins only, no trail
+  expect(r.stateSignal.freeFrames).toBe(0);
+  expect(r.stateSignal.trusted).toBe(false);
+  expect(r.stateSignal.reason).toContain("free-spin coverage");
+});
+
+test("only FREE frames, no paid base frame → non-discriminating, not trusted", () => {
+  const parser = new SpecDrivenParser(ppSpecWithSignal(), "PragmaticParser");
+  const r = replayGate(parser, buyAndFsSamples().slice(2)); // drop the 2 base frames
+  expect(r.stateSignal.freeFrames).toBe(3);
+  expect(r.stateSignal.baseFrames).toBe(0);
+  expect(r.stateSignal.trusted).toBe(false);
+  expect(r.stateSignal.reason).toContain("non-discriminating");
+});

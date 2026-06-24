@@ -16,6 +16,7 @@ import { dirForGame } from "../registry/paths.js";
 import { detectAnyPopup, dismissPopupsLoop, ocrRegion, parseNumericFromOcr, isOcrReadImplausible } from "../utils/ocr-popup.js";
 import { createDedupState, ingestFrame } from "./cascade-dedup.js";
 import { reconcileBetFromBalance } from "./bet-reconcile.js";
+import { deriveStructuralConfidence } from "./structural-confidence.js";
 import {
   getRoundEndSpins as getRoundEndSpinsImpl,
   getCurrentBalance as getCurrentBalanceImpl,
@@ -238,6 +239,21 @@ export type CaseResult = {
    *  verdict — case `status` is computed from `assertions[]` only. Empty
    *  array when no precheck applied. */
   diagnostics?: AssertionResult[];
+  /** Set when the spin endpoint responded but the parser rejected EVERY
+   *  candidate (collectedSpins === 0) — i.e. an UNSUPPORTED provider, not a
+   *  flaky run. Carries truncated request+response samples so QA (or the AI
+   *  provider-spec learner) can add support. Persisted to
+   *  `fixtures/registry/<slug>/_unknown-provider-samples.json`. */
+  providerDiagnostic?: {
+    unknownProvider: boolean;
+    rejectedCount: number;
+    seenCount: number;
+    sampleUrls: string[];
+    samples: Array<{ url: string; reqBody: string; respBody: string }>;
+    /** Result of the auto-learn attempt (AI proposes a spec, arithmetic verifies
+     *  it). When ok, the game was pinned to LearnedSpecParser — re-run to parse. */
+    learned?: { ok: boolean; providerName?: string; reasons?: string[] };
+  };
   /** Last (or only) spin captured. For multi-spin cases, see spinsCount. */
   spin: {
     bet: number;
@@ -636,6 +652,10 @@ export async function executeCase(
   // Merge / append decision delegated to ingestFrame().
   const dedupState = createDedupState();
   const collectedSpins = dedupState.spins;
+  // Set when any round's bet had to be balance-derived (reconcileBetFromBalance
+  // fired) — feeds the structural-confidence gate (a derived bet pollutes
+  // buy-cost-ratio's baseBet).
+  let betWasReconciled = false;
   let stopCollecting = false;
   const reqByTiming = new Map<string, string | null>(); // url+startedAt → req body
   /** Monotonic timestamp of the most recent spin-response capture. Used by
@@ -694,6 +714,11 @@ export async function executeCase(
   let lastRelevantResponseAt = 0;
   const sampleRejectedUrls: string[] = [];
   const sampleThrownErrors: string[] = [];
+  // Full request+response samples for parser-rejected candidates — fuel for the
+  // "unknown provider" diagnostic + the AI provider-spec learner. Capped + body-
+  // truncated so we never bloat the case result.
+  const sampleRejected: Array<{ url: string; reqBody: string; respBody: string }> = [];
+  const SAMPLE_BODY_CAP = 6 * 1024;
   // Evidence: persist every interesting (non-asset) request+response pair for
   // post-hoc debugging without re-running. Caps total size to MAX_NETWORK_BYTES
   // — older entries are kept but bodies truncated to MAX_BODY_BYTES once cap
@@ -791,6 +816,9 @@ export async function executeCase(
           if (lastNetEntry && lastNetEntry.url === url) lastNetEntry.parsedAsSpin = false;
           parserRejected++;
           if (sampleRejectedUrls.length < 5) sampleRejectedUrls.push(url);
+          if (sampleRejected.length < 3) {
+            sampleRejected.push({ url, reqBody: (reqBody ?? "").slice(0, SAMPLE_BODY_CAP), respBody: body.slice(0, SAMPLE_BODY_CAP) });
+          }
           if (!quietDiag) console.log(`[case-exec/net] parser REJECTED: ${url}\n  body[:120]="${body.slice(0, 120)}"`);
           return;
         }
@@ -840,7 +868,31 @@ export async function executeCase(
         const isFsSummaryFrame = !!fsRaw
           && (fsRaw["fsend_total"] != null || fsRaw["fs_total"] != null || fsRaw["fswin_total"] != null);
         const looksFreeSpin = fsRemaining > 0 || isFsSummaryFrame;
-        if (looksFreeSpin
+        // Layer 4 — provider-agnostic heuristic FS detection (bootstrap, NO
+        // learning required). A clone that encodes free-spin state in a
+        // non-standard field (e.g. vs20daydead's `trail=mode~free` + `rs_p=N`,
+        // with no top-level `fs=N`) leaves fsRemaining=0 and no summary marker,
+        // so `looksFreeSpin` is false → the frame is mis-kept as NORMAL and then
+        // swallowed into the buy round by the cascade-marker merge. Recover it
+        // from BALANCE BEHAVIOUR, which is provider-independent: on a
+        // buy/feature-intent case, a distinct doSpin AFTER a confirmed buy that
+        // deducts NO new wager is a free/feature spin. Conditions naturally
+        // exclude the buy frame itself (it has a deduction) and base-game tumbles
+        // (no buy precedes them), so it can't misclassify a paid spin.
+        const isBuyOrFeatureIntent =
+          /free[_\s-]?spin|bonus|feature|buy/i.test(input.category);
+        const priorBuySeen = collectedSpins.some(
+          (s) => s.balanceBefore != null && s.bet > 0
+            && (s.balanceBefore - s.balanceAfter) / s.bet >= 3,
+        );
+        const heuristicFreeSpin = !looksFreeSpin
+          && isBuyOrFeatureIntent
+          && priorBuySeen
+          && !spin.isFreeSpin
+          && spin.balanceBefore != null
+          && Number.isFinite(spin.balanceAfter)
+          && spin.balanceBefore - spin.balanceAfter <= 0.01; // no new wager
+        if ((looksFreeSpin || heuristicFreeSpin)
             && spin.balanceBefore != null
             && Number.isFinite(spin.balanceAfter)) {
           const drop = spin.balanceBefore - spin.balanceAfter;
@@ -851,8 +903,11 @@ export async function executeCase(
             spin.bet = 0;
             spin.state = "FREE_SPIN";
             if (!quietDiag) {
-              const why = fsRemaining > 0 ? `fs=${fsRemaining}` : "fs-summary(fsend_total/fs_total)";
-              console.log(`[case-exec/net] post-patch FS re-eval: spin ${spin.roundId} ${why} drop=${drop.toFixed(2)} → FREE_SPIN, bet=0`);
+              const why = heuristicFreeSpin
+                ? "heuristic(post-buy,no-deduction)"
+                : fsRemaining > 0 ? `fs=${fsRemaining}` : "fs-summary(fsend_total/fs_total)";
+              const tag = heuristicFreeSpin ? "heuristic-FS re-eval" : "post-patch FS re-eval";
+              console.log(`[case-exec/net] ${tag}: spin ${spin.roundId} ${why} drop=${drop.toFixed(2)} → FREE_SPIN, bet=0`);
             }
           }
         }
@@ -1516,7 +1571,7 @@ export async function executeCase(
         warnings.push(`positive URL hint "${positiveUrlHint}" matched 0 responses — api-mapping may be stale`);
       }
       if (urlsAfterPreFilter > 0 && parserRejected === urlsAfterPreFilter) {
-        warnings.push(`parser rejected ALL ${parserRejected} candidates — provider spec may be wrong (urlPatterns / shapeScore)`);
+        warnings.push(`⚠️ UNSUPPORTED PROVIDER: parser rejected ALL ${parserRejected} spin responses — this game's wire format isn't recognised. Open the case's "Learn provider" action to auto-derive a parser from the captured samples.`);
       }
       if (dedupSwallowed > 0 && collectedSpins.length === 0) {
         warnings.push(`${dedupSwallowed} responses parsed but dedup merged them all — roundId may not be unique`);
@@ -1527,6 +1582,66 @@ export async function executeCase(
     const screenshotPath = await captureCaseScreenshot(ctx.page, ctx.gameSlug, input.id) ?? undefined;
     await stopVideo();
     await closeExternalTabs();
+    // UNSUPPORTED-PROVIDER diagnostic: the endpoint responded but the parser
+    // rejected every candidate → persist samples for the AI provider-spec
+    // learner + surface a structured flag the dashboard turns into a
+    // "Learn provider" affordance.
+    let providerDiagnostic: CaseResult["providerDiagnostic"] | undefined;
+    const unknownProvider = urlsAfterPreFilter > 0 && parserRejected === urlsAfterPreFilter && sampleRejected.length > 0;
+    if (unknownProvider && ctx.gameSlug) {
+      providerDiagnostic = {
+        unknownProvider: true,
+        rejectedCount: parserRejected,
+        seenCount: urlsSeen,
+        sampleUrls: sampleRejectedUrls.slice(0, 5),
+        samples: sampleRejected,
+      };
+      try {
+        const { dirForGame } = await import("../registry/paths.js");
+        const { mkdir, writeFile } = await import("node:fs/promises");
+        const path = await import("node:path");
+        const dir = dirForGame(ctx.gameSlug);
+        await mkdir(dir, { recursive: true });
+        await writeFile(
+          path.join(dir, "_unknown-provider-samples.json"),
+          JSON.stringify({ capturedAt: new Date().toISOString(), caseId: input.id, ...providerDiagnostic }, null, 2),
+          "utf8",
+        );
+        console.log(`[case-exec] unknown provider — saved ${sampleRejected.length} sample(s) → ${ctx.gameSlug}/_unknown-provider-samples.json`);
+
+        // AUTO-LEARN (opt out: QA_AUTO_LEARN_PROVIDER=0). Derive + arithmetic-
+        // verify a provider spec from the samples right now, so a brand-new
+        // provider becomes supported with NO manual button. AI only PROPOSES;
+        // verifyLearnedSpec gates acceptance. On pass, pin the game to
+        // LearnedSpecParser → the next spin parses.
+        if (process.env.QA_AUTO_LEARN_PROVIDER !== "0") {
+          try {
+            const { proposeProviderSpec, verifyLearnedSpec } = await import("../../ai/learn-provider-spec.js");
+            const spec = await proposeProviderSpec(sampleRejected);
+            if (spec) {
+              const verify = verifyLearnedSpec(spec, sampleRejected);
+              if (verify.ok) {
+                await writeFile(path.join(dir, "learned-provider-spec.json"), JSON.stringify(spec, null, 2), "utf8");
+                const { parserCache } = await import("../registry/parser-cache.js");
+                await parserCache.save(ctx.gameSlug, { parser: "LearnedSpecParser", version: 1 });
+                providerDiagnostic.learned = { ok: true, providerName: spec.name };
+                warnings.push(`✅ AUTO-LEARNED provider "${spec.name}" from ${sampleRejected.length} sample(s) — re-run this case to capture spins.`);
+                console.log(`[case-exec] AUTO-LEARNED provider "${spec.name}" → pinned LearnedSpecParser for ${ctx.gameSlug}`);
+              } else {
+                providerDiagnostic.learned = { ok: false, reasons: verify.reasons };
+                console.log(`[case-exec] auto-learn proposed a spec but it FAILED verification: ${verify.reasons.join("; ")}`);
+              }
+            } else {
+              console.log(`[case-exec] auto-learn: AI could not propose a usable spec`);
+            }
+          } catch (err) {
+            console.warn(`[case-exec] auto-learn errored: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }
+      } catch (err) {
+        console.warn(`[case-exec] failed to persist unknown-provider samples: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
     return {
       ...base,
       status: "fail",
@@ -1535,6 +1650,7 @@ export async function executeCase(
       durationMs: Date.now() - start,
       screenshotPath,
       videoPath,
+      providerDiagnostic,
       warnings: warnings.length > 0 ? warnings : undefined,
     };
   }
@@ -1710,6 +1826,7 @@ export async function executeCase(
   for (const s of collectedSpins) {
     const recon = reconcileBetFromBalance(s);
     if (recon) {
+      betWasReconciled = true;
       if (!quietDiag) {
         console.log(`[case-exec/net] bet reconciled (settled round): bet ${s.bet}→${recon.bet}, win ${s.win}→${recon.win} (roundId=${s.roundId})`);
       }
@@ -2205,10 +2322,35 @@ export async function executeCase(
   const isFreeSpinTriggerIntent =
     /free[_\s-]?spin/i.test(input.category) && !/buy/i.test(input.category);
   const freeSpinNeverTriggered = isFreeSpinTriggerIntent && !hasFsSpins;
+  // Structural-confidence gate — when the engine could not faithfully represent
+  // the spin traffic it observed (free-spin frames swallowed into the buy round,
+  // bet balance-derived), a feature-semantics assertion failure is not
+  // trustworthy. Downgrade FAIL → INCONCLUSIVE instead of false-failing an unseen
+  // game encoding. Keyed on representation-mismatch evidence, never on the bare
+  // failure (a genuinely broken buy has doSpinCount ≈ rounds, no merges → stays
+  // FAIL). See structural-confidence.ts.
+  const structuralConfidence = deriveStructuralConfidence({
+    doSpinCount: networkLog.filter((e) => e.parsedAsSpin === true).length,
+    collectedSpinsLen: collectedSpins.length,
+    dedupSwallowed,
+    betWasReconciled,
+    stateNeverLeftNormal: !collectedSpins.some(
+      (s) => s.isFreeSpin === true || s.state !== "NORMAL",
+    ),
+    isBuyOrFeatureIntent: /free[_\s-]?spin|bonus|feature|buy/i.test(input.category),
+    failingIds: assertions.filter((a) => !a.pass).map((a) => a.id),
+  });
+
   let caseStatus: CaseResult["status"];
   let caseStatusReason: string | undefined;
   if (!allPass) {
-    caseStatus = "fail";
+    if (structuralConfidence.lowConfidence) {
+      caseStatus = "inconclusive";
+      caseStatusReason = structuralConfidence.reason;
+      warnings.push(`INCONCLUSIVE: ${structuralConfidence.reason}`);
+    } else {
+      caseStatus = "fail";
+    }
   } else if (winPaytableInconsistent) {
     // A win that the paytable cannot justify is a real defect — fail even if
     // balance math reconciled.
@@ -2766,58 +2908,61 @@ export async function stopAutoplayIfRunning(o: StopAutoplayOpts): Promise<StopAu
  *
  *  Returns null when no chip matches OR the parent key isn't in registry
  *  (corrupt registry — caller should fall back to ladder strategy). */
-export function findBetChip(
-  registry: import("../registry/types.js").UiRegistry,
-  target: number,
-  tolerance: number,
-): {
+type BetChipMatch = {
   parentKey: string;
   parent: import("../registry/types.js").UiElement;
   chipKey: string;
   chip: import("../registry/types.js").UiElement;
   closeKey?: string;
   closeButton?: import("../registry/types.js").UiElement;
-} | null {
-  // Collect all chips: key shape `<prefix>__bet-<number>` OR the equivalent
-  // `<prefix>__betAmount-<number>` (discovery names the same chip either way —
-  // see graph-explorer note "bet-0.40 vs betAmount-0.40 for the same chip").
-  // number is a valid float. Ignore deeper nesting (e.g. tab-inside-popup chips).
+};
+
+type BetChipCandidate = {
+  parentKey: string;
+  chipKey: string;
+  value: number;
+  parent?: import("../registry/types.js").UiElement;
+  chip: import("../registry/types.js").UiElement;
+};
+
+// Parent (opener) preference when the same bet value is reachable from several
+// popups. A dedicated bet-level button — for games with NO betPlus/betMinus,
+// just ONE button that opens a bet-level chooser — outranks everything; then
+// `bet_settings`, then the +/- step buttons (which on some PP games ALSO open
+// the popup). Lower = preferred.
+const BET_PARENT_PRIORITY: Record<string, number> = {
+  betButton: 0,
+  betLevelButton: 0,
+  totalBetButton: 0,
+  bet_settings: 1,
+  betPlus: 2,
+  betMinus: 3,
+};
+
+/** Collect every discovered bet chip — key shape `<prefix>__bet-<number>` OR
+ *  the equivalent `<prefix>__betAmount-<number>` (discovery names the same chip
+ *  either way). Shared by findBetChip (nearest-to-target) and findBetChipExtreme
+ *  (lowest/highest, for set_bet_to_min/max on popup-only games). */
+function collectBetChips(registry: import("../registry/types.js").UiRegistry): BetChipCandidate[] {
   const chipPattern = /^(.+)__bet(?:Amount)?-(\d+(?:\.\d+)?)$/;
-  const candidates: Array<{ parentKey: string; chipKey: string; value: number; parent?: import("../registry/types.js").UiElement; chip: import("../registry/types.js").UiElement }> = [];
+  const out: BetChipCandidate[] = [];
   for (const [key, el] of Object.entries(registry)) {
     if (!el) continue;
     const m = key.match(chipPattern);
     if (!m) continue;
-    const parentKey = m[1]!;
     const value = Number(m[2]);
     if (!Number.isFinite(value)) continue;
-    if (Math.abs(value - target) > tolerance) continue;
-    candidates.push({
-      parentKey,
-      chipKey: key,
-      value,
-      parent: registry[parentKey],
-      chip: el,
-    });
+    out.push({ parentKey: m[1]!, chipKey: key, value, parent: registry[m[1]!], chip: el });
   }
-  if (candidates.length === 0) return null;
-  // Prefer parents with `bet_settings` over `betPlus` / `betMinus` /
-  // others. Ties broken by chip-value proximity (smaller diff first).
-  const PARENT_PRIORITY: Record<string, number> = {
-    bet_settings: 1,
-    betPlus: 2,
-    betMinus: 3,
-  };
-  candidates.sort((a, b) => {
-    const pa = PARENT_PRIORITY[a.parentKey] ?? 99;
-    const pb = PARENT_PRIORITY[b.parentKey] ?? 99;
-    if (pa !== pb) return pa - pb;
-    return Math.abs(a.value - target) - Math.abs(b.value - target);
-  });
-  const best = candidates.find((c) => c.parent);
-  if (!best || !best.parent) return null;
-  // Find a closeButton in the same namespace if present. Standard
-  // convention discovered by graph-explorer: `<parent>__closeButton`.
+  return out;
+}
+
+function buildBetChipMatch(
+  registry: import("../registry/types.js").UiRegistry,
+  best: BetChipCandidate,
+): BetChipMatch | null {
+  if (!best.parent) return null;
+  // Standard close-button convention discovered by graph-explorer.
   const closeKey = `${best.parentKey}__closeButton`;
   const closeButton = registry[closeKey];
   return {
@@ -2828,6 +2973,80 @@ export function findBetChip(
     closeKey: closeButton ? closeKey : undefined,
     closeButton: closeButton ?? undefined,
   };
+}
+
+export function findBetChip(
+  registry: import("../registry/types.js").UiRegistry,
+  target: number,
+  tolerance: number,
+): BetChipMatch | null {
+  const candidates = collectBetChips(registry)
+    .filter((c) => Math.abs(c.value - target) <= tolerance);
+  if (candidates.length === 0) return null;
+  // Prefer dedicated opener parents; ties broken by chip-value proximity.
+  candidates.sort((a, b) => {
+    const pa = BET_PARENT_PRIORITY[a.parentKey] ?? 99;
+    const pb = BET_PARENT_PRIORITY[b.parentKey] ?? 99;
+    if (pa !== pb) return pa - pb;
+    return Math.abs(a.value - target) - Math.abs(b.value - target);
+  });
+  const best = candidates.find((c) => c.parent);
+  return best ? buildBetChipMatch(registry, best) : null;
+}
+
+/** Find the lowest (`"min"`) or highest (`"max"`) bet chip in the registry.
+ *  Used by set_bet_to_min/max on games that have NO betMinus/betPlus and set
+ *  the stake purely through a bet-level chooser popup. Among chips tied at the
+ *  extreme value, the best-ranked opener parent wins. */
+export function findBetChipExtreme(
+  registry: import("../registry/types.js").UiRegistry,
+  which: "min" | "max",
+): BetChipMatch | null {
+  const withParent = collectBetChips(registry).filter((c) => c.parent);
+  if (withParent.length === 0) return null;
+  const extreme = which === "min"
+    ? Math.min(...withParent.map((c) => c.value))
+    : Math.max(...withParent.map((c) => c.value));
+  const atExtreme = withParent
+    .filter((c) => Math.abs(c.value - extreme) < 1e-9)
+    .sort((a, b) => (BET_PARENT_PRIORITY[a.parentKey] ?? 99) - (BET_PARENT_PRIORITY[b.parentKey] ?? 99));
+  return buildBetChipMatch(registry, atExtreme[0]!);
+}
+
+/** True when the game's bet selector is a DROPDOWN (discovered as e.g.
+ *  `betButton__totalBetDropdown` + `__confirmButton`) rather than discrete chips
+ *  or +/- steppers. Precise min/max/value selection from an un-enumerated
+ *  dropdown isn't supported yet — but we must NOT throw on set_bet, or the spin
+ *  never fires (and the provider learner never gets a sample). Detecting this
+ *  lets set_bet leave the current/default bet and proceed. */
+function hasDropdownBetSelector(registry: import("../registry/types.js").UiRegistry): boolean {
+  return Object.keys(registry).some((k) => /bet[a-z0-9_]*__.*dropdown/i.test(k));
+}
+
+/** Open a bet-chooser popup via its opener, click the target chip, and dismiss.
+ *  Used by set_bet_to_min/max/value when adjusting the stake through a popup
+ *  (the only path for games without betPlus/betMinus). Best-effort dismiss:
+ *  registered closeButton in the same namespace, else Escape. Does NOT verify —
+ *  the caller OCR-verifies and decides whether to retry/fall through. */
+async function clickBetChipFlow(ctx: CaseExecutorContext, m: BetChipMatch): Promise<void> {
+  await ctx.page.mouse.click(m.parent.x, m.parent.y);
+  // Edge fallback: when the opener is betMinus-at-min (or betPlus-at-max) that
+  // button is disabled, so the popup won't open — click the sibling too; at
+  // most one of the pair is disabled, so one click always opens it.
+  if (m.parentKey === "betMinus" || m.parentKey === "betPlus") {
+    const siblingKey = m.parentKey === "betMinus" ? "betPlus" : "betMinus";
+    const sibling = ctx.uiMap[siblingKey];
+    if (sibling) {
+      await ctx.page.waitForTimeout(120);
+      await ctx.page.mouse.click(sibling.x, sibling.y);
+    }
+  }
+  await ctx.page.waitForTimeout(800); // popup render
+  await ctx.page.mouse.click(m.chip.x, m.chip.y);
+  await ctx.page.waitForTimeout(400);
+  if (m.closeButton) await ctx.page.mouse.click(m.closeButton.x, m.closeButton.y);
+  else await ctx.page.keyboard.press("Escape");
+  await ctx.page.waitForTimeout(500);
 }
 
 async function executeAction(
@@ -2963,26 +3182,52 @@ async function executeAction(
   }
   if (action.kind === "set_bet_to_min") {
     const minus = ctx.uiMap.betMinus;
-    if (!minus) throw new Error("betMinus not in registry");
-    const clicks = betControls?.minBetClicks ?? 20;
-    const delay = betControls?.stepDelayMs ?? 80;
-    console.log(`[case-action] set_bet_to_min — clicking betMinus ×${clicks} @ (${minus.x},${minus.y})`);
-    for (let i = 0; i < clicks; i++) {
-      await ctx.page.mouse.click(minus.x, minus.y);
-      await ctx.page.waitForTimeout(delay);
+    if (minus) {
+      const clicks = betControls?.minBetClicks ?? 20;
+      const delay = betControls?.stepDelayMs ?? 80;
+      console.log(`[case-action] set_bet_to_min — clicking betMinus ×${clicks} @ (${minus.x},${minus.y})`);
+      for (let i = 0; i < clicks; i++) {
+        await ctx.page.mouse.click(minus.x, minus.y);
+        await ctx.page.waitForTimeout(delay);
+      }
+      return;
     }
+    // No betMinus → popup-only game: pick the LOWEST bet chip from the chooser.
+    const m = findBetChipExtreme(ctx.uiMap, "min");
+    if (!m) {
+      if (hasDropdownBetSelector(ctx.uiMap)) {
+        console.warn(`[case-action] set_bet_to_min: no betMinus + no chips — game uses a bet DROPDOWN (precise min not supported yet); leaving current bet so the spin still fires`);
+        return;
+      }
+      throw new Error("set_bet_to_min: no betMinus button and no bet-level chips in registry");
+    }
+    console.log(`[case-action] set_bet_to_min — no betMinus; selecting lowest chip ${m.chipKey} via ${m.parentKey}`);
+    await clickBetChipFlow(ctx, m);
     return;
   }
   if (action.kind === "set_bet_to_max") {
     const plus = ctx.uiMap.betPlus;
-    if (!plus) throw new Error("betPlus not in registry");
-    const clicks = betControls?.maxBetClicks ?? 20;
-    const delay = betControls?.stepDelayMs ?? 80;
-    console.log(`[case-action] set_bet_to_max — clicking betPlus ×${clicks} @ (${plus.x},${plus.y})`);
-    for (let i = 0; i < clicks; i++) {
-      await ctx.page.mouse.click(plus.x, plus.y);
-      await ctx.page.waitForTimeout(delay);
+    if (plus) {
+      const clicks = betControls?.maxBetClicks ?? 20;
+      const delay = betControls?.stepDelayMs ?? 80;
+      console.log(`[case-action] set_bet_to_max — clicking betPlus ×${clicks} @ (${plus.x},${plus.y})`);
+      for (let i = 0; i < clicks; i++) {
+        await ctx.page.mouse.click(plus.x, plus.y);
+        await ctx.page.waitForTimeout(delay);
+      }
+      return;
     }
+    // No betPlus → popup-only game: pick the HIGHEST bet chip from the chooser.
+    const m = findBetChipExtreme(ctx.uiMap, "max");
+    if (!m) {
+      if (hasDropdownBetSelector(ctx.uiMap)) {
+        console.warn(`[case-action] set_bet_to_max: no betPlus + no chips — game uses a bet DROPDOWN (precise max not supported yet); leaving current bet so the spin still fires`);
+        return;
+      }
+      throw new Error("set_bet_to_max: no betPlus button and no bet-level chips in registry");
+    }
+    console.log(`[case-action] set_bet_to_max — no betPlus; selecting highest chip ${m.chipKey} via ${m.parentKey}`);
+    await clickBetChipFlow(ctx, m);
     return;
   }
   // set_bet_to_value (2026-05-25) — OCR-verified bet navigation.
@@ -3002,8 +3247,9 @@ async function executeAction(
     const minus = ctx.uiMap.betMinus;
     const plus = ctx.uiMap.betPlus;
     const delay = betControls?.stepDelayMs ?? 80;
-
-    if (!minus || !plus) throw new Error("set_bet_to_value: betMinus + betPlus required in ui-registry");
+    // betMinus/betPlus are OPTIONAL: popup-only games (single bet-level button)
+    // set the stake purely through the chip chooser (Strategy 1 + the popup-only
+    // branch below). The ladder loop (Strategy 2) only runs when both exist.
 
     // Bet OCR reader — shared by chip-click VERIFICATION (Strategy 1) and the
     // ladder loop (Strategy 2). Null when the game has no betArea OCR region.
@@ -3123,6 +3369,25 @@ async function executeAction(
       }
     } else {
       console.log(`[case-action] set_bet_to_value ${target} — no matching chip in registry; using OCR ladder strategy`);
+    }
+
+    // ─── Popup-only games (no betMinus/betPlus) ───────────────────────
+    // The chip chooser is the ONLY way to set the stake — there is no +/-
+    // ladder to step. An exact chip (if any) was already attempted above;
+    // otherwise click the NEAREST chip and accept it (closest available level).
+    if (!minus || !plus) {
+      if (!chipMatch) {
+        const nearest = findBetChip(ctx.uiMap, target, Number.POSITIVE_INFINITY);
+        if (nearest) {
+          console.warn(`[case-action] set_bet_to_value ${target}: popup-only game, no exact chip — selecting nearest chip ${nearest.chipKey} (=${nearest.chipKey.match(/-(\d+(?:\.\d+)?)$/)?.[1] ?? "?"})`);
+          await clickBetChipFlow(ctx, nearest);
+        } else if (hasDropdownBetSelector(ctx.uiMap)) {
+          console.warn(`[case-action] set_bet_to_value ${target}: no betMinus/betPlus + no chips — game uses a bet DROPDOWN (precise value not supported yet); leaving current bet so the spin still fires`);
+        } else {
+          throw new Error(`set_bet_to_value ${target}: no betMinus/betPlus and no bet-level chips in registry — cannot set bet`);
+        }
+      }
+      return;
     }
 
     // ─── Strategy 2: OCR-verified ladder loop ─────────────────────────

@@ -276,17 +276,49 @@
     }
 
     $("#btnRefresh").addEventListener("click", refresh);
+    // Poll /status until a background start() finishes server-side. /start
+    // returns 202 immediately (browser launch + crawl + AI discovery routinely
+    // exceeds the proxy's ~60s timeout, which used to surface as "Start failed:
+    // HTTP 504" even though the work succeeded). Returns final status or null.
+    async function pollStartUntilDone(startIso) {
+      const deadline = Date.now() + 5 * 60 * 1000; // 5 min cap
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 3000));
+        let status = null;
+        try { status = await fetchJson("/api/qa/manual/status"); } catch { /* transient */ }
+        if (!status) continue;
+        if (!status.startInProgress && status.startLastFinishedAt && status.startLastFinishedAt > startIso) {
+          return status;
+        }
+      }
+      return null;
+    }
+
     $("#btnStart").addEventListener("click", async () => {
       const url = $("#newGameUrl").value.trim();
       if (!url) return;
       const autoDiscover = $("#autoDiscoverChk").checked;
-      showLoading("Starting session…", "Launching Playwright Chrome, loading the game URL, dismissing pre-game popups. May take 10–30s.");
+      showLoading("Starting session…", "Launching Playwright Chrome, loading the game URL, AI UI discovery. May take 30–90s.");
+      const startIso = new Date().toISOString();
       try {
-        const status = await fetchJson("/api/qa/manual/start", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ url, autoDiscover }),
-        });
+        let status = null;
+        try {
+          status = await fetchJson("/api/qa/manual/start", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ url, autoDiscover }),
+          });
+        } catch (err) {
+          // Rare now that /start returns 202, but the work still runs
+          // server-side on a proxy 504 — fall through to polling.
+          console.warn(`start POST failed (${err.message}); polling /status`);
+        }
+        // Background start (202 with startInProgress, or POST 504'd) → poll.
+        if (!status || status.startInProgress) {
+          status = await pollStartUntilDone(startIso);
+        }
+        if (!status) { hideLoading(); return alert("Start timed out after 5 min (polling)"); }
+        if (status.startError) { hideLoading(); return alert(`Start failed: ${status.startError}`); }
         if (status.gameSlug) location.href = `/game/${encodeURIComponent(status.gameSlug)}`;
         else hideLoading();
       } catch (err) {

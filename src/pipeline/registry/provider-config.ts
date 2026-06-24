@@ -46,6 +46,19 @@ export const BUILTIN_PROVIDERS: ProviderConfig[] = [
     ],
     gameSlugPattern: "\\/(vs(?:\\d+|ways|cluster|hades|horus|fun)\\w+)",
   },
+  {
+    // 3 Oaks (Booongo) — RG sandbox. Game service host `api.3oaks.…` with a
+    // `…/gs/<game>/desktop/<id>/<brand>?gsc=play` spin endpoint, and the static
+    // bundle served from `static.3oaks.…/api/v1/games/<game>/play/`.
+    name: "ThreeOaks",
+    urlPatterns: [
+      "3oaks",
+      "\\/gs\\/[^/]+\\/desktop\\/",
+    ],
+    // Slug from the game-service path (`/gs/black_wolf_2/desktop/…`) or the
+    // static bundle path (`/api/v1/games/black_wolf_2/play/`).
+    gameSlugPattern: "\\/(?:gs|games)\\/([a-z0-9_]+)\\/(?:desktop|play)",
+  },
 ];
 
 /** Load a provider config file by name. Returns null if not on disk; engine

@@ -84,7 +84,7 @@
     <!-- Auth: current QA user + logout (+ Users admin panel). Populated by bootAuth(). -->
     <div id="authBadge" style="display: flex; align-items: center; gap: 8px; padding: 6px 12px; background: #1f2937; border: 1px solid #374151; border-radius: 4px; font-size: 12px; color: #cbd5e1;">
       <span id="authUserLabel" style="font-weight: 600;">…</span>
-      <button id="btnUsers" style="display:none; font-size: 11px; padding: 3px 8px; background:#374151; color:#e5e7eb; border:none; border-radius:4px; cursor:pointer;" title="Quản lý tài khoản QA (admin)">Users</button>
+      <button id="btnUsers" style="display:none; font-size: 11px; padding: 3px 8px; background:#374151; color:#e5e7eb; border:none; border-radius:4px; cursor:pointer;" title="Manage QA accounts (admin)">Users</button>
       <button id="btnLogout" style="font-size: 11px; padding: 3px 8px; background:#3a2530; color:#f0c8c8; border:1px solid #5b3742; border-radius:4px; cursor:pointer;">Logout</button>
     </div>
   </div>
@@ -94,21 +94,21 @@
     <div style="background:#0d1117; border:1px solid #2a3140; border-radius:8px; padding:22px; max-width:640px; width:92%; max-height:84vh; overflow:auto;">
       <div style="display:flex; align-items:center; margin-bottom:12px;">
         <h3 style="margin:0; color:#c8d0d8;">QA Users</h3>
-        <button id="usersClose" style="margin-left:auto; font-size:12px; padding:4px 10px; background:#374151; color:#e5e7eb; border:none; border-radius:4px; cursor:pointer;">Đóng</button>
+        <button id="usersClose" style="margin-left:auto; font-size:12px; padding:4px 10px; background:#374151; color:#e5e7eb; border:none; border-radius:4px; cursor:pointer;">Close</button>
       </div>
       <div id="usersList" style="font-size:12px; color:#cbd5e1;">…</div>
       <div style="margin-top:16px; padding-top:14px; border-top:1px solid #232a35;">
-        <div style="color:#8b939c; font-size:11px; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:8px;">Tạo tài khoản mới</div>
+        <div style="color:#8b939c; font-size:11px; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:8px;">Create new account</div>
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
           <input id="newUserName" placeholder="username" style="padding:7px 9px; background:#111827; border:1px solid #374151; border-radius:4px; color:#e5e7eb; font-size:12px;" autocomplete="off" />
           <input id="newUserPass" type="password" placeholder="password (≥6)" style="padding:7px 9px; background:#111827; border:1px solid #374151; border-radius:4px; color:#e5e7eb; font-size:12px;" autocomplete="new-password" />
-          <input id="newUserDisplay" placeholder="display name (tùy chọn)" style="padding:7px 9px; background:#111827; border:1px solid #374151; border-radius:4px; color:#e5e7eb; font-size:12px;" autocomplete="off" />
+          <input id="newUserDisplay" placeholder="display name (optional)" style="padding:7px 9px; background:#111827; border:1px solid #374151; border-radius:4px; color:#e5e7eb; font-size:12px;" autocomplete="off" />
           <select id="newUserRole" style="padding:7px 9px; background:#111827; border:1px solid #374151; border-radius:4px; color:#e5e7eb; font-size:12px;">
             <option value="qa">qa</option>
             <option value="admin">admin</option>
           </select>
         </div>
-        <button id="btnCreateUser" style="margin-top:10px; font-size:12px; padding:7px 14px; background:#3a6fc4; color:#fff; border:none; border-radius:4px; cursor:pointer;">Tạo</button>
+        <button id="btnCreateUser" style="margin-top:10px; font-size:12px; padding:7px 14px; background:#3a6fc4; color:#fff; border:none; border-radius:4px; cursor:pointer;">Create</button>
         <div id="usersErr" style="margin-top:8px; color:#e8807f; font-size:12px; min-height:14px;"></div>
       </div>
     </div>
@@ -150,7 +150,7 @@
 
       async function renderUsers() {
         const listEl = document.getElementById("usersList");
-        listEl.innerHTML = "Đang tải…";
+        listEl.innerHTML = "Loading…";
         try {
           const r = await authFetch("/api/qa/auth/users");
           const data = await r.json().catch(() => ({}));
@@ -159,14 +159,14 @@
             const isMe = me && u.id === me.id;
             const dim = u.disabled ? "opacity:0.5;" : "";
             return `<div style="display:flex; align-items:center; gap:8px; padding:7px 0; border-bottom:1px solid #1b212b; ${dim}">
-              <span style="flex:1;"><strong>${esc(u.username)}</strong> <span style="color:#8b939c;">${esc(u.role)}</span>${u.disabled ? ' <span style="color:#e8807f;">· disabled</span>' : ""}${isMe ? ' <span style="color:#9be0bc;">· bạn</span>' : ""}</span>
-              <button data-act="pw" data-id="${esc(u.id)}" style="font-size:11px; padding:3px 8px; background:#374151; color:#e5e7eb; border:none; border-radius:4px; cursor:pointer;">Đổi mật khẩu</button>
-              <button data-act="dis" data-id="${esc(u.id)}" data-dis="${u.disabled ? "0" : "1"}" ${isMe ? "disabled" : ""} style="font-size:11px; padding:3px 8px; background:${u.disabled ? "#2d4a35" : "#3a2530"}; color:#e5e7eb; border:none; border-radius:4px; cursor:${isMe ? "default" : "pointer"}; ${isMe ? "opacity:0.4;" : ""}">${u.disabled ? "Bật lại" : "Vô hiệu hóa"}</button>
+              <span style="flex:1;"><strong>${esc(u.username)}</strong> <span style="color:#8b939c;">${esc(u.role)}</span>${u.disabled ? ' <span style="color:#e8807f;">· disabled</span>' : ""}${isMe ? ' <span style="color:#9be0bc;">· you</span>' : ""}</span>
+              <button data-act="pw" data-id="${esc(u.id)}" style="font-size:11px; padding:3px 8px; background:#374151; color:#e5e7eb; border:none; border-radius:4px; cursor:pointer;">Reset password</button>
+              <button data-act="dis" data-id="${esc(u.id)}" data-dis="${u.disabled ? "0" : "1"}" ${isMe ? "disabled" : ""} style="font-size:11px; padding:3px 8px; background:${u.disabled ? "#2d4a35" : "#3a2530"}; color:#e5e7eb; border:none; border-radius:4px; cursor:${isMe ? "default" : "pointer"}; ${isMe ? "opacity:0.4;" : ""}">${u.disabled ? "Enable" : "Disable"}</button>
             </div>`;
           }).join("");
-          listEl.innerHTML = rows || "<span style='color:#8b939c;'>Chưa có user nào.</span>";
+          listEl.innerHTML = rows || "<span style='color:#8b939c;'>No users yet.</span>";
           listEl.querySelectorAll("button[data-act]").forEach((b) => b.addEventListener("click", onUserAction));
-        } catch (_) { listEl.innerHTML = "<span style='color:#e8807f;'>Lỗi tải danh sách.</span>"; }
+        } catch (_) { listEl.innerHTML = "<span style='color:#e8807f;'>Failed to load users.</span>"; }
       }
 
       async function onUserAction(e) {
@@ -176,16 +176,16 @@
         usersErr.textContent = "";
         try {
           if (act === "pw") {
-            const pw = prompt("Mật khẩu mới (≥6 ký tự):");
+            const pw = prompt("New password (min 6 chars):");
             if (!pw) return;
             const r = await authFetch("/api/qa/auth/users/password", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, password: pw }) });
             const d = await r.json().catch(() => ({}));
-            if (!d.ok) { usersErr.textContent = d.error || "Đổi mật khẩu thất bại"; return; }
+            if (!d.ok) { usersErr.textContent = d.error || "Reset password failed"; return; }
           } else if (act === "dis") {
             const disabled = btn.getAttribute("data-dis") === "1";
             const r = await authFetch("/api/qa/auth/users/disable", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, disabled }) });
             const d = await r.json().catch(() => ({}));
-            if (!d.ok) { usersErr.textContent = d.error || "Thao tác thất bại"; return; }
+            if (!d.ok) { usersErr.textContent = d.error || "Operation failed"; return; }
           }
           await renderUsers();
         } catch (_) {}
@@ -201,11 +201,11 @@
         const password = document.getElementById("newUserPass").value;
         const displayName = document.getElementById("newUserDisplay").value.trim();
         const role = document.getElementById("newUserRole").value;
-        if (!username || !password) { usersErr.textContent = "Cần username và password"; return; }
+        if (!username || !password) { usersErr.textContent = "Username and password required"; return; }
         try {
           const r = await authFetch("/api/qa/auth/users", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ username, password, displayName, role }) });
           const d = await r.json().catch(() => ({}));
-          if (!d.ok) { usersErr.textContent = d.error || "Tạo thất bại"; return; }
+          if (!d.ok) { usersErr.textContent = d.error || "Create failed"; return; }
           document.getElementById("newUserName").value = "";
           document.getElementById("newUserPass").value = "";
           document.getElementById("newUserDisplay").value = "";
@@ -1223,7 +1223,7 @@
       const owner = status.owner;
       const ownedByOther = owner && me && owner.userId !== me.id;
       const ownerTag = owner
-        ? ` · <span style="color:${ownedByOther ? "#e8807f" : "#9be0bc"};">🔒 ${ownedByOther ? `đang được ${owner.username} điều khiển` : "bạn đang điều khiển"}</span>`
+        ? ` · <span style="color:${ownedByOther ? "#e8807f" : "#9be0bc"};">🔒 ${ownedByOther ? `controlled by ${owner.username}` : "you are controlling"}</span>`
         : "";
       sessionInfo.innerHTML = `Active · slug=<code>${status.gameSlug}</code> · started ${status.startedAt}${ownerTag}`;
 
@@ -3603,6 +3603,18 @@
             </ul>
           </div>`
         : "";
+      // Unknown-provider: the spin endpoint responded but the parser rejected
+      // every candidate → offer one-click AI "Learn provider" (derives +
+      // arithmetic-verifies a parser spec from the captured samples).
+      const pd = r.providerDiagnostic;
+      const providerLearnHtml = pd && pd.unknownProvider
+        ? `<div style="margin-top:6px;padding:8px 10px;background:#2a1a2e;border-left:3px solid #a855f7;border-radius:4px;font-size:11px;">
+            <div style="color:#d8b4fe;font-weight:600;margin-bottom:4px;">🧩 Provider not supported</div>
+            <div style="color:#cbb8e0;line-height:1.5;">Parser rejected all ${pd.rejectedCount} spin responses (${pd.seenCount} responses seen). This game's wire format isn't recognised yet.</div>
+            <button onclick="learnProvider('${escapeHtml(slug)}', this)" style="margin-top:8px;font-size:11px;padding:5px 12px;background:#7c3aed;color:#fff;border:none;border-radius:4px;cursor:pointer;">🧠 Learn provider from ${pd.samples.length} sample(s)</button>
+            <div class="learn-provider-result" style="margin-top:8px;font-size:11px;"></div>
+          </div>`
+        : "";
       // Build interrupt timeline if available
       const timelineHtml = Array.isArray(r.stateTimeline) && r.stateTimeline.length > 0
         ? `<div style="margin-top:6px;padding:6px 10px;background:#0b0e13;border-radius:4px;font-size:11px;">
@@ -3646,6 +3658,7 @@
           </div>`;
         })()}
         ${warningsHtml}
+        ${providerLearnHtml}
         ${rollupHtml}
         <div style="margin-top: 8px;">
           <button onclick="toggleEvidence('detailed-assertions-${c.id}')" class="gray" style="font-size:11px;padding:4px 8px;">📋 Detailed Assertions (${(r.assertions || []).length})</button>
@@ -3673,6 +3686,34 @@
       const pane = document.getElementById(paneId);
       if (!pane) return;
       pane.style.display = pane.style.display === "none" ? "block" : "none";
+    };
+
+    // AI-learn a parser spec for an unsupported provider, from the samples a
+    // failed spin case captured. Server PROPOSES via AI + VERIFIES arithmetically;
+    // on success the game is pinned to the learned spec → re-run the case.
+    window.learnProvider = async (gameSlug, btn) => {
+      const box = btn.parentElement.querySelector(".learn-provider-result");
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = "🧠 Learning provider… (AI + verify)";
+      if (box) box.innerHTML = "";
+      try {
+        const r = await api("/api/qa/manual/learn-provider", { method: "POST", body: { gameSlug } });
+        if (r && r.ok) {
+          const spins = (r.verify?.spins || []).map((s, i) => `#${i + 1}: bet ${s.bet} · win ${s.win} · bal ${s.balanceAfter} · ${s.reelCols} reels`).join("<br>");
+          if (box) box.innerHTML = `<div style="color:#86efac;">✓ Learned provider <strong>${escapeHtml(r.providerName || "?")}</strong> and verified it. The game is now pinned to the new parser — <strong>re-run the case</strong> to capture spins.</div>${spins ? `<div style="color:#8b939c;margin-top:4px;font-family:ui-monospace,monospace;">${spins}</div>` : ""}`;
+          btn.textContent = "✓ Learned — re-run case";
+        } else {
+          const reasons = (r?.verify?.reasons || []).map((x) => `• ${escapeHtml(x)}`).join("<br>");
+          if (box) box.innerHTML = `<div style="color:#e8807f;">✗ ${escapeHtml(r?.error || "failed")}.</div>${reasons ? `<div style="color:#cbb8e0;margin-top:4px;">${reasons}</div>` : ""}`;
+          btn.disabled = false;
+          btn.textContent = orig;
+        }
+      } catch (err) {
+        if (box) box.innerHTML = `<div style="color:#e8807f;">✗ Error: ${escapeHtml(err && err.message ? err.message : String(err))}</div>`;
+        btn.disabled = false;
+        btn.textContent = orig;
+      }
     };
 
     // Fetch + render the full per-case network.jsonl on demand. Files can be
@@ -3869,8 +3910,8 @@
       if (a.kind === "click") return `click ${a.uiKey}${a.times ? ` ×${a.times}` : ""}${a.reason ? ` // ${a.reason}` : ""}`;
       if (a.kind === "wait_ms") return `wait ${a.ms}ms`;
       if (a.kind === "spin") return "spin (clicks spinButton)";
-      if (a.kind === "set_bet_to_min") return "set bet to min (clicks betMinus ×20)";
-      if (a.kind === "set_bet_to_max") return "set bet to max (clicks betPlus ×20)";
+      if (a.kind === "set_bet_to_min") return "set bet to min (betMinus, or lowest bet chip if no +/-)";
+      if (a.kind === "set_bet_to_max") return "set bet to max (betPlus, or highest bet chip if no +/-)";
       if (a.kind === "dismiss") return `dismiss (wait 10s + click center ×2${a.reason ? ` // ${a.reason}` : ""})`;
       if (a.kind === "reset") return "reset (page reload)";
       if (a.kind === "wait_until_state") return `wait_until_state ${a.state} (max ${a.maxMs ?? 30000}ms)${a.reason ? ` // ${a.reason}` : ""}`;
@@ -4668,6 +4709,36 @@
 
     async function maybeRunLevel1QaPicker(status, opts = {}) {
       if (!status?.active) return;
+      // AUTO-DETECT SCREEN before asking QA to pick. A freshly-opened game often
+      // sits on an intro/splash ("TAP ANYWHERE TO START") or a leftover popup —
+      // then EVERY element reads "missing" and QA would be picking against the
+      // wrong frame. ensure-main dismisses it (auto-recover taps/closes) and we
+      // re-read status so the picker shows the REAL main screen. A banner warns
+      // when it still can't reach main (e.g. a free-spin chain is playing).
+      let onMain = true;
+      let offMainReason = "";
+      if (!opts.skipEnsureMain) {
+        try {
+          const em = await api("/api/qa/manual/ensure-main", {
+            method: "POST",
+            body: { autoRecover: true, maxRecoverAttempts: 3, aiDismiss: true },
+          });
+          onMain = em ? em.onMain !== false : true;
+          if (!onMain) {
+            offMainReason = em.fsActive
+              ? "A free-spin chain is playing — not on the main screen yet."
+              : `Not on the main screen (${em.reason || "unknown"}).`;
+          } else if (em && em.recovered) {
+            offMainReason = "recovered"; // success note rendered in applyModeUI
+          }
+          // Only re-read status (→ screenshot/registry frame) when we're ACTUALLY
+          // on main — never against an intro/promo frame.
+          if (em && em.onMain) {
+            const fresh = await api("/api/qa/manual/status").catch(() => null);
+            if (fresh && fresh.active) status = fresh;
+          }
+        } catch (_) { /* non-fatal — open the picker anyway */ }
+      }
       const mainPickKeys = getMainExpectedPickKeys(status);
       const pendingElements = getLevel1NeedsQaPick(status);
       let missingOcr = [];
@@ -4739,6 +4810,7 @@
                 <button id="lvl1QaClose" class="gray" style="font-size:11px;padding:4px 8px;">Close</button>
               </div>
             </div>
+            <div id="lvl1QaBanner" style="display:none;padding:8px 12px;border-bottom:1px solid #273142;font-size:12px;"></div>
             <div style="padding:10px 12px;border-bottom:1px solid #273142;color:#cdd9e6;font-size:12px;display:flex;justify-content:space-between;align-items:center;gap:12px;">
               <div style="display:flex;align-items:center;gap:8px;min-width:0;">
                 <button id="lvl1QaPrev" class="gray" style="font-size:11px;padding:3px 8px;">&lt;</button>
@@ -4780,6 +4852,15 @@
         const btnPrev = modal.querySelector("#lvl1QaPrev");
         const btnNext = modal.querySelector("#lvl1QaNext");
         const reviewList = modal.querySelector("#lvl1QaReviewList");
+        const banner = modal.querySelector("#lvl1QaBanner");
+
+        // INTERACT MODE — game not on the main screen. Clicking the screenshot
+        // forwards the click INTO the live game (via /click) so QA can dismiss a
+        // promo/launcher the auto-dismiss couldn't (e.g. a centred ▶ play button),
+        // instead of picking against the wrong frame. Cleared once ensure-main
+        // confirms the main screen.
+        let interactMode = !onMain;
+        let rechecking = false;
 
         const close = () => {
           modal.remove();
@@ -5063,6 +5144,24 @@
 
         img.onclick = async (e) => {
           if (saving) return;
+          const pc = getNaturalCoordFromEvent(e);
+          if (!pc) return;
+          // INTERACT MODE: forward the click into the live game instead of saving
+          // a pick. Lets QA manually clear a blocker the auto-dismiss missed.
+          if (interactMode) {
+            saving = true;
+            hint.textContent = `Clicking the game at (${pc.x}, ${pc.y})…`;
+            try {
+              await api("/api/qa/manual/click", { method: "POST", body: { x: pc.x, y: pc.y } });
+              await new Promise((r) => setTimeout(r, 900));
+              refreshShot();
+            } catch (err) {
+              toast(`Click into game failed: ${err.message}`, true);
+            } finally {
+              saving = false;
+            }
+            return;
+          }
           const step = queue[index];
           if (!step) return;
           const p = getNaturalCoordFromEvent(e);
@@ -5123,8 +5222,65 @@
           }
         };
 
+        // Re-run ensure-main (deterministic + AI dismiss) and flip out of
+        // interact mode once the game is confirmed on the main screen.
+        async function recheckMain() {
+          if (rechecking) return;
+          rechecking = true;
+          banner.style.display = "block";
+          banner.style.color = "#93c5fd"; banner.style.background = "#10203a";
+          banner.textContent = "⏳ Checking the main screen…";
+          try {
+            const em = await api("/api/qa/manual/ensure-main", {
+              method: "POST",
+              body: { autoRecover: true, maxRecoverAttempts: 2, aiDismiss: true },
+            });
+            interactMode = !(em && em.onMain !== false);
+            if (!interactMode) {
+              const fresh = await api("/api/qa/manual/status").catch(() => null);
+              if (fresh && fresh.active) status = fresh;
+            }
+          } catch (_) { /* keep interact mode */ }
+          rechecking = false;
+          refreshShot();
+          applyModeUI();
+        }
+
+        // Render the wizard chrome for the current mode: interact (game off-main)
+        // vs normal pick. Idempotent — called after every mode change.
+        function applyModeUI() {
+          if (interactMode) {
+            img.style.cursor = "pointer";
+            banner.style.display = "block";
+            banner.style.color = "#fbbf24"; banner.style.background = "#2a210e";
+            banner.innerHTML =
+              `⚠️ <strong>Not on the main screen</strong>${offMainReason && offMainReason !== "recovered" ? ` — ${escapeHtml(offMainReason)}` : ""}. ` +
+              `Click directly on the screenshot to interact with the game (▶ play, "DON'T SHOW NEXT TIME"…) until it reaches the main screen, then press Re-check. ` +
+              `<button id="lvl1QaRecheck" class="gray" style="font-size:11px;padding:3px 10px;margin-left:6px;">🔄 Re-check</button> ` +
+              `<button id="lvl1QaForcePick" class="gray" style="font-size:11px;padding:3px 10px;">Skip, pick anyway</button>`;
+            current.innerHTML = `<span style="color:#fbbf24;font-weight:600;">Interact mode</span> — get the game to the main screen before picking`;
+            hint.textContent = "Clicking the screenshot clicks the live game (forwarded to Chrome). Once it's on the main screen, press 'Re-check'.";
+            btnSkip.style.display = "none"; btnDone.style.display = "none";
+            if (btnPrev) btnPrev.disabled = true;
+            if (btnNext) btnNext.disabled = true;
+            modal.querySelector("#lvl1QaRecheck").onclick = recheckMain;
+            modal.querySelector("#lvl1QaForcePick").onclick = () => { interactMode = false; applyModeUI(); };
+            redrawOverlay();
+          } else {
+            img.style.cursor = "crosshair";
+            if (offMainReason === "recovered") {
+              banner.style.display = "block";
+              banner.style.color = "#86efac"; banner.style.background = "#10241a";
+              banner.textContent = "✓ Auto-dismissed the intro/popup and reached the main screen.";
+            } else {
+              banner.style.display = "none";
+            }
+            renderStep();
+          }
+        }
+
         refreshShot();
-        renderStep();
+        applyModeUI();
         renderReviewList();
       });
 
@@ -5140,17 +5296,69 @@
       }
     }
 
+    // Poll /status until a background start() finishes server-side. The /start
+    // endpoint now returns 202 immediately (browser launch + crawl + AI
+    // discovery routinely exceeds the proxy's ~60s timeout); the dashboard
+    // detects completion here instead of holding the POST open. Mirrors
+    // doGenerateCases. Returns the final status, or null on poll timeout.
+    async function pollStartUntilDone(startIso) {
+      const POLL_MS = 3000;
+      const MAX_POLL_MS = 5 * 60 * 1000; // 5 min cap
+      const deadline = Date.now() + MAX_POLL_MS;
+      const startMs = Date.now();
+      let lastLogMs = 0;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, POLL_MS));
+        let status = null;
+        try { status = await api("/api/qa/manual/status"); } catch { /* transient */ }
+        if (!status) continue;
+        const finished = !status.startInProgress
+          && status.startLastFinishedAt
+          && status.startLastFinishedAt > startIso;
+        if (finished) return status;
+        if (Date.now() - lastLogMs > 15000) {
+          const elapsedS = ((Date.now() - startMs) / 1000).toFixed(0);
+          appendLog(`[start] polling… ${elapsedS}s elapsed${status.startInProgress ? " (server still launching)" : ""}`);
+          lastLogMs = Date.now();
+        }
+      }
+      return null;
+    }
+
     $("#btnStart").onclick = async () => {
       const url = $("#url").value.trim();
       if (!url) return toast("URL required", true);
       $("#btnStart").disabled = true;
       sessionInfo.textContent = "Starting (Playwright launching + AI discovery)…";
-      showLoading("Starting session…", "Launching Playwright Chrome, loading the game URL, dismissing pre-game popups. May take 10–30s.");
+      showLoading("Starting session…", "Launching Playwright Chrome, loading the game URL, AI UI discovery. May take 30–90s.");
+      const startIso = new Date().toISOString();
       try {
-        const s = await api("/api/qa/manual/start", {
-          method: "POST",
-          body: { url, autoDiscover: $("#autoDiscover").checked },
-        });
+        let s = null;
+        try {
+          s = await api("/api/qa/manual/start", {
+            method: "POST",
+            body: { url, autoDiscover: $("#autoDiscover").checked },
+          });
+        } catch (err) {
+          // The 202 design means /start returns fast; a 504 here is now rare,
+          // but if it happens the work still runs server-side — poll for it.
+          appendLog(`[start] POST failed (likely proxy timeout): ${err.message}. Polling /status…`);
+        }
+        // Background start in flight (202 with startInProgress, or POST 504'd)
+        // → poll /status until the server finishes.
+        if (!s || s.startInProgress) {
+          s = await pollStartUntilDone(startIso);
+        }
+        if (!s) {
+          toast("Start timed out after 5 min (polling)", true);
+          $("#btnStart").disabled = false;
+          return;
+        }
+        if (s.startError) {
+          toast("Start failed: " + s.startError, true);
+          $("#btnStart").disabled = false;
+          return;
+        }
         renderStatus(s);
         await refreshGames();
         await autoLoadCasesForActive(s);

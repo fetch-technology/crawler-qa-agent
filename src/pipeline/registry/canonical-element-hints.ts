@@ -44,6 +44,14 @@ export const CANONICAL_ELEMENT_DESCRIPTIONS: Record<string, string> = {
     "EXPECTED RESPONSE on click: the displayed bet amount decreases by one " +
     "step within ~500ms (visible in the bet readout in the bottom info bar). " +
     "No spin, no popup. If the bet display does NOT change, the click missed.",
+  betButton:
+    "the BET / TOTAL BET level selector — a SINGLE tappable control (the bet " +
+    "value readout itself, or a small coin/stack/▾ button beside it) used by " +
+    "games that have NO separate '+'/'−' step buttons. " +
+    "EXPECTED RESPONSE on click: a popup/panel opens listing selectable bet " +
+    "amounts (chips like 0.20, 0.50, 1.00 …) for the player to pick. If the " +
+    "game instead nudges the bet by one step, that is betPlus/betMinus, not " +
+    "betButton. Return null when explicit +/- steppers exist.",
   buyBonusButton:
     "the BUY BONUS / BUY FEATURE button — usually a yellow, orange or " +
     "highlighted button somewhere on the side of the spin button, labeled " +

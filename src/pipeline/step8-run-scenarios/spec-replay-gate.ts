@@ -55,6 +55,27 @@ export type ReplayGateResult = {
     trusted: boolean;
     reason?: string;
   };
+  /** INV4 — state-signal discrimination. Certifies that the parser's FS-vs-base
+   *  classification (driven by freeSpinSignal / freeSpinsRemaining) matches what
+   *  the WALLET says on real samples, with no ground-truth labels: a frame the
+   *  parser calls FREE_SPIN must NOT deduct a wager, a paid base frame must, and
+   *  the signal must actually DISCRIMINATE (it can't mark everything or nothing
+   *  free). Only present when there is something to verify. */
+  stateSignal: {
+    /** Rounds the parser classified FREE_SPIN. */
+    freeFrames: number;
+    /** Rounds the parser classified NORMAL with a real bet deduction. */
+    baseFrames: number;
+    /** FS frames that WRONGLY deducted a wager (signal too greedy — e.g.
+     *  marked the deducting BUY frame as free). */
+    freeFramesThatDeducted: number;
+    /** Enough of BOTH classes present to prove discrimination. */
+    discriminationMet: boolean;
+    /** No FS frame deducted AND discrimination met. */
+    trusted: boolean;
+    examples: string[];
+    reason?: string;
+  };
 };
 
 export type ReplayGateOptions = {
@@ -63,6 +84,11 @@ export type ReplayGateOptions = {
   minWinningRounds?: number;
   /** Currency tolerance for invariant comparisons. */
   tolerance?: number;
+  /** INV4 — min FREE_SPIN-classified frames required to certify the state
+   *  signal discriminates. Default 2. */
+  minFreeFrames?: number;
+  /** INV4 — min paid base frames (with a real deduction) required. Default 1. */
+  minBaseFrames?: number;
 };
 
 const num = (v: unknown): number | null =>
@@ -78,6 +104,8 @@ export function replayGate(
 ): ReplayGateResult {
   const minWinningRounds = opts.minWinningRounds ?? 5;
   const tol = opts.tolerance ?? 0.01;
+  const minFreeFrames = opts.minFreeFrames ?? 2;
+  const minBaseFrames = opts.minBaseFrames ?? 1;
 
   // 1. Parse every sample → dedup into rounds (so winBreakdown accumulates
   //    across tumble frames and rounds group by the game's own markers).
@@ -167,11 +195,60 @@ export function replayGate(
     else if (!roundIdUnique.pass) reason = `round grouping unstable: ${duplicates.length} duplicate roundId(s)`;
   }
 
+  // 6. INV4 — state-signal discrimination. The wallet is the answer key: a frame
+  //    the parser called FREE_SPIN must show NO wager deduction, a paid base
+  //    frame must deduct, and BOTH classes must be present (else the signal is
+  //    non-discriminating — matches everything or nothing). Skips frames with
+  //    unknown balanceBefore.
+  let freeFrames = 0;
+  let baseFrames = 0;
+  let freeFramesThatDeducted = 0;
+  const stateExamples: string[] = [];
+  for (const r of rounds) {
+    const bb = num(r.balanceBefore);
+    const ba = num(r.balanceAfter);
+    if (bb == null || ba == null) continue;
+    const drop = bb - ba;
+    if (r.isFreeSpin === true || r.state === "FREE_SPIN") {
+      freeFrames++;
+      if (drop > tol) {
+        freeFramesThatDeducted++;
+        if (stateExamples.length < 5) {
+          stateExamples.push(`round ${r.roundId}: FREE_SPIN but wallet dropped ${drop.toFixed(2)} (signal too greedy)`);
+        }
+      }
+    } else if (drop > tol) {
+      // a NORMAL frame that genuinely deducted a wager
+      baseFrames++;
+    }
+  }
+  const discriminationMet = freeFrames >= minFreeFrames && baseFrames >= minBaseFrames;
+  const stateSignalTrusted = freeFramesThatDeducted === 0 && discriminationMet;
+  let stateReason: string | undefined;
+  if (!stateSignalTrusted) {
+    if (freeFramesThatDeducted > 0) {
+      stateReason = `${freeFramesThatDeducted} FREE_SPIN frame(s) deducted a wager — signal mislabels paid spins`;
+    } else if (freeFrames < minFreeFrames) {
+      stateReason = `insufficient free-spin coverage: ${freeFrames} FREE_SPIN frame(s) < ${minFreeFrames} required`;
+    } else if (baseFrames < minBaseFrames) {
+      stateReason = `non-discriminating: ${baseFrames} paid base frame(s) < ${minBaseFrames} required (signal may match every frame)`;
+    }
+  }
+
   return {
     totalSamples: samples.length,
     parsedSpins,
     totalRounds: rounds.length,
     invariants: { sumsToTotal, balanceConservation, roundIdUnique },
     itemization: { winningRounds, coverageMet, reconciled, trusted, reason },
+    stateSignal: {
+      freeFrames,
+      baseFrames,
+      freeFramesThatDeducted,
+      discriminationMet,
+      trusted: stateSignalTrusted,
+      examples: stateExamples,
+      reason: stateReason,
+    },
   };
 }

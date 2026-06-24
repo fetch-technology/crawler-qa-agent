@@ -3,7 +3,7 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { listRegisteredGames, updateGameUrl, deleteGame, ManualSessionManager } from "./manual-session.js";
-import { getOrCreate, get as peekSession, set as setSession, getDefaultOrThrow, listSessions } from "./session-pool.js";
+import { getOrCreate, get as peekSession, set as setSession, remove as removeSession, getDefaultOrThrow, listSessions } from "./session-pool.js";
 import { getCurrentUser } from "../../server/request-context.js";
 
 /** Resolve the target game slug from header/query WITHOUT consuming the request
@@ -50,7 +50,7 @@ function leaseBlockReason(req: IncomingMessage, urlStr: string, method: string):
   const me = getCurrentUser();
   if (me && owner.userId === me.id) return null; // the owner — allowed
   if (me && me.role === "admin" && pathOnly === "/api/qa/manual/stop") return null; // admin may release
-  return `Phiên game này đang được "${owner.username}" điều khiển (từ ${owner.since}).`;
+  return `This game session is being controlled by "${owner.username}" (since ${owner.since}).`;
 }
 
 /** Resolve which ManualSessionManager the request targets.
@@ -69,6 +69,15 @@ function resolveSession(req: IncomingMessage, body: Record<string, any> | null, 
   }
   if (slug) return getOrCreate(slug);
   return getDefaultOrThrow();
+}
+
+/** Stable short key for the pre-slug transient session registered during a
+ *  background start(). Derived from the game URL so a retry of the same URL
+ *  reuses the same temp slot rather than piling up dead entries. */
+function startTempKey(url: string): string {
+  let hash = 0;
+  for (let i = 0; i < url.length; i++) hash = ((hash << 5) - hash + url.charCodeAt(i)) | 0;
+  return Math.abs(hash).toString(36);
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
@@ -130,6 +139,48 @@ export async function handleManualRoute(
       return sendJson(res, 200, { games }), true;
     }
 
+    // POST /api/qa/manual/learn-provider { gameSlug } — AI-derive + arithmetic-
+    // verify a ProviderSpec from the unknown-provider samples a failed case
+    // captured. On success, pins the game to a LearnedSpecParser so subsequent
+    // case runs parse its spins. AI only PROPOSES; verifyLearnedSpec decides.
+    if (url === "/api/qa/manual/learn-provider" && method === "POST") {
+      const body = await asJsonBody<{ gameSlug?: string }>(req);
+      const slug = body.gameSlug
+        || (typeof req.headers["x-game-slug"] === "string" ? req.headers["x-game-slug"] : null);
+      if (!slug) return sendJson(res, 400, { ok: false, error: "gameSlug required" }), true;
+      try {
+        const pathMod = await import("node:path");
+        const { readFile, writeFile } = await import("node:fs/promises");
+        const { dirForGame } = await import("../registry/paths.js");
+        const dir = dirForGame(slug);
+        let samplesFile: { samples?: Array<{ url: string; reqBody: string; respBody: string }> };
+        try {
+          samplesFile = JSON.parse(await readFile(pathMod.join(dir, "_unknown-provider-samples.json"), "utf8"));
+        } catch {
+          return sendJson(res, 404, { ok: false, error: "no unknown-provider samples for this game — run a spin case first so the tool can capture them" }), true;
+        }
+        const samples = samplesFile.samples ?? [];
+        if (samples.length === 0) return sendJson(res, 400, { ok: false, error: "samples file is empty" }), true;
+
+        const { proposeProviderSpec, verifyLearnedSpec } = await import("../../ai/learn-provider-spec.js");
+        const spec = await proposeProviderSpec(samples);
+        if (!spec) return sendJson(res, 422, { ok: false, error: "AI could not propose a usable provider spec from the samples" }), true;
+
+        const verify = verifyLearnedSpec(spec, samples);
+        if (!verify.ok) {
+          return sendJson(res, 422, { ok: false, error: "proposed spec failed verification", providerName: spec.name, verify, spec }), true;
+        }
+        // Persist the verified spec + pin the game to it.
+        await writeFile(pathMod.join(dir, "learned-provider-spec.json"), JSON.stringify(spec, null, 2), "utf8");
+        const { parserCache } = await import("../registry/parser-cache.js");
+        await parserCache.save(slug, { parser: "LearnedSpecParser", version: 1 });
+        console.log(`[learn-provider] ${slug}: learned provider "${spec.name}" — verified ${verify.spins.length} sample(s), pinned LearnedSpecParser`);
+        return sendJson(res, 200, { ok: true, providerName: spec.name, verify, spec }), true;
+      } catch (err) {
+        return sendJson(res, 500, { ok: false, error: err instanceof Error ? err.message : String(err) }), true;
+      }
+    }
+
     // POST /api/qa/manual/update-url { gameSlug, url } — change token/URL of a registered game without re-discovery
     if (url === "/api/qa/manual/update-url" && method === "POST") {
       const body = await asJsonBody<{ gameSlug?: string; url?: string }>(req);
@@ -154,7 +205,7 @@ export async function handleManualRoute(
         const me = getCurrentUser();
         const existingOwner = sess.getOwner();
         if (existingOwner && me && existingOwner.userId !== me.id) {
-          return sendJson(res, 409, { ok: false, error: `Phiên game này đang được "${existingOwner.username}" điều khiển.`, owner: existingOwner }), true;
+          return sendJson(res, 409, { ok: false, error: `This game session is being controlled by "${existingOwner.username}".`, owner: existingOwner }), true;
         }
         const status = await sess.resume(body.gameSlug);
         if (me) sess.claimOwner({ id: me.id, username: me.username });
@@ -182,12 +233,29 @@ export async function handleManualRoute(
         const me = getCurrentUser();
         const existingOwner = sess.getOwner();
         if (existingOwner && me && existingOwner.userId !== me.id) {
-          return sendJson(res, 409, { ok: false, error: `Phiên game này đang được "${existingOwner.username}" điều khiển.`, owner: existingOwner }), true;
+          return sendJson(res, 409, { ok: false, error: `This game session is being controlled by "${existingOwner.username}".`, owner: existingOwner }), true;
         }
-        const status = await sess.start(body.url, { autoDiscover: body.autoDiscover ?? true });
-        if (status.gameSlug) setSession(status.gameSlug, sess);
-        if (me) sess.claimOwner({ id: me.id, username: me.username });
-        return sendJson(res, 200, sess.status()), true;
+        // Already starting in the background → idempotent, just report status.
+        if (sess.isStarting()) return sendJson(res, 202, sess.status()), true;
+        // Register the (un-slugged) transient in the pool IMMEDIATELY so the
+        // dashboard's un-slugged /status polling finds it before crawl()
+        // resolves the real slug. Re-keyed to the real slug on completion.
+        const tempKey = body.gameSlug ?? `__starting__:${startTempKey(body.url)}`;
+        setSession(tempKey, sess);
+        // Fire-and-forget: browser launch + crawl + AI UI discovery routinely
+        // exceeds the proxy's ~60s timeout, which would surface as a 504 even
+        // though the work succeeds. Return 202 now and let the dashboard poll
+        // /status (startInProgress / startLastFinishedAt / startError).
+        sess.startInBackground(body.url, { autoDiscover: body.autoDiscover ?? true }, {
+          owner: me ? { id: me.id, username: me.username } : null,
+          onResolved: (slug) => {
+            if (slug && slug !== tempKey) {
+              setSession(slug, sess);
+              if (tempKey.startsWith("__starting__:")) removeSession(tempKey);
+            }
+          },
+        });
+        return sendJson(res, 202, sess.status()), true;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         const code = /already active/.test(msg) ? 409 : 500;
@@ -499,7 +567,7 @@ export async function handleManualRoute(
     // Pre-flight before each case in a batch run: OCR + dark-overlay popup
     // detection (B), plus optional spinButton behavioral probe (C).
     if (url === "/api/qa/manual/ensure-main" && method === "POST") {
-      const body = await asJsonBody<{ probe?: boolean; autoRecover?: boolean; maxRecoverAttempts?: number }>(req);
+      const body = await asJsonBody<{ probe?: boolean; autoRecover?: boolean; maxRecoverAttempts?: number; aiDismiss?: boolean }>(req);
       const r = await resolveSession(req, body as any, url).ensureMainScreen(body);
       return sendJson(res, 200, r), true;
     }

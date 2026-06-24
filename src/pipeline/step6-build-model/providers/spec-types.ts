@@ -20,12 +20,19 @@ export type ReelsDecoder =
   | "csv";          // Comma-separated, rows separated by newline or |
 
 /** Field-name mapping from canonical → wire field. Multiple wire candidates
- *  separated by `|` are tried in order (e.g. "bb|balanceBefore"). */
+ *  separated by `|` are tried in order (e.g. "bb|balanceBefore"). Each candidate
+ *  may be a DEEP path with dot segments (e.g. "context.spins.round_win",
+ *  "user.balance") for providers that nest their spin data — resolved by walking
+ *  the parsed object. A plain name with no dot is a top-level lookup (unchanged). */
 export type FieldMap = {
   /** Wallet balance BEFORE bet was deducted. */
   balanceBefore?: string;
   /** Wallet balance AFTER spin completes (win credited). */
   balanceAfter: string;
+  /** Round bet read from the RESPONSE (providers like 3 Oaks put round_bet in
+   *  the response, not the request). When set + present, it takes priority over
+   *  the request-side betFormula. Scaled by response.amountScale. */
+  betAmount?: string;
   /** Total win for this round/cascade. */
   totalWin?: string;
   /** Reel grid (initial drop). */
@@ -69,6 +76,34 @@ export type ShapeScoreConfig = {
  *  "auto" = try wlc_v then cluster fallback (legacy PragmaticParser behavior). */
 export type WinItemization = "auto" | "wlc_v" | "cluster" | "lines" | "none";
 
+/** Declarative free-spin / feature-state detector, evaluated by the parser's
+ *  `deriveState` IN ADDITION to the numeric `freeSpinsRemaining` field. ANY
+ *  matcher firing flags the frame as a free-spin candidate — still subject to
+ *  the balance-not-decreased guard, so a BUY frame (token present but wallet
+ *  drops) correctly stays NORMAL.
+ *
+ *  Motivation: PP clones encode free-spin state differently from the vanilla
+ *  top-level `fs=N` counter — e.g. vs20daydead nests it in
+ *  `trail=mode~free;...;fs~N`. A plain FieldMap path can't address a
+ *  `~`/`;`-delimited sub-token, so this descriptor adds substring / regex
+ *  matchers. Learned by the spec-learner and arithmetic-verified by the
+ *  replay-gate (INV4) before it is trusted. */
+export type FreeSpinSignal = {
+  /** (a) Numeric counter field (deep path allowed) — same semantics as
+   *  `freeSpinsRemaining`, for a game that names its FS counter differently.
+   *  Free when value > 0. */
+  counterField?: string;
+  /** (b) String field whose value is tested by `contains` / `pattern`. */
+  field?: string;
+  /** Plain substring that, when present in `field`'s value, marks free-spin
+   *  (e.g. "mode~free"). */
+  contains?: string;
+  /** Regex (string form) tested against `field`'s value. Free when it matches. */
+  pattern?: string;
+  /** (c) Last-resort regex tested against the RAW response body. */
+  rawBodyPattern?: string;
+};
+
 /** Round ID construction recipe. */
 export type RoundIdConfig = {
   /** Source: "request" reads from parsed request fields; "response" reads from response. */
@@ -100,6 +135,15 @@ export type ProviderSpec = {
     reelsDecoder?: ReelsDecoder;
     /** Default reel dimensions if response doesn't specify. */
     defaultReelDimensions?: { width: number; height: number };
+    /** Multiplier applied to response money fields (balanceBefore/After,
+     *  totalWin, betAmount) to convert MINOR units (cents) → display units.
+     *  e.g. 0.01 for a provider that reports 50 = $0.50. Default 1 (no scaling)
+     *  so existing specs are unaffected. */
+    amountScale?: number;
+    /** When true and the response carries no balanceBefore field, derive it as
+     *  `balanceAfter + bet − win` (the only deterministic reconstruction for
+     *  providers that report just the current balance). Default false → null. */
+    deriveBalanceBefore?: boolean;
     shapeScore: ShapeScoreConfig;
     /** How this provider itemizes per-combo wins, so the parser can populate
      *  `winBreakdown` (Σ-of-combos == total-win, no-phantom-win, per-combo
@@ -123,6 +167,9 @@ export type ProviderSpec = {
       pattern: string;
       targetField: string;
     }>;
+    /** Declarative free-spin/feature state detector for clones that don't use
+     *  the vanilla top-level FS counter. See {@link FreeSpinSignal}. */
+    freeSpinSignal?: FreeSpinSignal;
   };
   /** Request field map. */
   request: {
@@ -186,6 +233,13 @@ export type ParserOverlay = {
   /** When THIS game credits FS wins to the balance (learned from captured FS
    *  chains; trusted only when the replay-gate's coverage saw a real chain). */
   fsCreditTiming?: ParserOverlayAspect<FsCreditTiming>;
+  /** Free-spin/feature state detector for THIS game (overrides/augments the
+   *  base when trusted — certified by the replay-gate's INV4 discrimination
+   *  check on captured samples). */
+  freeSpinSignal?: ParserOverlayAspect<FreeSpinSignal>;
+  /** Post-parse nested extractions for THIS game (e.g. pull `fs~N` out of a
+   *  delimited `trail` field). Applied only when trusted. */
+  nestedExtractions?: ParserOverlayAspect<ProviderSpec["response"]["nestedExtractions"]>;
   /** Audit trail from the replay-gate that certified this overlay. */
   validation?: {
     validatedAt?: string;

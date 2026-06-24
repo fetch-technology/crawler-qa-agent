@@ -17,17 +17,32 @@ function fieldAliases(spec: string | undefined): string[] {
   return spec.split("|").map((s) => s.trim()).filter(Boolean);
 }
 
-/** Return value of first present alias from parsed map, or undefined. */
+/** Resolve a possibly-DEEP field path ("a.b.c") against a parsed object. A path
+ *  with no dot is a plain top-level lookup (preserves legacy behavior). Returns
+ *  undefined when any segment is missing. */
+function getDeep(obj: Record<string, unknown>, pathStr: string): unknown {
+  if (!pathStr.includes(".")) return obj[pathStr];
+  let cur: unknown = obj;
+  for (const seg of pathStr.split(".")) {
+    if (cur == null || typeof cur !== "object") return undefined;
+    cur = (cur as Record<string, unknown>)[seg];
+  }
+  return cur;
+}
+
+/** Return value of first present alias from parsed map, or undefined. Supports
+ *  deep dot-paths within each `|` alternative. */
 function pickField(parsed: Record<string, unknown>, spec: string | undefined): unknown {
   for (const name of fieldAliases(spec)) {
-    if (name in parsed) return parsed[name];
+    const v = getDeep(parsed, name);
+    if (v !== undefined) return v;
   }
   return undefined;
 }
 
-/** True if ANY alias of `spec` is present in parsed. */
+/** True if ANY alias of `spec` resolves to a present (non-undefined) value. */
 function fieldPresent(parsed: Record<string, unknown>, spec: string | undefined): boolean {
-  return fieldAliases(spec).some((n) => n in parsed);
+  return fieldAliases(spec).some((n) => getDeep(parsed, n) !== undefined);
 }
 
 /** Itemize per-combo wins per the spec's `winItemization` mode. Default
@@ -66,6 +81,19 @@ export function mergeSpec(
   const merged: ProviderSpec = { ...base, response: { ...base.response } };
   if (overlay.winItemization?.trusted) {
     merged.response.winItemization = overlay.winItemization.value;
+  }
+  // Free-spin/feature state detector (Layer 3) — applied only when the
+  // replay-gate (INV4) certified it discriminates FS vs base on real samples.
+  if (overlay.freeSpinSignal?.trusted) {
+    merged.response.freeSpinSignal = overlay.freeSpinSignal.value;
+  }
+  // Nested extractions (e.g. pull `fs~N` out of a delimited `trail` field).
+  // Append to the base list so a provider-level extraction isn't lost.
+  if (overlay.nestedExtractions?.trusted && overlay.nestedExtractions.value) {
+    merged.response.nestedExtractions = [
+      ...(base.response.nestedExtractions ?? []),
+      ...overlay.nestedExtractions.value,
+    ];
   }
   return merged;
 }
@@ -151,7 +179,13 @@ export function decodeReelsBySpec(
   height: number,
 ): string[][] {
   if (raw == null) return [];
-  if (decoder === "json_array" && Array.isArray(raw)) return raw as string[][];
+  if (decoder === "json_array" && Array.isArray(raw)) {
+    // Stringify cell values (3 Oaks board is number[][]) so reels are always
+    // string[][]. Idempotent for specs whose arrays are already strings.
+    return (raw as unknown[]).map((col) =>
+      Array.isArray(col) ? (col as unknown[]).map((s) => String(s)) : [String(col)],
+    );
+  }
   if (typeof raw !== "string" || raw.length === 0) return [];
   // Auto-detect comma-separated symbol IDs (e.g. PP newer slots:
   // s:"13,13,13,1,2,3,...") vs single-char symbols (PP classic: "ABCDEFGHIJKLMNO").
@@ -261,10 +295,59 @@ function fallback(strategy: ProviderSpec["roundId"]["fallback"], response: Recor
  *  isn't applied yet at parser time, so balance-decrease can't be observed
  *  via response alone. Aligns with pragmatic.ts ppParseResponse adapter
  *  logic. */
-function deriveState(parsed: Record<string, unknown>, fieldMap: ProviderSpec["response"]["fields"]): SpinState {
+/** Evaluate a declarative {@link FreeSpinSignal} against a parsed response (and
+ *  optionally the raw body, for `rawBodyPattern`). Returns true when ANY of the
+ *  configured matchers fires. Pure; no balance reasoning (the caller still
+ *  applies the balance guard so a BUY frame stays NORMAL). */
+export function matchFreeSpinSignal(
+  parsed: Record<string, unknown>,
+  signal: import("./spec-types.js").FreeSpinSignal | undefined,
+  rawBody?: string,
+): boolean {
+  if (!signal) return false;
+  // (a) numeric counter field > 0
+  if (signal.counterField) {
+    const n = Number(pickField(parsed, signal.counterField));
+    if (Number.isFinite(n) && n > 0) return true;
+  }
+  // (b) substring / regex against a named string field
+  if (signal.field) {
+    const raw = pickField(parsed, signal.field);
+    const val = typeof raw === "string" ? raw : raw != null ? String(raw) : "";
+    if (val) {
+      if (signal.contains && val.includes(signal.contains)) return true;
+      if (signal.pattern) {
+        try {
+          if (new RegExp(signal.pattern).test(val)) return true;
+        } catch {
+          /* invalid regex → ignore matcher */
+        }
+      }
+    }
+  }
+  // (c) last-resort regex against the raw response body
+  if (signal.rawBodyPattern && typeof rawBody === "string" && rawBody.length > 0) {
+    try {
+      if (new RegExp(signal.rawBodyPattern).test(rawBody)) return true;
+    } catch {
+      /* invalid regex → ignore matcher */
+    }
+  }
+  return false;
+}
+
+function deriveState(
+  parsed: Record<string, unknown>,
+  fieldMap: ProviderSpec["response"]["fields"],
+  signal?: import("./spec-types.js").FreeSpinSignal,
+  rawBody?: string,
+): SpinState {
   const fsRaw = pickField(parsed, fieldMap.freeSpinsRemaining);
   const fs = Number(fsRaw);
-  if (!Number.isFinite(fs) || fs <= 0) return "NORMAL";
+  const numericFree = Number.isFinite(fs) && fs > 0;
+  const signalFree = matchFreeSpinSignal(parsed, signal, rawBody);
+  // No FS evidence from either the numeric counter OR the declarative signal.
+  if (!numericFree && !signalFree) return "NORMAL";
   const bbRaw = pickField(parsed, fieldMap.balanceBefore);
   const baRaw = pickField(parsed, fieldMap.balanceAfter);
   const bb = bbRaw != null ? Number(bbRaw) : NaN;
@@ -272,7 +355,9 @@ function deriveState(parsed: Record<string, unknown>, fieldMap: ProviderSpec["re
   const balanceDecreased = Number.isFinite(bb) && Number.isFinite(ba) && bb - ba > 0.01;
   const balanceUnknown = !Number.isFinite(bb) || !Number.isFinite(ba);
   // Conservative: when balance demonstrably DROPPED OR is unknown → NORMAL.
-  // Only flag FREE_SPIN when balance is KNOWN to be stable/up.
+  // Only flag FREE_SPIN when balance is KNOWN to be stable/up. This is what
+  // keeps a BUY frame (signal/counter present, but the wallet drops by the buy
+  // cost) classified NORMAL.
   if (balanceDecreased || balanceUnknown) return "NORMAL";
   return "FREE_SPIN";
 }
@@ -327,7 +412,7 @@ export class SpecDrivenParser implements BaseParser {
     const parsed = parseBodyBySpec(raw, this.spec.wireFormat);
     if (!parsed) throw new Error(`SpecDrivenParser(${this.spec.name}): cannot parse response body`);
     applyNestedExtractions(parsed, this.spec.response.nestedExtractions);
-    return this.normalize(null, parsed);
+    return this.normalize(null, parsed, raw);
   }
 
   parseSpinPair(request: string | null, response: string, _url?: string): NormalizedSpinResult {
@@ -335,12 +420,13 @@ export class SpecDrivenParser implements BaseParser {
     if (!parsedRes) throw new Error(`SpecDrivenParser(${this.spec.name}): cannot parse response body`);
     applyNestedExtractions(parsedRes, this.spec.response.nestedExtractions);
     const parsedReq = request ? parseBodyBySpec(request, this.spec.wireFormat) : null;
-    return this.normalize(parsedReq, parsedRes);
+    return this.normalize(parsedReq, parsedRes, response);
   }
 
   private normalize(
     parsedReq: Record<string, unknown> | null,
     parsedRes: Record<string, unknown>,
+    rawBody?: string,
   ): NormalizedSpinResult {
     const fields = this.spec.response.fields;
     const num = (v: unknown, fallback = 0): number => {
@@ -365,20 +451,41 @@ export class SpecDrivenParser implements BaseParser {
         if (frame.length > 0) cascadeFrames.push(frame);
       }
     }
+    const signal = this.spec.response.freeSpinSignal;
     const fsRaw = pickField(parsedRes, fields.freeSpinsRemaining);
-    const freeSpinsRemaining = fields.freeSpinsRemaining && fsRaw !== undefined
-      ? (Number.isFinite(num(fsRaw, NaN)) ? num(fsRaw) : null)
+    // Primary: the mapped counter. Fallback: the signal's counterField, so the
+    // downstream `freeSpinsRemaining > 0` branches (bet-reconcile, case-executor
+    // FS re-eval) light up for a clone whose FS counter lives off the standard
+    // field (e.g. extracted from `trail`).
+    const signalFsRaw = signal?.counterField ? pickField(parsedRes, signal.counterField) : undefined;
+    const effFsRaw = fsRaw !== undefined ? fsRaw : signalFsRaw;
+    const freeSpinsRemaining = effFsRaw !== undefined && Number.isFinite(num(effFsRaw, NaN))
+      ? num(effFsRaw)
       : null;
-    const state = deriveState(parsedRes, fields);
+    const state = deriveState(parsedRes, fields, signal, rawBody);
     const isFreeSpin = state === "FREE_SPIN";
-    const bbRaw = pickField(parsedRes, fields.balanceBefore);
-    const balanceBefore = fields.balanceBefore && bbRaw !== undefined ? num(bbRaw, 0) : null;
+    // Money scale: providers reporting MINOR units (cents) set amountScale=0.01
+    // so balance/win/bet come out in display units. Default 1 (no-op).
+    const scale = this.spec.response.amountScale && this.spec.response.amountScale > 0
+      ? this.spec.response.amountScale : 1;
+    const balanceAfter = num(pickField(parsedRes, fields.balanceAfter)) * scale;
+    const win = num(pickField(parsedRes, fields.totalWin)) * scale;
     // 2026-05-26 alignment with PragmaticParser: FS frames carry the same `c`
     // in request but server doesn't deduct → set bet=0 for FS spins so
     // balance arithmetic + dedup deriveWin work correctly. See
     // pragmatic-parser.ts toNormalized for full rationale.
+    // Bet source: RESPONSE betAmount (scaled) when the spec maps it (3 Oaks-style
+    // providers put round_bet in the response); else the request betFormula.
+    const betAmountRaw = pickField(parsedRes, fields.betAmount);
+    const responseBet = fields.betAmount && betAmountRaw !== undefined ? num(betAmountRaw) * scale : null;
     const requestBet = computeBetBySpec(parsedReq, this.spec.request, this.betMultiplier);
-    const bet = isFreeSpin ? 0 : requestBet;
+    const bet = isFreeSpin ? 0 : (responseBet ?? requestBet);
+    const bbRaw = pickField(parsedRes, fields.balanceBefore);
+    const balanceBefore = fields.balanceBefore && bbRaw !== undefined
+      ? num(bbRaw, 0) * scale
+      : (this.spec.response.deriveBalanceBefore
+          ? Math.round((balanceAfter + bet - win) * 100) / 100
+          : null);
     // Payout-integrity inputs. Without these the spec-driven path left
     // winBreakdown empty + serverTotalWin undefined, which silently disabled
     // every payout-integrity assertion (Σcombos==tw, no-phantom-win) — the
@@ -386,13 +493,13 @@ export class SpecDrivenParser implements BaseParser {
     // values come straight from the already-parsed response; cascade-dedup
     // accumulates winBreakdown across tumble frames downstream.
     const twVal = pickField(parsedRes, fields.totalWin);
-    const twNum = twVal != null ? Number(twVal) : NaN;
+    const twNum = twVal != null ? Number(twVal) * scale : NaN;
     return {
       roundId: buildRoundIdBySpec(parsedReq, parsedRes, this.spec.roundId),
       bet,
-      win: num(pickField(parsedRes, fields.totalWin)),
+      win,
       balanceBefore,
-      balanceAfter: num(pickField(parsedRes, fields.balanceAfter)),
+      balanceAfter,
       reels,
       cascadeFrames,
       state,
