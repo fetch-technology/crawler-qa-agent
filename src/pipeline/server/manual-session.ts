@@ -2356,6 +2356,14 @@ export class ManualSessionManager {
     if (!this.session || !this.registry || !this.gameSlug) {
       return { ok: false, reason: "no active session" };
     }
+    // Hard precondition: refuse to onboard when the platform loaded a DIFFERENT
+    // game than this session's slug (detected from the asset URL game-code) —
+    // otherwise we write the wrong game's UI/paytable/cases under this label and
+    // silently corrupt its registry.
+    if (this.gameError?.site === "game-mismatch") {
+      console.warn(`[manual/auto-onboard] ${this.gameSlug}: ABORT — ${this.gameError.detectedText}`);
+      return { ok: false, reason: this.gameError.detectedText };
+    }
     // Hard precondition: Auto-Onboard depends on reliable OCR evidence for
     // bet/balance; require QA to define these regions before any run.
     const ocrState = await this.loadOcrRegions();
@@ -5904,6 +5912,27 @@ CHECK_CODE RULES
     this.session.page.on("response", async (res) => {
       try {
         const url = res.url();
+        // AUTHORITATIVE GAME IDENTITY: Pragmatic serves the game client + assets
+        // from `…/games/<provider>/<gameCode>/…` (e.g. /games/vs/vs20fruitsw/).
+        // The slug we onboard under is derived from the LAUNCH URL PATH — but a
+        // demo token can open a LOBBY that resumes a DIFFERENT game, so the path
+        // ("vs243fortune") and the actually-loaded game ("vs20fruitsw") diverge.
+        // Onboarding then writes the wrong game's data under the wrong label.
+        // Detect the mismatch from the asset URL and flag it loudly (reuses the
+        // gameError banner so the dashboard blocks wasted automation).
+        const codeMatch = url.match(/\/games\/[a-z0-9_]+\/(vs[a-z0-9]+)\//i);
+        if (codeMatch && this.gameSlug && /^vs[a-z0-9]+$/i.test(this.gameSlug)) {
+          const loaded = codeMatch[1]!.toLowerCase();
+          if (loaded !== this.gameSlug.toLowerCase() && (this.gameError?.site !== "game-mismatch")) {
+            console.warn(`[game-identity] ⚠ launch slug='${this.gameSlug}' but platform loaded game assets for '${loaded}' — wrong game / lobby resume`);
+            this.gameError = {
+              site: "game-mismatch",
+              matchedKeywords: [loaded],
+              detectedText: `This session is labeled "${this.gameSlug}" but the platform actually loaded a DIFFERENT game: "${loaded}". The launch URL/token resolves to "${loaded}" (or opened a lobby that resumed it). Re-launch with the correct URL for "${this.gameSlug}", or start a fresh session for "${loaded}".`,
+              detectedAt: new Date().toISOString(),
+            };
+          }
+        }
         // PP game service + reload-balance endpoints both carry balance fields.
         if (!/gameService|reloadBalance|gs2c/i.test(url)) return;
         const body = await res.text().catch(() => "");
