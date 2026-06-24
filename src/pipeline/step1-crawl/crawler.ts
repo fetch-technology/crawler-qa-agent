@@ -61,5 +61,15 @@ export function deriveSlug(url: string): string {
   const oaks = url.match(/\/(?:games|gs)\/([a-z0-9_]+)\/(?:play|desktop)/i);
   if (oaks && oaks[1]) return oaks[1].toLowerCase();
   const u = new URL(url);
-  return u.pathname.split("/").filter(Boolean)[0] ?? "unknown";
+  const firstSegment = u.pathname.split("/").filter(Boolean)[0] ?? "unknown";
+  // Sanitize the fallback: a loader page like "/gpasclient.html" must NOT yield
+  // a slug containing a file extension / dots. An unsanitized ".html" slug
+  // later becomes UNDELETABLE (deleteGame's path-traversal guard rejects it).
+  // Strip the extension, then map any non-slug-safe char to "-".
+  const slug = firstSegment
+    .replace(/\.[a-z0-9]+$/i, "")        // drop file extension (.html, .php, …)
+    .replace(/[^a-z0-9_-]+/gi, "-")      // any leftover unsafe char → "-"
+    .replace(/^-+|-+$/g, "")             // trim leading/trailing dashes
+    .toLowerCase();
+  return slug || "unknown";
 }

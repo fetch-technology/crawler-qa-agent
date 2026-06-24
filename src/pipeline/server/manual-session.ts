@@ -6291,8 +6291,17 @@ export async function updateGameUrl(gameSlug: string, newUrl: string): Promise<{
  * active session first if it targets this slug. Irreversible.
  */
 export async function deleteGame(gameSlug: string): Promise<{ ok: boolean; removed: string[]; reason?: string }> {
-  // Path-traversal guard — slug must be a plain folder name.
-  if (!/^[a-zA-Z0-9_-]+$/.test(gameSlug)) {
+  // Path-traversal guard — slug must be a plain folder name. Dots ARE allowed
+  // here (a legacy bad slug like "gpasclient.html" could get registered before
+  // deriveSlug was hardened, and the user must still be able to delete it), but
+  // path traversal and separators are hard-blocked, and an all-dots / empty
+  // slug is rejected so we never target the games root or a parent dir.
+  const slugIsSafe =
+    /^[a-zA-Z0-9_.-]+$/.test(gameSlug)
+    && !gameSlug.includes("..")
+    && !/^[.]+$/.test(gameSlug)
+    && /[a-zA-Z0-9]/.test(gameSlug);
+  if (!slugIsSafe) {
     return { ok: false, removed: [], reason: `invalid slug "${gameSlug}"` };
   }
   // If the active session is on this game, stop it first so the browser +

@@ -53,9 +53,23 @@ function leaseBlockReason(req: IncomingMessage, urlStr: string, method: string):
   return `This game session is being controlled by "${owner.username}" (since ${owner.since}).`;
 }
 
-/** Resolve which ManualSessionManager the request targets.
+/** A throwaway inactive manager returned when a slug-scoped request targets a
+ *  game that isn't actually live in the pool. NOT registered, so reads/controls
+ *  on it report "no active session" instead of (a) creating a phantom pool entry
+ *  or (b) being served the wrong game via an LRU fallback. */
+function transientInactive(): ManualSessionManager {
+  return new ManualSessionManager();
+}
+
+/** Resolve which ManualSessionManager a request targets.
  *  Priority: explicit `gameSlug` (body / x-game-slug header / ?gameSlug=…)
- *  → fall back to LRU default (one-session pool) → fail when ambiguous. */
+ *  → fall back to LRU default ONLY when no slug at all (overview pages).
+ *
+ *  Slug-scoped requests PEEK the pool (never create) so a mere status/screenshot
+ *  poll for a not-yet-started game can't spawn a phantom manager or thrash LRU.
+ *  Scope-integrity guard: if a manager IS registered under `slug` but is live
+ *  under a DIFFERENT gameSlug (mis-key / slug collision), we refuse to serve it
+ *  — returning an inactive placeholder rather than showing the wrong game. */
 function resolveSession(req: IncomingMessage, body: Record<string, any> | null, urlStr: string): ManualSessionManager {
   let slug: string | null = null;
   if (body && typeof body.gameSlug === "string" && body.gameSlug) slug = body.gameSlug;
@@ -67,7 +81,17 @@ function resolveSession(req: IncomingMessage, body: Record<string, any> | null, 
       if (q) slug = q;
     } catch { /* ignore */ }
   }
-  if (slug) return getOrCreate(slug);
+  if (slug) {
+    const existing = peekSession(slug);
+    if (!existing) return transientInactive();
+    let st: ReturnType<ManualSessionManager["status"]>;
+    try { st = existing.status(); } catch { return existing; }
+    if (st.active && st.gameSlug && st.gameSlug !== slug) {
+      console.warn(`[pool] manager keyed '${slug}' is live under '${st.gameSlug}' — refusing to serve the wrong game (returning inactive)`);
+      return transientInactive();
+    }
+    return existing;
+  }
   return getDefaultOrThrow();
 }
 
@@ -271,7 +295,16 @@ export async function handleManualRoute(
 
     // GET /api/qa/manual/status[?gameSlug=…]
     if ((url === "/api/qa/manual/status" || url.startsWith("/api/qa/manual/status?")) && method === "GET") {
-      return sendJson(res, 200, resolveSession(req, null, url).status()), true;
+      const reqSlug = slugFromRequestNoBody(req, url);
+      const sess = resolveSession(req, null, url);
+      const st = sess.status();
+      // Cross-session diagnostic: when a slug was requested but the served
+      // session reports a DIFFERENT active gameSlug, the client is being shown
+      // the wrong game. Log loudly so it's visible in `pm2 logs qa`.
+      if (reqSlug && st.active && st.gameSlug && st.gameSlug !== reqSlug) {
+        console.warn(`[status] ⚠ SCOPE MISMATCH: requested='${reqSlug}' but served active session for '${st.gameSlug}' (pool may have re-keyed / LRU fallback)`);
+      }
+      return sendJson(res, 200, st), true;
     }
 
     // POST /api/qa/manual/click { uiKey } | { x, y }

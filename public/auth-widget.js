@@ -34,7 +34,7 @@
 
   async function refreshUserList(listEl) {
     const { ok, body } = await getJson("/api/qa/auth/users");
-    if (!ok) { listEl.innerHTML = `<div style="color:#e8807f">${esc(body.error || "lỗi tải users")}</div>`; return; }
+    if (!ok) { listEl.innerHTML = `<div style="color:#e8807f">${esc(body.error || "Failed to load users")}</div>`; return; }
     const me = window.__qaAuthUser;
     listEl.innerHTML = (body.users || []).map((u) => `
       <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #232a35;font-size:13px;">
@@ -44,23 +44,23 @@
           <span style="color:${u.role === "admin" ? "#d9b35c" : "#6d7785"};font-size:11px;">[${esc(u.role)}]</span>
           ${u.disabled ? '<span style="color:#e8807f;font-size:11px;">(disabled)</span>' : ""}
         </span>
-        <button data-act="pw" data-id="${esc(u.id)}" data-name="${esc(u.username)}" style="font-size:11px;">Đổi mật khẩu</button>
-        ${me && me.id === u.id ? "" : `<button data-act="dis" data-id="${esc(u.id)}" data-dis="${u.disabled ? "0" : "1"}" style="font-size:11px;">${u.disabled ? "Bật lại" : "Vô hiệu"}</button>`}
-      </div>`).join("") || '<div style="color:#8b939c">chưa có user</div>';
+        <button data-act="pw" data-id="${esc(u.id)}" data-name="${esc(u.username)}" style="font-size:11px;">Change password</button>
+        ${me && me.id === u.id ? "" : `<button data-act="dis" data-id="${esc(u.id)}" data-dis="${u.disabled ? "0" : "1"}" style="font-size:11px;">${u.disabled ? "Enable" : "Disable"}</button>`}
+      </div>`).join("") || '<div style="color:#8b939c">No users yet</div>';
 
     listEl.querySelectorAll("button[data-act]").forEach((b) => {
       b.addEventListener("click", async () => {
         const act = b.getAttribute("data-act");
         const id = b.getAttribute("data-id");
         if (act === "pw") {
-          const pw = prompt(`Mật khẩu mới cho "${b.getAttribute("data-name")}" (≥6 ký tự):`);
+          const pw = prompt(`New password for "${b.getAttribute("data-name")}" (≥6 characters):`);
           if (!pw) return;
           const r = await getJson("/api/qa/auth/users/password", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId: id, password: pw }) });
-          if (!r.ok) alert(r.body.error || "lỗi"); else refreshUserList(listEl);
+          if (!r.ok) alert(r.body.error || "Error"); else refreshUserList(listEl);
         } else if (act === "dis") {
           const disabled = b.getAttribute("data-dis") === "1";
           const r = await getJson("/api/qa/auth/users/disable", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId: id, disabled }) });
-          if (!r.ok) alert(r.body.error || "lỗi"); else refreshUserList(listEl);
+          if (!r.ok) alert(r.body.error || "Error"); else refreshUserList(listEl);
         }
       });
     });
@@ -74,12 +74,12 @@
     wrap.innerHTML = `
       <div style="width:520px;max-width:92vw;background:#11151c;border:1px solid #232a35;border-radius:10px;padding:20px;color:#e6eaf0;font-family:-apple-system,sans-serif;">
         <div style="display:flex;align-items:center;margin-bottom:12px;">
-          <h3 style="margin:0;font-size:15px;flex:1;">Quản lý QA users</h3>
-          <button id="qaAuthClose" style="font-size:12px;">Đóng</button>
+          <h3 style="margin:0;font-size:15px;flex:1;">QA User Management</h3>
+          <button id="qaAuthClose" style="font-size:12px;">Close</button>
         </div>
         <div id="qaAuthList" style="max-height:46vh;overflow:auto;margin-bottom:14px;"></div>
         <div style="border-top:1px solid #2a3140;padding-top:12px;">
-          <div style="color:#8b939c;font-size:11px;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:8px;">Thêm user mới</div>
+          <div style="color:#8b939c;font-size:11px;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:8px;">Add new user</div>
           <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">
             <input id="qaNewUser" placeholder="username" style="flex:1;min-width:110px;padding:6px 8px;background:#0b0e13;color:#e6eaf0;border:1px solid #2a3140;border-radius:5px;" />
             <input id="qaNewPass" placeholder="password" type="text" style="flex:1;min-width:110px;padding:6px 8px;background:#0b0e13;color:#e6eaf0;border:1px solid #2a3140;border-radius:5px;" />
@@ -87,7 +87,7 @@
               <option value="qa">qa</option>
               <option value="admin">admin</option>
             </select>
-            <button id="qaNewBtn" style="font-size:13px;padding:6px 12px;">Tạo</button>
+            <button id="qaNewBtn" style="font-size:13px;padding:6px 12px;">Create</button>
           </div>
           <div id="qaNewErr" style="color:#e8807f;font-size:12px;margin-top:6px;min-height:14px;"></div>
         </div>
@@ -104,7 +104,7 @@
       const errEl = document.getElementById("qaNewErr");
       errEl.textContent = "";
       const r = await getJson("/api/qa/auth/users", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ username, password, role }) });
-      if (!r.ok) { errEl.textContent = r.body.error || "lỗi"; return; }
+      if (!r.ok) { errEl.textContent = r.body.error || "Error"; return; }
       document.getElementById("qaNewUser").value = "";
       document.getElementById("qaNewPass").value = "";
       refreshUserList(listEl);

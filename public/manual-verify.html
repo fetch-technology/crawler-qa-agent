@@ -1081,6 +1081,22 @@
     }
 
     function renderStatus(status) {
+      // CROSS-SESSION GUARD: this detail page is scoped to ONE slug
+      // (SCOPED_GAME_SLUG). If the server returned a status for a DIFFERENT
+      // active game, do NOT silently render the wrong game's screenshot/registry
+      // — flag it loudly and bail. Reveals the slug the server actually served
+      // (session-resolution bug / stale LRU / slug collision).
+      if (SCOPED_GAME_SLUG && status && status.active && status.gameSlug && status.gameSlug !== SCOPED_GAME_SLUG) {
+        console.error(`[scope-mismatch] requested gameSlug='${SCOPED_GAME_SLUG}' but server returned active session for '${status.gameSlug}'`);
+        const b = document.getElementById("scopedSlugBadge");
+        if (b) {
+          b.style.display = "inline-block";
+          b.style.background = "#7f1d1d"; b.style.color = "#fecaca";
+          b.textContent = `⚠ wrong session: server served '${status.gameSlug}' (expected '${SCOPED_GAME_SLUG}')`;
+        }
+        try { toast(`Server returned a different game ('${status.gameSlug}') than this page ('${SCOPED_GAME_SLUG}'). Not rendering to avoid confusion — check /api/qa/manual/sessions.`, true); } catch (_) {}
+        return; // do not render the wrong game
+      }
       const prevOnboarding = !!currentStatus?.autoOnboardInProgress;
       const prevRunAll = !!currentStatus?.runAllInProgress;
       currentStatus = status;
