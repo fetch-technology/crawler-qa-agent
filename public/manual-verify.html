@@ -5327,26 +5327,43 @@
     // doGenerateCases. Returns the final status, or null on poll timeout.
     async function pollStartUntilDone(startIso) {
       const POLL_MS = 3000;
-      const MAX_POLL_MS = 5 * 60 * 1000; // 5 min cap
+      // The active-session cap can hold a start in a queue indefinitely (slots
+      // free only when someone stops / a session is idle-reaped), so allow a
+      // long wait. 60 min is just a runaway guard against a forgotten tab.
+      const MAX_POLL_MS = 60 * 60 * 1000;
       const deadline = Date.now() + MAX_POLL_MS;
       const startMs = Date.now();
       let lastLogMs = 0;
       while (Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, POLL_MS));
-        const elapsedS = Math.round((Date.now() - startMs) / 1000);
-        // Keep the overlay alive with live elapsed time so QA can see the
-        // session is still being prepared (browser + game load + AI UI
-        // discovery) and hasn't hung — shown before the element picker opens.
-        showLoading(`Starting session… (${elapsedS}s)`, "Launching Chrome, loading the game, running AI UI discovery. This can take 30–90s — please wait.");
         let status = null;
         try { status = await api("/api/qa/manual/status"); } catch { /* transient */ }
         if (!status) continue;
-        const finished = !status.startInProgress
+        const elapsedS = Math.round((Date.now() - startMs) / 1000);
+        if (status.queuedPosition != null) {
+          // Capped out → waiting for a slot. Show position + who holds slots so
+          // QA knows why (and whom to ask to free one — the wait is unbounded).
+          let holders = "";
+          try {
+            const ss = await api("/api/qa/manual/sessions");
+            holders = (ss.sessions || []).filter((s) => s.status && s.status.active).map((s) => s.gameSlug).join(", ");
+          } catch { /* transient */ }
+          showLoading(`Queued #${status.queuedPosition} of ${status.queuedTotal}…`,
+            `Max concurrent games reached — waiting for a slot to free.${holders ? " Running now: " + holders + "." : ""} (${elapsedS}s)`);
+        } else {
+          // Admitted → the long browser+discovery prep. Live elapsed so QA can
+          // see it's still working and hasn't hung.
+          showLoading(`Starting session… (${elapsedS}s)`, "Launching Chrome, loading the game, running AI UI discovery. This can take 30–90s — please wait.");
+        }
+        // Done only when NOT queued, NOT mid-start, and the finish timestamp
+        // advanced past our request time.
+        const finished = status.queuedPosition == null
+          && !status.startInProgress
           && status.startLastFinishedAt
           && status.startLastFinishedAt > startIso;
         if (finished) return status;
         if (Date.now() - lastLogMs > 15000) {
-          appendLog(`[start] polling… ${elapsedS}s elapsed${status.startInProgress ? " (server still launching)" : ""}`);
+          appendLog(`[start] ${status.queuedPosition != null ? `queued #${status.queuedPosition}/${status.queuedTotal}` : "preparing"}… ${elapsedS}s elapsed`);
           lastLogMs = Date.now();
         }
       }
@@ -5372,9 +5389,9 @@
           // but if it happens the work still runs server-side — poll for it.
           appendLog(`[start] POST failed (likely proxy timeout): ${err.message}. Polling /status…`);
         }
-        // Background start in flight (202 with startInProgress, or POST 504'd)
-        // → poll /status until the server finishes.
-        if (!s || s.startInProgress) {
+        // In flight: 202 with startInProgress, queued (capped out), or POST 504'd
+        // → poll /status until the server finishes (or a slot frees + finishes).
+        if (!s || s.startInProgress || s.queuedPosition != null) {
           s = await pollStartUntilDone(startIso);
         }
         if (!s) {

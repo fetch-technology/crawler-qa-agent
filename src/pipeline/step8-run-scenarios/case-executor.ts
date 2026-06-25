@@ -406,6 +406,13 @@ export type CaseExecutorContext = {
    *  target the most-recently-opened tab here. Cleared (tabs closed) at
    *  end of case. Defaults to undefined — clicks fall back to ctx.page. */
   externalTabs?: Array<Page>;
+  /** Session-level WebSocket frame subscription. WS-protocol providers (Playtech
+   *  GPAS socket.io etc.) open their game socket at PAGE LOAD — before this case
+   *  attaches any listener — so a case-local page.on("websocket") misses every
+   *  spin frame. The session attaches at start and fans frames here; payloads
+   *  arrive already envelope-stripped to inner JSON. When provided, the case
+   *  uses THIS instead of its own page.on("websocket"). */
+  subscribeWsFrames?: (cb: (f: { url: string; sent: boolean; payload: string }) => void) => (() => void);
 };
 
 export type CaseInput = {
@@ -510,14 +517,19 @@ export async function executeCase(
   // it to new tabs the moment they're captured. `onResponse` is defined ~150
   // lines below; this declaration just promises TypeScript it exists.
   let onResponseRef: ((res: import("playwright").Response) => void) | null = null;
+  let onWebSocketRef: ((ws: import("playwright").WebSocket) => void) | null = null;
+  // Unsubscribe handle for the session-level WS frame subscription (set when
+  // ctx.subscribeWsFrames is wired). Called at case end to stop the fan-out.
+  let unsubscribeWs: (() => void) | null = null;
   const onExternalPage = (p: import("playwright").Page): void => {
     externalTabs.push(p);
     console.log(`[case-action] external tab opened — case has ${externalTabs.length} active`);
-    // Mirror the spin-response listener onto the new tab so any
-    // spin/history/feature responses fired from the tab's context get
-    // captured too (rare for history pages but defensive — and necessary
-    // if a tab fires e.g. doSpin via shared cookies).
+    // Mirror the spin-response + websocket listeners onto the new tab so any
+    // spin/history/feature traffic fired from the tab's context gets captured
+    // too (necessary if a tab fires doSpin / a WS game protocol via shared
+    // cookies).
     if (onResponseRef) p.on("response", onResponseRef);
+    if (onWebSocketRef) p.on("websocket", onWebSocketRef);
   };
   ctx.page.context().on("page", onExternalPage);
   // Expose to executeAction via ctx (mutable shared state). All click
@@ -528,6 +540,7 @@ export async function executeCase(
     ctx.page.context().off("page", onExternalPage);
     for (const p of externalTabs.splice(0)) {
       if (onResponseRef) { try { p.off("response", onResponseRef); } catch { /* tab dead */ } }
+      if (onWebSocketRef) { try { p.off("websocket", onWebSocketRef); } catch { /* tab dead */ } }
       try { await p.close(); } catch { /* already closed */ }
     }
   };
@@ -719,6 +732,33 @@ export async function executeCase(
   // truncated so we never bloat the case result.
   const sampleRejected: Array<{ url: string; reqBody: string; respBody: string }> = [];
   const SAMPLE_BODY_CAP = 6 * 1024;
+  // Upsert key → index in sampleRejected. WS providers (Playtech) emit the same
+  // logical response across several frames sharing a correlationId, plus tiny
+  // transport frames ("2::" heartbeats). Keying by correlationId (else a shape
+  // signature) and keeping the LONGEST body per key ensures the saved sample is
+  // the MOST-MERGED one (gameData + balance), not a dup or heartbeat — so the
+  // provider learner actually sees a complete spin.
+  const sampleKeyToIdx = new Map<string, number>();
+  const captureRejectedSample = (url: string, reqBody: string | null, body: string): void => {
+    const t = body.trimStart();
+    // Skip transport/heartbeat/non-JSON frames — they're never spin payloads.
+    if (body.length < 40 || !(t.startsWith("{") || t.startsWith("["))) return;
+    let key: string;
+    const m = body.match(/"(?:correlationId|correlation_id|requestId|reqId)"\s*:\s*"?([^",}]+)"?/);
+    key = m ? `corr:${m[1]}` : `${url}#${t.slice(0, 80)}`;
+    const cap = (s: string | null) => (s ?? "").slice(0, SAMPLE_BODY_CAP);
+    const idx = sampleKeyToIdx.get(key);
+    if (idx !== undefined) {
+      // Keep the richer (longer = more frames merged in) body for this key.
+      if (body.length > sampleRejected[idx]!.respBody.length) {
+        sampleRejected[idx] = { url, reqBody: cap(reqBody), respBody: cap(body) };
+      }
+      return;
+    }
+    if (sampleRejected.length >= 3) return;
+    sampleKeyToIdx.set(key, sampleRejected.length);
+    sampleRejected.push({ url, reqBody: cap(reqBody), respBody: cap(body) });
+  };
   // Evidence: persist every interesting (non-asset) request+response pair for
   // post-hoc debugging without re-running. Caps total size to MAX_NETWORK_BYTES
   // — older entries are kept but bodies truncated to MAX_BODY_BYTES once cap
@@ -735,42 +775,20 @@ export async function executeCase(
   // stream without needing a re-run with extra flags.
   const quietDiag = process.env.QA_QUIET_NETWORK === "1";
   console.log(`[case-exec] listener attached for case "${input.id}" — parser kind=${(ctx.parser as { kind?: string }).kind ?? "?"}, positiveUrlHint=${positiveUrlHint ?? "(none)"}`);
-  const onResponse = (res: import("playwright").Response) => {
-    if (stopCollecting) return;
-    const url = res.url();
-    urlsSeen++;
-    if (positiveUrlHint) {
-      if (!url.includes(positiveUrlHint)) return;
-    } else if (NON_API_EXT.test(url)) {
-      return;
-    }
-    urlsAfterPreFilter++;
-    lastRelevantResponseAt = Date.now();
-    const reqBody = res.request().postData() ?? null;
-    if (!quietDiag) {
-      const reqInfo = reqBody === null
-        ? "reqBody=null (POST body not captured — parser will compute bet=0)"
-        : `reqBody[:80]="${reqBody.slice(0, 80)}"`;
-      console.log(`[case-exec/net] candidate #${urlsAfterPreFilter}: ${url}\n  ${reqInfo}`);
-    }
-    // Check request body for round-end signal BEFORE we await res.text().
-    // For PP the doCollect signal is in the REQUEST body (action=doCollect)
-    // and the response body is just a balance ping — checking the request
-    // body avoids awaiting + parsing the full response just to detect the
-    // signal. URL pattern still has to match.
-    if (roundEndSignalPatterns.length > 0 && reqBody) {
-      for (const sig of roundEndSignalPatterns) {
-        if (sig.url.test(url) && (!sig.body || sig.body.test(reqBody))) {
-          roundEndCount++;
-          if (!quietDiag) console.log(`[case-exec/net] round-end signal #${roundEndCount} detected (url match + body=${sig.body ? "yes" : "no"})`);
-          break;
-        }
-      }
-    }
-    processQueue = processQueue.then(async () => {
+  // Shared candidate processor — fed by BOTH the HTTP response listener and the
+  // WebSocket frame listener (Playtech GPAS & other WS-protocol providers send
+  // spin results as WS frames, not HTTP). Identical handling: evidence log,
+  // round-end signals, parser accept/reject (+ unknown-provider samples), FS
+  // re-eval, dedup. `method`/`status` are HTTP-ish labels ("WS"/101 for frames).
+  const processCandidate = async (
+    url: string,
+    reqBody: string | null,
+    body: string,
+    method: string,
+    status: number,
+  ): Promise<void> => {
       if (stopCollecting) return;
       try {
-        const body = await res.text().catch(() => "");
         if (!body) {
           if (!quietDiag) console.log(`[case-exec/net] empty body: ${url}`);
           return;
@@ -787,8 +805,8 @@ export async function executeCase(
           totalNetworkBytes += entryBytes;
           networkLog.push({
             url,
-            method: res.request().method(),
-            status: res.status(),
+            method,
+            status,
             durationMs: 0, // timing not exposed by Playwright Response — fill later if needed
             requestBody: reqTruncated,
             responseBody: resTruncated,
@@ -816,9 +834,7 @@ export async function executeCase(
           if (lastNetEntry && lastNetEntry.url === url) lastNetEntry.parsedAsSpin = false;
           parserRejected++;
           if (sampleRejectedUrls.length < 5) sampleRejectedUrls.push(url);
-          if (sampleRejected.length < 3) {
-            sampleRejected.push({ url, reqBody: (reqBody ?? "").slice(0, SAMPLE_BODY_CAP), respBody: body.slice(0, SAMPLE_BODY_CAP) });
-          }
+          captureRejectedSample(url, reqBody, body);
           if (!quietDiag) console.log(`[case-exec/net] parser REJECTED: ${url}\n  body[:120]="${body.slice(0, 120)}"`);
           return;
         }
@@ -935,14 +951,136 @@ export async function executeCase(
       } catch (err) {
         console.warn(`[case-exec/net] unexpected error: ${err instanceof Error ? err.message : String(err)}`);
       }
+  };
+
+  // HTTP response listener — thin: pre-filter by URL, detect request-side
+  // round-end signals, then hand the body to processCandidate via the queue.
+  const onResponse = (res: import("playwright").Response) => {
+    if (stopCollecting) return;
+    const url = res.url();
+    urlsSeen++;
+    if (positiveUrlHint) {
+      if (!url.includes(positiveUrlHint)) return;
+    } else if (NON_API_EXT.test(url)) {
+      return;
+    }
+    urlsAfterPreFilter++;
+    lastRelevantResponseAt = Date.now();
+    const reqBody = res.request().postData() ?? null;
+    if (!quietDiag) {
+      const reqInfo = reqBody === null
+        ? "reqBody=null (POST body not captured — parser will compute bet=0)"
+        : `reqBody[:80]="${reqBody.slice(0, 80)}"`;
+      console.log(`[case-exec/net] candidate #${urlsAfterPreFilter}: ${url}\n  ${reqInfo}`);
+    }
+    // Request-side round-end signal (PP doCollect) — check before awaiting body.
+    if (roundEndSignalPatterns.length > 0 && reqBody) {
+      for (const sig of roundEndSignalPatterns) {
+        if (sig.url.test(url) && (!sig.body || sig.body.test(reqBody))) {
+          roundEndCount++;
+          if (!quietDiag) console.log(`[case-exec/net] round-end signal #${roundEndCount} detected (url match + body=${sig.body ? "yes" : "no"})`);
+          break;
+        }
+      }
+    }
+    processQueue = processQueue.then(async () => {
+      if (stopCollecting) return;
+      const body = await res.text().catch(() => "");
+      await processCandidate(url, reqBody, body, res.request().method(), res.status());
     });
   };
-  if (expectsSpin) ctx.page.on("response", onResponse);
+
+  // WebSocket frames — Playtech GPAS & other WS-protocol providers send spin
+  // RESULTS as received frames (no HTTP). Feed each through the SAME
+  // processCandidate so they're parsed / dedup'd / sample-captured like an HTTP
+  // body. Most recent SENT frame is paired as the "request" (some providers
+  // carry the bet only in the sent frame).
+  let lastWsSent: string | null = null;
+  // WS frame correlation-merge. Providers like Playtech split ONE spin across
+  // multiple frames sharing a `correlationId` — e.g. one frame carries
+  // `data.gameData` (board/win, NO balance) and a sibling carries
+  // `data.balance[…]` (NO game shape). Parsing either alone is incomplete
+  // (balanceAfter=0 / wrong shape). We buffer by correlation id and merge each
+  // arriving frame into its predecessor, then feed the MERGED object — so the
+  // parser (and the learner's saved sample) sees a complete spin. Non-correlated
+  // frames pass through unchanged. Capped to bound memory.
+  const wsMergeBuf = new Map<string, Record<string, unknown>>();
+  const WS_MERGE_CAP = 24;
+  const CORRELATION_KEYS = ["correlationId", "correlation_id", "requestId", "reqId", "corrId"];
+  const mergeWsByCorrelation = (payload: string): string => {
+    let obj: Record<string, unknown>;
+    try { obj = JSON.parse(payload) as Record<string, unknown>; } catch { return payload; }
+    if (!obj || typeof obj !== "object") return payload;
+    let key: string | null = null;
+    for (const k of CORRELATION_KEYS) {
+      const v = obj[k];
+      if (typeof v === "string" || typeof v === "number") { key = String(v); break; }
+    }
+    if (!key) return payload;
+    const prev = wsMergeBuf.get(key);
+    const prevData = prev?.["data"];
+    const objData = obj["data"];
+    const merged: Record<string, unknown> = { ...(prev ?? {}), ...obj };
+    if (prevData && objData && typeof prevData === "object" && typeof objData === "object") {
+      merged["data"] = { ...(prevData as object), ...(objData as object) };
+    }
+    wsMergeBuf.set(key, merged);
+    if (wsMergeBuf.size > WS_MERGE_CAP) {
+      const oldest = wsMergeBuf.keys().next().value;
+      if (oldest !== undefined) wsMergeBuf.delete(oldest);
+    }
+    return JSON.stringify(merged);
+  };
+  const feedWsReceived = (wsUrl: string, payload: string): void => {
+    if (stopCollecting || !payload) return;
+    urlsSeen++;
+    // WS has no asset-style URL; NON_API_EXT doesn't apply. Honor a positive URL
+    // hint only when it actually appears in the socket URL.
+    if (positiveUrlHint && !wsUrl.includes(positiveUrlHint)) return;
+    urlsAfterPreFilter++;
+    lastRelevantResponseAt = Date.now();
+    const reqBody = lastWsSent;
+    const merged = mergeWsByCorrelation(payload);
+    processQueue = processQueue.then(() => processCandidate(wsUrl, reqBody, merged, "WS", 101));
+  };
+  // Fallback page-level listener — used ONLY when no session subscription is
+  // wired (tests / non-manual callers). It misses sockets opened before the
+  // case (the real-world problem), which is exactly why the manual session
+  // provides ctx.subscribeWsFrames instead.
+  const onWebSocket = (ws: import("playwright").WebSocket) => {
+    const wsUrl = ws.url();
+    if (!quietDiag) console.log(`[case-exec/ws] websocket opened (fallback): ${wsUrl}`);
+    ws.on("framesent", (e) => {
+      if (stopCollecting) return;
+      const txt = typeof e.payload === "string" ? e.payload : e.payload.toString("utf8");
+      if (txt) lastWsSent = txt.slice(0, SAMPLE_BODY_CAP);
+    });
+    ws.on("framereceived", (e) => {
+      const body = typeof e.payload === "string" ? e.payload : e.payload.toString("utf8");
+      feedWsReceived(wsUrl, body);
+    });
+  };
+
+  if (expectsSpin) {
+    ctx.page.on("response", onResponse);
+    // PRIMARY: session-level WS capture (catches the game socket opened at page
+    // load). FALLBACK: case-local page.on("websocket") for callers without it.
+    if (ctx.subscribeWsFrames) {
+      unsubscribeWs = ctx.subscribeWsFrames((f) => {
+        if (f.sent) { if (f.payload) lastWsSent = f.payload.slice(0, SAMPLE_BODY_CAP); return; }
+        feedWsReceived(f.url, f.payload);
+      });
+      console.log(`[case-exec] WS capture via session subscription (catches pre-opened sockets)`);
+    } else {
+      ctx.page.on("websocket", onWebSocket);
+    }
+  }
   // Wire the forward-declared ref so onExternalPage can attach the same
   // handler to any tabs already in-flight or opened later in the case.
   if (expectsSpin) {
     onResponseRef = onResponse;
-    for (const p of externalTabs) p.on("response", onResponse);
+    onWebSocketRef = onWebSocket;
+    for (const p of externalTabs) { p.on("response", onResponse); p.on("websocket", onWebSocket); }
   }
 
   let actionsExecuted = 0;
@@ -1283,6 +1421,8 @@ export async function executeCase(
   } catch (err) {
     stopCollecting = true;
     ctx.page.off("response", onResponse);
+    try { unsubscribeWs?.(); } catch { /* ignore */ }
+    try { ctx.page.off("websocket", onWebSocket); } catch { /* ignore */ }
     await processQueue.catch(() => undefined);  // drain any in-flight listeners
     const screenshotPath = await captureCaseScreenshot(ctx.page, ctx.gameSlug, input.id) ?? undefined;
     await stopVideo();
@@ -1407,6 +1547,8 @@ export async function executeCase(
     }
     stopCollecting = true;
     ctx.page.off("response", onResponse);
+    try { unsubscribeWs?.(); } catch { /* ignore */ }
+    try { ctx.page.off("websocket", onWebSocket); } catch { /* ignore */ }
     await processQueue.catch(() => undefined);  // drain any in-flight listeners
   }
   void reqByTiming;
@@ -3049,6 +3191,139 @@ async function clickBetChipFlow(ctx: CaseExecutorContext, m: BetChipMatch): Prom
   await ctx.page.waitForTimeout(500);
 }
 
+type DropdownWant = { kind: "min" } | { kind: "max" } | { kind: "value"; value: number };
+
+/** Set the stake on a canvas DROPDOWN bet selector (Playtech-style:
+ *  betButton → totalBetDropdown → confirm), with NO discrete chips/±. The list
+ *  is canvas-drawn + scrollable, so we read it LIVE with AI vision (value + y),
+ *  scroll-to-locate the target, click its row, then confirm. Scroll movement is
+ *  detected by the VALUE SET changing (never pixel-diff — these games animate
+ *  constantly). Best-effort: any failure returns {ok:false} so the caller can
+ *  leave the current bet and still fire the spin (never throws).
+ *
+ *  Returns {ok, landed} where `landed` is the OCR-verified resulting bet. */
+async function setBetViaDropdown(
+  ctx: CaseExecutorContext,
+  want: DropdownWant,
+  readBet: (() => Promise<number | null>) | null,
+): Promise<{ ok: boolean; landed?: number }> {
+  const reg = ctx.uiMap as Record<string, import("../registry/types.js").UiElement | undefined>;
+  const dropdownKey = Object.keys(reg).find((k) => /bet[a-z0-9_]*__.*dropdown/i.test(k) && reg[k]);
+  if (!dropdownKey) return { ok: false };
+  const openerKey = dropdownKey.split("__")[0]!;
+  const opener = reg[openerKey] ?? reg[dropdownKey]!;
+  const dropdown = reg[dropdownKey]!;
+  const confirm = reg[`${openerKey}__confirmButton`];
+  const closeBtn = reg[`${openerKey}__closeButton`];
+  const page = ctx.page;
+  const vp = page.viewportSize() ?? { width: 1280, height: 720 };
+  const tol = 0.01;
+  const MAX_SCROLLS = 12;
+  const targetLabel = want.kind === "value" ? `value ${want.value}` : want.kind;
+
+  const os = await import("node:os");
+  const pathMod = await import("node:path");
+  const { writeFile } = await import("node:fs/promises");
+  const { transcribeBetDropdown } = await import("../../ai/vision.js");
+  const readRows = async (): Promise<import("../../ai/vision.js").BetDropdownRead> => {
+    const p = pathMod.join(os.tmpdir(), `qa-betdd-${process.pid}-${Date.now()}.png`);
+    await writeFile(p, await page.screenshot({ type: "png" }));
+    return transcribeBetDropdown({ screenshotPath: p, viewport: vp });
+  };
+  const sig = (rows: { value: number }[]) => rows.map((r) => r.value).sort((a, b) => a - b).join(",");
+
+  // Try-and-verify scroll: attempt methods in order until the VALUE set changes;
+  // remember the winner for subsequent scrolls in this op. dir +1 = down.
+  let scrollMethod: "wheel" | "keys" | "drag" | null = null;
+  const scrollOnce = async (dir: 1 | -1, beforeSig: string): Promise<boolean> => {
+    const methods: Array<"wheel" | "keys" | "drag"> = scrollMethod ? [scrollMethod] : ["wheel", "keys", "drag"];
+    for (const m of methods) {
+      try {
+        if (m === "wheel") { await page.mouse.move(dropdown.x, dropdown.y); await page.mouse.wheel(0, dir * 220); }
+        else if (m === "keys") { await page.mouse.click(dropdown.x, dropdown.y); await page.keyboard.press(dir > 0 ? "PageDown" : "PageUp"); }
+        else { await page.mouse.move(dropdown.x, dropdown.y); await page.mouse.down(); await page.mouse.move(dropdown.x, dropdown.y - dir * 160, { steps: 8 }); await page.mouse.up(); }
+      } catch { /* try next */ }
+      await page.waitForTimeout(450);
+      const after = await readRows();
+      if (sig(after.rows) !== beforeSig) { scrollMethod = m; return true; }
+    }
+    return false; // nothing moved the value set
+  };
+
+  const dismiss = async () => {
+    try { if (closeBtn) await page.mouse.click(closeBtn.x, closeBtn.y); else await page.keyboard.press("Escape"); } catch { /* ignore */ }
+    await page.waitForTimeout(400);
+  };
+
+  try {
+    await page.mouse.click(opener.x, opener.y);
+    await page.waitForTimeout(700);
+    await page.mouse.click(dropdown.x, dropdown.y);
+    await page.waitForTimeout(700);
+
+    let read = await readRows();
+    if (read.rows.length === 0) { console.warn(`[case-action] set_bet dropdown: no options read — leaving bet`); await dismiss(); return { ok: false }; }
+
+    // For min/max, scroll to the extreme end (value set stops changing), then
+    // click the extreme visible row. For a value, scroll toward it until found.
+    const dir: 1 | -1 = want.kind === "max" ? 1 : want.kind === "min" ? -1 : 1;
+    let chosen: { value: number; y: number } | null = null;
+
+    for (let i = 0; i < MAX_SCROLLS; i++) {
+      if (want.kind === "value") {
+        const hit = read.rows.find((r) => Math.abs(r.value - want.value) <= tol);
+        if (hit) { chosen = hit; break; }
+        const vals = read.rows.map((r) => r.value);
+        const maxV = Math.max(...vals), minV = Math.min(...vals);
+        const goDown = want.value > maxV;
+        const goUp = want.value < minV;
+        if (!goDown && !goUp) { // target is within the visible numeric range but not an exact row → not in ladder
+          break;
+        }
+        const moved = await scrollOnce(goDown ? 1 : -1, sig(read.rows));
+        if (!moved) break; // reached an end without finding it
+        read = await readRows();
+      } else {
+        // min / max: keep scrolling toward the extreme until the value set stops changing.
+        const moved = await scrollOnce(dir, sig(read.rows));
+        if (!moved) break; // at the end
+        read = await readRows();
+      }
+    }
+
+    if (want.kind === "min") chosen = read.rows.reduce((a, b) => (b.value < a.value ? b : a), read.rows[0]!);
+    else if (want.kind === "max") chosen = read.rows.reduce((a, b) => (b.value > a.value ? b : a), read.rows[0]!);
+    else if (!chosen) {
+      // exact not found → nearest in the final view (accept-closest, warn)
+      chosen = read.rows.reduce((a, b) => (Math.abs(b.value - want.value) < Math.abs(a.value - want.value) ? b : a), read.rows[0]!);
+      console.warn(`[case-action] set_bet dropdown: exact ${want.value} not in ladder — selecting nearest ${chosen.value}`);
+    }
+
+    if (!chosen) { await dismiss(); return { ok: false }; }
+    console.log(`[case-action] set_bet dropdown: ${targetLabel} → clicking option ${chosen.value} @ y=${chosen.y}`);
+    await page.mouse.click(dropdown.x, chosen.y);
+    await page.waitForTimeout(400);
+    if (confirm) { await page.mouse.click(confirm.x, confirm.y); await page.waitForTimeout(500); }
+    else { await dismiss(); }
+
+    let landed: number | null = null;
+    if (readBet) {
+      landed = await readBet();
+      if (landed == null) { await page.waitForTimeout(400); landed = await readBet(); }
+      if (landed != null && want.kind === "value" && Math.abs(landed - want.value) > tol) {
+        console.warn(`[case-action] set_bet dropdown: verify mismatch — wanted ${want.value}, OCR=${landed} (kept; spin proceeds)`);
+      } else if (landed != null) {
+        console.log(`[case-action] set_bet dropdown: VERIFIED bet=${landed}`);
+      }
+    }
+    return { ok: true, landed: landed ?? undefined };
+  } catch (err) {
+    console.warn(`[case-action] set_bet dropdown threw: ${err instanceof Error ? err.message : String(err)} — leaving bet`);
+    await dismiss();
+    return { ok: false };
+  }
+}
+
 async function executeAction(
   action: CaseAction,
   ctx: CaseExecutorContext,
@@ -3196,7 +3471,9 @@ async function executeAction(
     const m = findBetChipExtreme(ctx.uiMap, "min");
     if (!m) {
       if (hasDropdownBetSelector(ctx.uiMap)) {
-        console.warn(`[case-action] set_bet_to_min: no betMinus + no chips — game uses a bet DROPDOWN (precise min not supported yet); leaving current bet so the spin still fires`);
+        const r = await setBetViaDropdown(ctx, { kind: "min" }, null);
+        if (r.ok) { console.log(`[case-action] set_bet_to_min — selected lowest via dropdown`); return; }
+        console.warn(`[case-action] set_bet_to_min: dropdown selection failed — leaving current bet so the spin still fires`);
         return;
       }
       throw new Error("set_bet_to_min: no betMinus button and no bet-level chips in registry");
@@ -3221,7 +3498,9 @@ async function executeAction(
     const m = findBetChipExtreme(ctx.uiMap, "max");
     if (!m) {
       if (hasDropdownBetSelector(ctx.uiMap)) {
-        console.warn(`[case-action] set_bet_to_max: no betPlus + no chips — game uses a bet DROPDOWN (precise max not supported yet); leaving current bet so the spin still fires`);
+        const r = await setBetViaDropdown(ctx, { kind: "max" }, null);
+        if (r.ok) { console.log(`[case-action] set_bet_to_max — selected highest via dropdown`); return; }
+        console.warn(`[case-action] set_bet_to_max: dropdown selection failed — leaving current bet so the spin still fires`);
         return;
       }
       throw new Error("set_bet_to_max: no betPlus button and no bet-level chips in registry");
@@ -3382,7 +3661,12 @@ async function executeAction(
           console.warn(`[case-action] set_bet_to_value ${target}: popup-only game, no exact chip — selecting nearest chip ${nearest.chipKey} (=${nearest.chipKey.match(/-(\d+(?:\.\d+)?)$/)?.[1] ?? "?"})`);
           await clickBetChipFlow(ctx, nearest);
         } else if (hasDropdownBetSelector(ctx.uiMap)) {
-          console.warn(`[case-action] set_bet_to_value ${target}: no betMinus/betPlus + no chips — game uses a bet DROPDOWN (precise value not supported yet); leaving current bet so the spin still fires`);
+          const r = await setBetViaDropdown(ctx, { kind: "value", value: target }, readBet);
+          if (r.ok) {
+            console.log(`[case-action] set_bet_to_value ${target} — selected via dropdown (landed=${r.landed ?? "?"})`);
+          } else {
+            console.warn(`[case-action] set_bet_to_value ${target}: dropdown selection failed — leaving current bet so the spin still fires`);
+          }
         } else {
           throw new Error(`set_bet_to_value ${target}: no betMinus/betPlus and no bet-level chips in registry — cannot set bet`);
         }

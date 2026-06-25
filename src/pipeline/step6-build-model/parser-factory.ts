@@ -94,6 +94,7 @@ export async function createParserForGame(
       }
       kind = provider.provider === "Pragmatic" ? "PragmaticParser"
         : provider.provider === "ThreeOaks" ? "ThreeOaksParser"
+        : provider.provider === "Playtech" ? "PlaytechParser"
         : "GenericParser";
       try {
         await parserCache.save(gameSlug, { parser: kind, version: 1 });

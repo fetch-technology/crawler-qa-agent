@@ -59,6 +59,16 @@ export const BUILTIN_PROVIDERS: ProviderConfig[] = [
     // static bundle path (`/api/v1/games/black_wolf_2/play/`).
     gameSlugPattern: "\\/(?:gs|games)\\/([a-z0-9_]+)\\/(?:desktop|play)",
   },
+  {
+    // Playtech GPAS — RG sandbox. Static client at `static.playtech.…/gpasclient.html`
+    // + game-service WebSocket at `api.playtech.…/socket.io/…`. The launch URL
+    // carries the real game in `?game=pt-gpas-<name>`.
+    name: "Playtech",
+    urlPatterns: ["playtech", "gpasclient", "\\/socket\\.io\\/"],
+    // Slug from `?game=pt-gpas-rabbitcash-pop` (else the path falls back to the
+    // html filename — see crawler deriveSlug).
+    gameSlugPattern: "[?&]game=([a-z0-9_-]+)",
+  },
 ];
 
 /** Load a provider config file by name. Returns null if not on disk; engine

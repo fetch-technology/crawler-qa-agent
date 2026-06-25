@@ -60,6 +60,13 @@ export function deriveSlug(url: string): string {
   // become the slug for EVERY 3 Oaks game (collision + wrong registry dir).
   const oaks = url.match(/\/(?:games|gs)\/([a-z0-9_]+)\/(?:play|desktop)/i);
   if (oaks && oaks[1]) return oaks[1].toLowerCase();
+  // Playtech GPAS: the real game is in `?game=pt-gpas-<name>`, not the path
+  // (which is just `gpasclient.html` — identical for EVERY Playtech game, so
+  // the path fallback would collide them all under one slug).
+  if (/playtech|gpasclient/i.test(url)) {
+    const pt = url.match(/[?&]game=([a-z0-9_-]+)/i);
+    if (pt && pt[1]) return pt[1].toLowerCase();
+  }
   const u = new URL(url);
   const firstSegment = u.pathname.split("/").filter(Boolean)[0] ?? "unknown";
   // Sanitize the fallback: a loader page like "/gpasclient.html" must NOT yield

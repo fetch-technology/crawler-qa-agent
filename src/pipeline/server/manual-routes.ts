@@ -3,7 +3,11 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { listRegisteredGames, updateGameUrl, deleteGame, ManualSessionManager } from "./manual-session.js";
-import { getOrCreate, get as peekSession, set as setSession, remove as removeSession, getDefaultOrThrow, listSessions } from "./session-pool.js";
+import { getOrCreate, get as peekSession, set as setSession, remove as removeSession, getDefaultOrThrow, listSessions, admitOrQueueStart, promoteQueued, maxActiveSessions, occupiedSlugs, startReaper } from "./session-pool.js";
+
+// Boot the idle-reaper once when the manual routes module loads (server boot).
+// It only acts when games are queued, so it's a no-op on an idle dashboard.
+startReaper();
 import { getCurrentUser } from "../../server/request-context.js";
 
 /** Resolve the target game slug from header/query WITHOUT consuming the request
@@ -156,6 +160,15 @@ export async function handleManualRoute(
     return sendJson(res, 409, { ok: false, error: leaseReason, owner }), true;
   }
 
+  // Idle-reaper bookkeeping: any mutating action keeps the targeted session
+  // "alive" so it isn't auto-stopped to free a slot. Best-effort — uses the
+  // path/header/query slug only (no body parse), which covers the interactive
+  // control routes (click/confirm/spin/…) that matter for idleness.
+  if (method !== "GET") {
+    const touched = peekSession(slugFromRequestNoBody(req, url) ?? "");
+    if (touched) touched.touchActivity();
+  }
+
   try {
     // GET /api/qa/manual/games — list previously registered games
     if (url === "/api/qa/manual/games" && method === "GET") {
@@ -217,6 +230,7 @@ export async function handleManualRoute(
     if (url.startsWith("/api/qa/manual/game/") && method === "DELETE") {
       const slug = decodeURIComponent(url.slice("/api/qa/manual/game/".length));
       const r = await deleteGame(slug);
+      if (r.ok) promoteQueued(); // deleting an active game freed a slot
       return sendJson(res, r.ok ? 200 : 400, r), true;
     }
 
@@ -248,6 +262,10 @@ export async function handleManualRoute(
     if (url === "/api/qa/manual/start" && method === "POST") {
       const body = await asJsonBody<{ url?: string; autoDiscover?: boolean; gameSlug?: string }>(req);
       if (!body.url) return sendJson(res, 400, { error: "url required" }), true;
+      // Hoist to a const so the narrowed (non-undefined) value survives into the
+      // `launch` closure below (TS drops the `if (!body.url)` narrowing inside a
+      // nested function).
+      const startUrl = body.url;
       try {
         // If client supplied gameSlug, reuse the existing manager so we
         // don't spin up a second browser for the same game; otherwise
@@ -259,18 +277,21 @@ export async function handleManualRoute(
         if (existingOwner && me && existingOwner.userId !== me.id) {
           return sendJson(res, 409, { ok: false, error: `This game session is being controlled by "${existingOwner.username}".`, owner: existingOwner }), true;
         }
-        // Already starting in the background → idempotent, just report status.
-        if (sess.isStarting()) return sendJson(res, 202, sess.status()), true;
+        // Already starting/queued in the background → idempotent, report status.
+        if (sess.isStarting() || sess.status().queuedPosition != null) {
+          return sendJson(res, 202, sess.status()), true;
+        }
         // Register the (un-slugged) transient in the pool IMMEDIATELY so the
         // dashboard's un-slugged /status polling finds it before crawl()
         // resolves the real slug. Re-keyed to the real slug on completion.
-        const tempKey = body.gameSlug ?? `__starting__:${startTempKey(body.url)}`;
+        const tempKey = body.gameSlug ?? `__starting__:${startTempKey(startUrl)}`;
         setSession(tempKey, sess);
-        // Fire-and-forget: browser launch + crawl + AI UI discovery routinely
-        // exceeds the proxy's ~60s timeout, which would surface as a 504 even
-        // though the work succeeds. Return 202 now and let the dashboard poll
-        // /status (startInProgress / startLastFinishedAt / startError).
-        sess.startInBackground(body.url, { autoDiscover: body.autoDiscover ?? true }, {
+        // The actual background start: browser launch + crawl + AI UI discovery
+        // routinely exceeds the proxy's ~60s timeout, so it returns 202 and the
+        // dashboard polls /status (startInProgress / startLastFinishedAt /
+        // startError). Wrapped in a thunk so admission control can run it NOW
+        // (slot free) or LATER (promoted from the queue).
+        const launch = () => sess.startInBackground(startUrl, { autoDiscover: body.autoDiscover ?? true }, {
           owner: me ? { id: me.id, username: me.username } : null,
           onResolved: (slug) => {
             if (slug && slug !== tempKey) {
@@ -279,6 +300,13 @@ export async function handleManualRoute(
             }
           },
         });
+        // Admit immediately if under the active cap, else queue FIFO. Either way
+        // the response is 202 + status (carrying queuedPosition when queued) and
+        // the dashboard polls to completion.
+        const adm = admitOrQueueStart(sess, launch);
+        if (!adm.admitted) {
+          console.log(`[manual] /start QUEUED "${tempKey}" at #${adm.position} — cap ${maxActiveSessions()} reached; slots held by: ${occupiedSlugs().join(", ") || "(resolving)"}`);
+        }
         return sendJson(res, 202, sess.status()), true;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -1271,6 +1299,7 @@ export async function handleManualRoute(
     // POST /api/qa/manual/stop
     if (url === "/api/qa/manual/stop" && method === "POST") {
       await resolveSession(req, null, url).stop();
+      promoteQueued(); // a slot just freed → admit the next queued game
       return sendJson(res, 200, { ok: true }), true;
     }
 

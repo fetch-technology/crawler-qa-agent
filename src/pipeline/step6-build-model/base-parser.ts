@@ -1,6 +1,6 @@
 import type { NormalizedSpinResult } from "./normalized.js";
 
-export type ParserKind = "PragmaticParser" | "GenericParser" | "ThreeOaksParser" | "LearnedSpecParser";
+export type ParserKind = "PragmaticParser" | "GenericParser" | "ThreeOaksParser" | "PlaytechParser" | "LearnedSpecParser";
 
 export interface BaseParser {
   readonly kind: ParserKind;

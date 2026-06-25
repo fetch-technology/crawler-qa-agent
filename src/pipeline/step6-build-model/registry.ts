@@ -11,6 +11,7 @@ export function pickParser(provider: ProviderName): BaseParser {
   const kind: ParserKind =
     provider === "Pragmatic" ? "PragmaticParser"
     : provider === "ThreeOaks" ? "ThreeOaksParser"
+    : provider === "Playtech" ? "PlaytechParser"
     : "GenericParser";
   return pickParserByKind(kind);
 }

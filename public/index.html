@@ -281,18 +281,29 @@
     // exceeds the proxy's ~60s timeout, which used to surface as "Start failed:
     // HTTP 504" even though the work succeeded). Returns final status or null.
     async function pollStartUntilDone(startIso) {
-      const deadline = Date.now() + 5 * 60 * 1000; // 5 min cap
+      // A queued start can wait indefinitely (slots free only on stop / idle
+      // reap), so allow a long wait; 60 min is a runaway guard for a stale tab.
+      const deadline = Date.now() + 60 * 60 * 1000;
       const startMs = Date.now();
       while (Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 3000));
-        const elapsedS = Math.round((Date.now() - startMs) / 1000);
-        // Live elapsed time so the user knows the session is still being
-        // prepared (browser launch + game load + AI discovery), not hung.
-        showLoading(`Starting session… (${elapsedS}s)`, "Launching Chrome, loading the game, running AI UI discovery. This can take 30–90s — please wait.");
         let status = null;
         try { status = await fetchJson("/api/qa/manual/status"); } catch { /* transient */ }
         if (!status) continue;
-        if (!status.startInProgress && status.startLastFinishedAt && status.startLastFinishedAt > startIso) {
+        const elapsedS = Math.round((Date.now() - startMs) / 1000);
+        if (status.queuedPosition != null) {
+          // Capped out → waiting for a slot. Show position + who holds slots.
+          let holders = "";
+          try {
+            const ss = await fetchJson("/api/qa/manual/sessions");
+            holders = (ss.sessions || []).filter((s) => s.status && s.status.active).map((s) => s.gameSlug).join(", ");
+          } catch { /* transient */ }
+          showLoading(`Queued #${status.queuedPosition} of ${status.queuedTotal}…`,
+            `Max concurrent games reached — waiting for a slot to free.${holders ? " Running now: " + holders + "." : ""} (${elapsedS}s)`);
+        } else {
+          showLoading(`Starting session… (${elapsedS}s)`, "Launching Chrome, loading the game, running AI UI discovery. This can take 30–90s — please wait.");
+        }
+        if (status.queuedPosition == null && !status.startInProgress && status.startLastFinishedAt && status.startLastFinishedAt > startIso) {
           return status;
         }
       }
@@ -318,8 +329,8 @@
           // server-side on a proxy 504 — fall through to polling.
           console.warn(`start POST failed (${err.message}); polling /status`);
         }
-        // Background start (202 with startInProgress, or POST 504'd) → poll.
-        if (!status || status.startInProgress) {
+        // In flight: 202 with startInProgress, queued (capped out), or POST 504'd → poll.
+        if (!status || status.startInProgress || status.queuedPosition != null) {
           status = await pollStartUntilDone(startIso);
         }
         if (!status) { hideLoading(); return alert("Start timed out after 5 min (polling)"); }

@@ -574,6 +574,52 @@ export type PlayScreenSnapshot = {
   raw_observations: string;               // free-form notes for debugging
 };
 
+/** One option row read from an OPEN bet/total-bet dropdown. */
+export type BetDropdownRow = { value: number; y: number };
+export type BetDropdownRead = {
+  rows: BetDropdownRow[];
+  /** True when the list visibly continues past the bottom edge (more items by
+   *  scrolling down). Heuristic hint only — scroll detection is value-based. */
+  moreBelow: boolean;
+  moreAbove: boolean;
+};
+
+/** Read the visible option rows of an OPEN bet-amount dropdown (a canvas list
+ *  of selectable total-bet values). Returns each value + its vertical CENTER in
+ *  viewport px so the caller can click the right row, plus more-above/below
+ *  hints. Animation-proof: we compare the VALUE set across scrolls, never
+ *  pixels. */
+export async function transcribeBetDropdown(args: {
+  screenshotPath: string;
+  viewport: { width: number; height: number };
+}): Promise<BetDropdownRead> {
+  const imageBase64 = readFileSync(args.screenshotPath).toString("base64");
+  const prompt = `Viewport ${args.viewport.width}x${args.viewport.height}. An OPEN bet-amount selector (a scrollable list/dropdown of selectable TOTAL BET values) is visible. Read EVERY bet option row currently visible.
+
+Return ONLY:
+{
+  "rows": [ { "value": number, "y": number } ],  // value = the bet amount (strip currency/commas: "$1.00"→1.00); y = vertical CENTER of that row in viewport px
+  "moreBelow": boolean,   // true if the list clearly continues below the visible area (more rows by scrolling down)
+  "moreAbove": boolean    // true if it continues above
+}
+Rules:
+- ONLY list rows that are clearly selectable bet AMOUNTS in the open selector. Ignore the current-bet header, +/- icons, confirm/close buttons, reels, balance.
+- value: numeric only, non-negative. y: integer px (row center).
+- Order rows top→bottom by y.
+- If no bet selector list is visible, return {"rows":[],"moreBelow":false,"moreAbove":false}.
+- Output ONLY the JSON.`;
+  const raw = await askClaudeVision(prompt, imageBase64);
+  const parsed = extractJsonFromText<{ rows?: Array<{ value?: number; y?: number }>; moreBelow?: boolean; moreAbove?: boolean }>(raw);
+  const rows: BetDropdownRow[] = [];
+  for (const r of parsed?.rows ?? []) {
+    if (typeof r?.value === "number" && Number.isFinite(r.value) && typeof r.y === "number") {
+      rows.push({ value: r.value, y: Math.round(r.y) });
+    }
+  }
+  rows.sort((a, b) => a.y - b.y);
+  return { rows, moreBelow: parsed?.moreBelow === true, moreAbove: parsed?.moreAbove === true };
+}
+
 export async function extractPlayScreenSnapshot(args: {
   screenshotPath: string;
   viewport: { width: number; height: number };

@@ -153,6 +153,16 @@ export type SessionStatus = {
   startStartedAt: string | null;
   startLastFinishedAt: string | null;
   startError: string | null;
+  /** Admission/queue state — when the active-session cap
+   *  (QA_MAX_ACTIVE_SESSIONS) is reached, a new start waits in a FIFO queue.
+   *  `queuedPosition` is 1-based (1 = next to run), null when not queued;
+   *  `queuedTotal` is the current queue length. The dashboard shows
+   *  "Queued #position of total" while polling /status. */
+  queuedPosition: number | null;
+  queuedTotal: number;
+  /** ISO of the last mutating interaction — feeds the idle-reaper that
+   *  auto-stops an abandoned session to free a slot for a queued game. */
+  lastActivityAt: string | null;
   /** Generate-catalog endpoint state — for client polling fallback when
    *  the long-running POST gets cut by proxy 504. */
   generateCatalogInProgress: boolean;
@@ -503,6 +513,11 @@ export class ManualSessionManager {
   private startStartedAt: string | null = null;
   private startLastFinishedAt: string | null = null;
   private startError: string | null = null;
+  /** Admission/queue bookkeeping (set by session-pool's admission logic). */
+  private queuedPosition: number | null = null;
+  private queuedTotal = 0;
+  /** Epoch ms of the last mutating interaction — drives idle-reaping. */
+  private lastActivityAt = Date.now();
   private generateCatalogInProgress = false;
   private generateCatalogStartedAt: string | null = null;
   private generateCatalogLastFinishedAt: string | null = null;
@@ -608,6 +623,7 @@ export class ManualSessionManager {
     this.lastBalance = null;
     this.attachBalanceTracker();
     this.attachExternalTabTracker();
+    this.attachWsCapture();
 
     const crawled = await crawl(this.session.page, { gameUrl: url });
     this.gameSlug = crawled.gameSlug;
@@ -681,6 +697,43 @@ export class ManualSessionManager {
     return this.startInProgress;
   }
 
+  /** Record a mutating interaction (resets the idle-reap clock). Called by the
+   *  route layer on every non-GET manual request targeting this session. */
+  touchActivity(): void {
+    this.lastActivityAt = Date.now();
+  }
+
+  /** True when this session is running an automated batch (onboard / run-all /
+   *  preview / generate-catalog / start). Such a session is NEVER reaped. */
+  hasActiveBatch(): boolean {
+    return this.autoOnboardInProgress
+      || this.runAllInProgress
+      || this.previewCaseInProgress
+      || this.generateCatalogInProgress
+      || this.startInProgress;
+  }
+
+  /** Set/clear admission-queue position (session-pool owns the queue). */
+  setQueued(position: number | null, total: number): void {
+    this.queuedPosition = position;
+    this.queuedTotal = total;
+  }
+
+  /** Idle ms if this session is REAPABLE (auto-stoppable to free a slot):
+   *  it holds a live browser, is running no batch, and has been idle for at
+   *  least `graceMs`. Returns -1 when not reapable. */
+  reapableIdleMs(graceMs: number): number {
+    if (this.session === null) return -1;       // no browser → nothing to free
+    if (this.hasActiveBatch()) return -1;        // mid-batch → never kill
+    const idle = Date.now() - this.lastActivityAt;
+    return idle >= graceMs ? idle : -1;
+  }
+
+  /** Counts toward the active-session cap: holding a browser OR mid-start. */
+  occupiesSlot(): boolean {
+    return this.session !== null || this.startInProgress;
+  }
+
   /** Fire-and-forget wrapper around start() with status-flag bookkeeping, so
    *  the /start route can return 202 immediately and the dashboard can poll
    *  /status to detect completion when the long start (>60s) is cut by a proxy
@@ -744,6 +797,9 @@ export class ManualSessionManager {
       startStartedAt: this.startStartedAt,
       startLastFinishedAt: this.startLastFinishedAt,
       startError: this.startError,
+      queuedPosition: this.queuedPosition,
+      queuedTotal: this.queuedTotal,
+      lastActivityAt: this.lastActivityAt ? new Date(this.lastActivityAt).toISOString() : null,
       generateCatalogInProgress: this.generateCatalogInProgress,
       generateCatalogStartedAt: this.generateCatalogStartedAt,
       generateCatalogLastFinishedAt: this.generateCatalogLastFinishedAt,
@@ -4279,6 +4335,7 @@ export class ManualSessionManager {
     this.lastBalance = null;
     this.attachBalanceTracker();
     this.attachExternalTabTracker();
+    this.attachWsCapture();
     // Restore verify state from persisted status field
     this.verifyState = {};
     for (const [k, el] of Object.entries(reg)) {
@@ -5202,6 +5259,10 @@ CHECK_CODE RULES
       liveBalance: () => this.lastBalance,
       gameSlug: this.gameSlug,
       payoutModel: loadedPayoutModel,
+      // WS-protocol games (Playtech socket.io): the executor reads spin frames
+      // from the session-level capture (attached at start, catches the socket
+      // opened at page load) instead of a too-late case-local listener.
+      subscribeWsFrames: (cb: (f: { url: string; sent: boolean; payload: string }) => void) => this.subscribeWsFrames(cb),
     };
 
     // Retry loop policy (forced): run exactly once — no retry on failure.
@@ -5516,6 +5577,7 @@ CHECK_CODE RULES
         liveBalance: () => this.lastBalance,
         gameSlug: this.gameSlug,
         payoutModel: null,
+        subscribeWsFrames: (cb: (f: { url: string; sent: boolean; payload: string }) => void) => this.subscribeWsFrames(cb),
       };
       console.log(`[calibrate-payout] ${this.gameSlug}: capturing combos via ${spinMode} × ${higherBet != null ? 2 : 1} level(s)…`);
       // Capture executeCase result so we can distinguish "spins ran but
@@ -5904,6 +5966,55 @@ CHECK_CODE RULES
     this.session.page.context().on("page", (p) => {
       this.externalTabs.push(p);
       console.log(`[manual] external tab opened — ${this.externalTabs.filter((t) => !t.isClosed()).length} open`);
+    });
+  }
+
+  // WebSocket frame fan-out. WS-protocol providers (Playtech GPAS socket.io,
+  // etc.) open their game socket at PAGE LOAD — long before a case run attaches
+  // its own listener — and Playwright's page.on("websocket") never replays an
+  // already-open socket. So we attach ONCE at session start (before the game's
+  // socket opens) and fan every frame out to whatever case is currently
+  // subscribed. Each frame is normalized out of its socket.io/engine.io
+  // envelope to the inner JSON so the parser sees clean payloads.
+  private wsSubscribers = new Set<(f: { url: string; sent: boolean; payload: string }) => void>();
+
+  /** Subscribe to live WS frames for the duration of a case. Returns an
+   *  unsubscribe fn. Frames are already envelope-stripped to inner JSON. */
+  subscribeWsFrames(cb: (f: { url: string; sent: boolean; payload: string }) => void): () => void {
+    this.wsSubscribers.add(cb);
+    return () => { this.wsSubscribers.delete(cb); };
+  }
+
+  /** Strip the socket.io / engine.io transport envelope so the parser sees the
+   *  inner JSON. Handles socket.io 0.x (`5:::{json}`) and engine.io/socket.io
+   *  v1+ (`42[json]` / `4{json}`). Returns the raw frame unchanged when there's
+   *  no recognizable envelope (heartbeats etc. → parser rejects them cheaply). */
+  private static normalizeWsFrame(raw: string): string {
+    // socket.io 0.x: <type>:<id>:<endpoint>:<data> — data is JSON for events.
+    const v0 = raw.match(/^\d+:[^:]*:[^:]*:(.+)$/s);
+    if (v0 && v0[1] && (v0[1].startsWith("{") || v0[1].startsWith("["))) return v0[1];
+    // engine.io / socket.io v1+: leading packet digits then a JSON body.
+    const v1 = raw.match(/^\d+(\[[\s\S]*\]|\{[\s\S]*\})$/);
+    if (v1 && v1[1]) return v1[1];
+    return raw;
+  }
+
+  private attachWsCapture(): void {
+    if (!this.session) return;
+    const fanOut = (url: string, sent: boolean, payload: unknown): void => {
+      if (this.wsSubscribers.size === 0) return;
+      const raw = typeof payload === "string" ? payload : Buffer.isBuffer(payload) ? payload.toString("utf8") : "";
+      if (!raw) return;
+      const normalized = ManualSessionManager.normalizeWsFrame(raw);
+      for (const cb of this.wsSubscribers) {
+        try { cb({ url, sent, payload: normalized }); } catch { /* subscriber error must not break capture */ }
+      }
+    };
+    this.session.page.on("websocket", (ws) => {
+      const url = ws.url();
+      console.log(`[manual/ws] socket opened: ${url}`);
+      ws.on("framesent", (e) => fanOut(url, true, e.payload));
+      ws.on("framereceived", (e) => fanOut(url, false, e.payload));
     });
   }
 

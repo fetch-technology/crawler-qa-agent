@@ -142,8 +142,16 @@ export function verifyLearnedSpec(spec: ProviderSpec, samples: ProviderSample[])
     if (problems.length > 0) reasons.push(`${tag}: ${problems.join(", ")}`);
     else okCount++;
   }
-  let ok = okCount === samples.length && okCount > 0;
-  if (ok) reasons.push(`all ${okCount} sample(s) parsed to plausible spins`);
+  // Accept on ≥1 fully-plausible spin rather than ALL samples. WS-protocol
+  // providers (Playtech socket.io) split a spin across frames, so the captured
+  // samples include PARTIAL frames (e.g. a balance-only or board-only frame
+  // whose balanceAfter is 0) — those are capture noise, not evidence the spec
+  // is wrong. A genuinely bad spec produces ZERO plausible spins (and the
+  // bet==balance / board<3 mis-map checks still veto a specific sample). So
+  // "at least one sample maps to a sane bet/win/balance/board" is the gate.
+  let ok = okCount >= 1;
+  if (ok) reasons.push(`${okCount}/${samples.length} sample(s) parsed to plausible spins`);
+  else reasons.push(`no sample parsed to a plausible spin (${samples.length} tried)`);
 
   // State-signal safety check — when the spec proposes a free-spin signal
   // (freeSpinSignal or an fs nestedExtraction), it must NOT mark a frame that
