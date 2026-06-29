@@ -75,12 +75,50 @@ export async function openBrowser(headless = false): Promise<BrowserSession> {
   if (proxy) {
     console.log(`[browser] routing via proxy ${proxy.server}${proxy.username ? " (auth)" : ""}${proxy.bypass ? ` bypass=${proxy.bypass}` : ""}`);
   }
-  const browser = await chromium.launch({
+  // Launch the user's REAL Google Chrome (channel: "chrome") instead of
+  // Playwright's bundled Chromium. Bundled Chromium lacks proprietary codecs
+  // (H.264/AAC) and ships a different GPU/WebGL backend, so many PIXI/WebGL slot
+  // loaders get STUCK on the loading screen even though they load fine in real
+  // Chrome. We also strip the automation fingerprint (navigator.webdriver via
+  // --disable-blink-features=AutomationControlled, and the --enable-automation
+  // default arg) that some game loaders' anti-bot checks stall on.
+  // Override with QA_BROWSER_CHANNEL ("chromium" forces bundled; "msedge",
+  // "chrome-beta", … pick another channel). Falls back to bundled Chromium when
+  // the requested channel isn't installed, so the server always boots.
+  const baseOpts: Parameters<typeof chromium.launch>[0] = {
     headless,
     slowMo,
-    args: [`--remote-debugging-port=${cdpPort}`],
+    args: [
+      `--remote-debugging-port=${cdpPort}`,
+      "--disable-blink-features=AutomationControlled",
+      // WebGL — Cocos/PIXI slot engines REQUIRE a WebGL context or they crash
+      // on init and the loader sticks (observed: "This device does not support
+      // WebGL" → getExtension on a null gl). When this Chrome can't get a
+      // hardware GL context (no GPU session on the Mac mini / headless), modern
+      // Chrome refuses WebGL UNLESS software fallback is explicitly allowed.
+      // These let it use hardware GL when available and fall back to SwiftShader
+      // (software, CPU-bound) otherwise — so the game always gets a context.
+      "--ignore-gpu-blocklist",
+      "--enable-unsafe-swiftshader",
+      ...(process.env.QA_FORCE_SWIFTSHADER === "1" ? ["--use-gl=angle", "--use-angle=swiftshader"] : []),
+    ],
+    ignoreDefaultArgs: ["--enable-automation"],
     ...(proxy ? { proxy } : {}),
-  });
+  };
+  const channelEnv = (process.env.QA_BROWSER_CHANNEL ?? "chrome").trim();
+  const channel = channelEnv && channelEnv.toLowerCase() !== "chromium" ? channelEnv : undefined;
+  let browser: Browser;
+  // Log the resolved launch config so a restart can be CONFIRMED to pick up the
+  // WebGL/channel flags (a stale server is the #1 reason a fix "didn't work").
+  console.log(`[browser] launching channel=${channel ?? "chromium(bundled)"} headless=${headless} args=${JSON.stringify(baseOpts.args)}`);
+  try {
+    browser = await chromium.launch(channel ? { ...baseOpts, channel } : baseOpts);
+    if (channel) console.log(`[browser] launched real "${channel}" (full codecs + GPU, automation flags stripped)`);
+  } catch (err) {
+    if (!channel) throw err;
+    console.warn(`[browser] channel "${channel}" unavailable (${err instanceof Error ? err.message : String(err)}) → falling back to bundled Chromium`);
+    browser = await chromium.launch(baseOpts);
+  }
   const context = await browser.newContext({ viewport });
   const page = await context.newPage();
   return { browser, context, page, cdpEndpoint: `http://localhost:${cdpPort}` };

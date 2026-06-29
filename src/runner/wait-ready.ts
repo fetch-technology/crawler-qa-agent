@@ -59,78 +59,51 @@ export async function waitForCanvasReady(
     }
   }
 
-  // Layer 2 + 3: canvas visible + painted
+  // CRITICAL: NEVER call canvas.getContext() on a game canvas here. A canvas
+  // can hold only ONE context type; if we grab "2d" to read pixels before the
+  // game engine (Cocos/PIXI) grabs "webgl"/"webgl2" on that SAME canvas, the
+  // engine's getContext returns null → "This device does not support WebGL" →
+  // crash on init, loader stuck. So readiness is geometry-only (getBoundingClientRect),
+  // and the painted/stable check uses page.screenshot() of the canvas region,
+  // which never touches the canvas's rendering context.
+  const vp = page.viewportSize() ?? { width: 1280, height: 720 };
   while (Date.now() - start < timeoutMs) {
-    const info = await page.evaluate(() => {
-      const canvases = Array.from(document.querySelectorAll("canvas"));
-      // Pick canvas lớn nhất visible
-      const visible = canvases
+    const box = await page.evaluate(() => {
+      const visible = Array.from(document.querySelectorAll("canvas"))
         .map((c) => {
-          const rect = c.getBoundingClientRect();
-          return { c, rect, area: rect.width * rect.height };
+          const r = c.getBoundingClientRect();
+          return { x: r.x, y: r.y, w: r.width, h: r.height, area: r.width * r.height };
         })
         .filter((x) => x.area > 10_000)
         .sort((a, b) => b.area - a.area)[0];
-      if (!visible) return null;
-
-      // Sample painted pixels — check canvas có content, không phải solid color
-      try {
-        const ctx = (visible.c as HTMLCanvasElement).getContext("2d");
-        if (!ctx) {
-          // WebGL canvas — không readPixels được từ 2d ctx. Assume painted nếu visible.
-          return {
-            width: visible.rect.width,
-            height: visible.rect.height,
-            nonBlankPx: -1, // sentinel: WebGL, không check được
-          };
-        }
-        const w = Math.min(100, visible.c.width);
-        const h = Math.min(100, visible.c.height);
-        const sample = ctx.getImageData(0, 0, w, h).data;
-        // Count pixels khác base color (>5% variance)
-        const baseR = sample[0]!;
-        const baseG = sample[1]!;
-        const baseB = sample[2]!;
-        let nonBlank = 0;
-        for (let i = 0; i < sample.length; i += 16) {
-          const dr = Math.abs(sample[i]! - baseR);
-          const dg = Math.abs(sample[i + 1]! - baseG);
-          const db = Math.abs(sample[i + 2]! - baseB);
-          if (dr + dg + db > 30) nonBlank++;
-        }
-        return {
-          width: visible.rect.width,
-          height: visible.rect.height,
-          nonBlankPx: nonBlank,
-        };
-      } catch {
-        return {
-          width: visible.rect.width,
-          height: visible.rect.height,
-          nonBlankPx: -1,
-        };
-      }
+      return visible ?? null;
     });
 
-    if (info && info.width >= 200 && info.height >= 200) {
+    if (box && box.w >= 200 && box.h >= 200) {
       layer = "canvas-visible";
-      // Nếu là WebGL (nonBlankPx=-1) hoặc đã có content → enter stability phase
-      if (info.nonBlankPx === -1 || info.nonBlankPx > 50) {
-        layer = "canvas-painted";
-        // Stability check: loading screen có animation (progress bar) → screenshot
-        // hash thay đổi liên tục. Play screen idle → mostly static.
+      // Clamp the clip into the viewport (screenshot rejects out-of-bounds).
+      const clip = {
+        x: Math.max(0, Math.floor(box.x)),
+        y: Math.max(0, Math.floor(box.y)),
+        width: Math.min(Math.floor(box.w), vp.width - Math.max(0, Math.floor(box.x))),
+        height: Math.min(Math.floor(box.h), vp.height - Math.max(0, Math.floor(box.y))),
+      };
+      if (clip.width >= 100 && clip.height >= 100) {
+        // Stability: a loading screen animates (progress bar) → screenshots
+        // keep changing; the play screen idle → screenshots stabilize.
         const stable = await waitForCanvasStable(page, {
+          clip,
           timeoutMs: Math.max(5_000, timeoutMs - (Date.now() - start)),
           samplePeriodMs: 800,
           requiredSamples: 4,
-          maxDiffRatio: 0.005,
+          maxDiffRatio: 0.02,
         });
         if (stable) {
           return {
             ready: true,
             layer: "canvas-stable",
             durationMs: Date.now() - start,
-            canvasInfo: info,
+            canvasInfo: { width: box.w, height: box.h, nonBlankPx: -1 },
           };
         }
       }
@@ -142,16 +115,24 @@ export async function waitForCanvasReady(
   return { ready: false, layer, durationMs: Date.now() - start };
 }
 
+/** Coarse digest of a screenshot PNG buffer — samples bytes so big visual
+ *  changes (loading animation) diverge while tiny noise stays similar. */
+function bufDigest(buf: Buffer): string {
+  let s = "";
+  for (let i = 0; i < buf.length; i += 397) s += String.fromCharCode(buf[i]! & 0xfe);
+  return s;
+}
+
 /**
- * Sample canvas hash mỗi samplePeriodMs. Ready khi `requiredSamples` consecutive
- * sample khớp (pixel diff < maxDiffRatio). Loading animation → fail samples.
- * Play screen idle (reels stopped) → pass.
- *
- * Trả false nếu hết timeoutMs mà chưa stable.
+ * Sample a SCREENSHOT of the canvas region every samplePeriodMs (never touches
+ * the canvas context — see waitForCanvasReady note). Ready when `requiredSamples`
+ * consecutive screenshots are similar (diff < maxDiffRatio). Loading animation →
+ * fails; idle play screen → passes. Returns false on timeout.
  */
 async function waitForCanvasStable(
   page: Page,
   opts: {
+    clip: { x: number; y: number; width: number; height: number };
     timeoutMs: number;
     samplePeriodMs: number;
     requiredSamples: number;
@@ -162,40 +143,20 @@ async function waitForCanvasStable(
   const recent: string[] = [];
 
   while (Date.now() < deadline) {
-    const hash = await page.evaluate(() => {
-      const canvases = Array.from(document.querySelectorAll("canvas"));
-      const visible = canvases
-        .map((c) => ({ c, area: c.clientWidth * c.clientHeight }))
-        .filter((x) => x.area > 10_000)
-        .sort((a, b) => b.area - a.area)[0];
-      if (!visible) return "";
-      try {
-        const ctx = (visible.c as HTMLCanvasElement).getContext("2d");
-        if (ctx) {
-          // 2D canvas — sample 32x32 grid
-          const w = visible.c.width;
-          const h = visible.c.height;
-          const data = ctx.getImageData(0, 0, Math.min(200, w), Math.min(200, h)).data;
-          // Compress to digest: average per 16x16 cell
-          let s = "";
-          for (let i = 0; i < data.length; i += 256) {
-            s += String.fromCharCode(data[i]! & 0xfe);
-          }
-          return s;
-        }
-        // WebGL canvas — dùng toDataURL sample (slow nhưng accurate)
-        return (visible.c as HTMLCanvasElement).toDataURL("image/png", 0.1).slice(0, 5000);
-      } catch {
-        return "";
-      }
-    });
+    let digest = "";
+    try {
+      const buf = await page.screenshot({ clip: opts.clip });
+      digest = bufDigest(buf);
+    } catch {
+      // page navigated / clip transiently invalid — skip this sample
+    }
 
-    if (!hash) {
+    if (!digest) {
       await page.waitForTimeout(opts.samplePeriodMs);
       continue;
     }
 
-    recent.push(hash);
+    recent.push(digest);
     if (recent.length > opts.requiredSamples) recent.shift();
 
     if (recent.length === opts.requiredSamples) {

@@ -1070,21 +1070,15 @@ export class ManualSessionManager {
     };
     const pageCtx = this.session.page.context();
     try {
-      // EFFECT-VERIFIED click for EVERY ancestor: canvas games reliably
-      // swallow the FIRST programmatic click after a popup opens (QA
-      // observation: 2nd click registers). A swallowed MIDDLE click would
-      // leave later clicks landing on the wrong screen, so each step must
-      // verify its effect before the walk continues:
-      //   - final step: a new TAB counts as the effect (plus pixel change)
-      //   - any step: on-page change ABOVE THE STATE'S OWN IDLE NOISE counts
-      //     (slot canvases animate constantly — a fixed threshold read
-      //     "changed" on every frame pair and killed the retries)
-      // Attempt 1 stays single (a double would toggle a popup open→shut);
-      // attempt ≥2 adds a quick second click since single has PROVEN inert.
-      const { pixelDiff, decodePng } = await import("../utils/pixel-diff/diff.js");
-      const shot = async (): Promise<ReturnType<typeof decodePng> | null> => {
-        try { return decodePng(await this.session!.page.screenshot({ type: "png" })); } catch { return null; }
-      };
+      // EFFECT-VERIFIED click for EVERY ancestor, via the AI verify-click agent
+      // (replaces the old pixel-diff probe). Pixel-diff just measured "did the
+      // screen change", which slot canvases defeat both ways: they animate
+      // constantly (false "changed" every frame) AND a wrong-coord click can
+      // still produce visible change (canvas tap → spin) → false "landed". The
+      // agent clicks the coord and reasons over screenshot + network about
+      // whether it actually opened the expected sub-state — the same judgment a
+      // human QA makes. A new TAB on the final step is still detected via the
+      // pageCtx "page" listener regardless of who issued the click.
       for (let i = 0; i < ancestors.length; i++) {
         const key = ancestors[i]!;
         const isLast = i === ancestors.length - 1;
@@ -1093,40 +1087,34 @@ export class ManualSessionManager {
           return { ok: false, reason: `ancestor missing in registry: ${key} (need to discover + verify it first)`, clickedPath };
         }
         if (isLast) pageCtx.on("page", onNewPage);
+        clickedPath.push({ key, x: el.x, y: el.y });
         try {
-          const n1 = await shot();
-          await this.session.page.waitForTimeout(350);
-          const n2 = await shot();
-          let noiseRatio = 0;
-          if (n1 && n2) { try { noiseRatio = pixelDiff(n1, n2).ratio; } catch { /* size mismatch — keep 0 */ } }
-          const changedThreshold = Math.min(0.5, Math.max(0.03, noiseRatio * 2.5));
-          console.log(`[manual/discover] click ${key}: idle noise=${(noiseRatio * 100).toFixed(1)}% → change threshold=${(changedThreshold * 100).toFixed(1)}%`);
-          let landed = false;
-          for (let attempt = 1; attempt <= 3; attempt++) {
-            const before = await shot();
+          if (!this.session.cdpEndpoint) {
+            // No CDP endpoint → can't run the agent; click directly so the walk
+            // can still proceed (unverified).
+            console.warn(`[manual/discover] walk ${key}: no CDP endpoint — clicking unverified`);
             await this.session.page.mouse.click(el.x, el.y);
-            if (attempt >= 2) {
-              await this.session.page.waitForTimeout(150);
-              await this.session.page.mouse.click(el.x, el.y);
-            }
-            if (attempt === 1) clickedPath.push({ key, x: el.x, y: el.y });
             await this.session.page.waitForTimeout(1500);
-            if (isLast && tabSlot[0]) { landed = true; break; }
-            if (!before) { landed = true; break; } // can't verify — proceed
-            let changed = false;
-            try {
-              const after = await shot();
-              if (after) changed = pixelDiff(before, after).ratio > changedThreshold;
-            } catch { changed = true; }
-            if (changed) {
-              landed = true;
-              if (attempt > 1) console.log(`[manual/discover] click ${key}: landed on attempt ${attempt}/3`);
-              break;
+          } else {
+            const stateContext = i > 0
+              ? `Walking a trigger chain; popups opened so far: ${ancestors.slice(0, i).join(" → ")}.`
+              : undefined;
+            const v = await verifyClickAgent({
+              cdpEndpoint: this.session.cdpEndpoint,
+              coord: { x: el.x, y: el.y },
+              elementKey: key,
+              expectedBehavior: expectedBehaviorFor(key),
+              stateContext,
+              outputDir: path.join(dirForGame(this.gameSlug), "debug-agent"),
+            });
+            await this.session.page.waitForTimeout(500); // let a popup/tab settle (onNewPage)
+            if (isLast && tabSlot[0]) {
+              console.log(`[manual/discover] walk ${key}: opened external tab ✓`);
+            } else if (v.ok) {
+              console.log(`[manual/discover] walk ${key}: AI-verified effect — ${v.reason.slice(0, 100)}`);
+            } else {
+              console.warn(`[manual/discover] walk ${key}: AI says click had no effect (${v.reason.slice(0, 140)}) — continuing, but the walk may be off-state`);
             }
-            if (attempt < 3) console.log(`[manual/discover] click ${key} attempt ${attempt}/3 had no effect (no tab, change ≤ noise) — re-clicking`);
-          }
-          if (!landed) {
-            console.warn(`[manual/discover] click ${key}: no observable effect after 3 attempts — continuing, but the walk may be off-state`);
           }
         } catch (err) {
           return { ok: false, reason: `click on ${key} (${el.x},${el.y}) failed: ${err instanceof Error ? err.message : String(err)}`, clickedPath };

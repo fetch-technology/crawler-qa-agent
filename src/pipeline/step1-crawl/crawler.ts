@@ -15,6 +15,23 @@ export async function crawl(page: Page, opts: CrawlOptions): Promise<CrawlResult
     if (msg.type() === "error") errors.push(msg.text());
   });
 
+  // Load-failure diagnostics — when a game STICKS partway (e.g. stuck at 80%)
+  // in the automated browser but loads fine in a normal one, the cause is
+  // almost always a specific request that fails / is blocked (geo 403, CORS,
+  // net::ERR_*, a rejected gameService handshake). Capture those so the pm2
+  // log pinpoints the offender instead of us guessing. Passive listeners — no
+  // interception, no blocking.
+  const failedRequests: string[] = [];
+  page.on("requestfailed", (r) => {
+    const why = r.failure()?.errorText ?? "failed";
+    failedRequests.push(`${why}  ${r.method()} ${r.url()}`);
+  });
+  const badResponses: string[] = [];
+  page.on("response", (r) => {
+    const s = r.status();
+    if (s >= 400) badResponses.push(`HTTP ${s}  ${r.request().method()} ${r.url()}`);
+  });
+
   // A live slot game keeps streaming network traffic forever (WebSocket /
   // long-poll, balance + announcements + promo polling, audio/sprite streaming),
   // so "networkidle" NEVER settles → goto would burn the full timeout and throw
@@ -29,6 +46,18 @@ export async function crawl(page: Page, opts: CrawlOptions): Promise<CrawlResult
   });
   await waitForCanvasReady(page, { skipNetworkIdle: true, timeoutMs: navTimeout })
     .catch(() => undefined); // non-fatal: popup-dismiss + AI discovery follow
+
+  // Surface load-blocking failures captured during the load window. A game
+  // that stalls partway almost always leaves a fingerprint here.
+  if (failedRequests.length > 0) {
+    console.warn(`[crawl] ${failedRequests.length} request(s) FAILED during load (likely cause of a stuck loader):\n  ${failedRequests.slice(0, 20).join("\n  ")}`);
+  }
+  if (badResponses.length > 0) {
+    console.warn(`[crawl] ${badResponses.length} response(s) with status ≥400 during load:\n  ${badResponses.slice(0, 20).join("\n  ")}`);
+  }
+  if (errors.length > 0) {
+    console.warn(`[crawl] ${errors.length} console error(s) during load:\n  ${errors.slice(0, 12).join("\n  ")}`);
+  }
 
   const iframeCount = page.frames().length - 1;
   const canvasCount = await page.locator("canvas").count();
