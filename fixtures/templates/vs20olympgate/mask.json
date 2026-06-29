@@ -1,9 +1,0 @@
-{
-  "_comment": "Mask regions cho Gates of Olympus (vs20olympgate). Extend DEFAULT_PP_MASK với Zeus character animation bên phải.",
-  "regions": [
-    { "x": 280, "y": 90, "width": 880, "height": 620, "label": "reels" },
-    { "x": 0, "y": 720, "width": 1440, "height": 180, "label": "bottom_bar" },
-    { "x": 1140, "y": 0, "width": 300, "height": 720, "label": "zeus_hero_animation" },
-    { "x": 0, "y": 0, "width": 300, "height": 720, "label": "left_buy_panel_state" }
-  ]
-}

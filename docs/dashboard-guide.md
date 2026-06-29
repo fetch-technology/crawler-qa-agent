@@ -1,649 +1,538 @@
-# Dashboard Guide — Hướng dẫn sử dụng UI chi tiết
+# Dashboard Guide — Hướng dẫn sử dụng UI (chỉ Dashboard)
 
-> Hướng dẫn toàn diện cho web dashboard của crawler-qa-agent. Mọi component, button, tab, behavior — giải thích cụ thể tại sao có và dùng ra sao.
+> Hướng dẫn dùng web dashboard của `crawler-qa-agent` — onboarding 1 slot game mới, verify UI elements, generate + run test cases, xem kết quả. Không đề cập CLI.
 
-URL: `http://localhost:3200/dashboard` (sau khi chạy `npm run serve`)
+URL: `http://localhost:3200/` (sau khi server đã chạy)
 
 ---
 
 ## Mục lục
 
-1. [Quick start — 5 phút first test](#1-quick-start)
-2. [Cấu trúc dashboard](#2-cấu-trúc-dashboard)
-3. [Top bar](#3-top-bar)
-4. [New Task form](#4-new-task-form)
-5. [Tasks table](#5-tasks-table)
-6. [Task Detail panel](#6-task-detail-panel)
-7. [Test Cases tab — chi tiết action buttons](#7-test-cases-tab--chi-tiết-action-buttons)
-8. [Các tab khác](#8-các-tab-khác)
-9. [Real-time events (SSE)](#9-real-time-events-sse)
-10. [Common workflows](#10-common-workflows)
-11. [Tips & shortcuts](#11-tips--shortcuts)
+1. [Khái niệm cơ bản](#1-khái-niệm-cơ-bản)
+2. [Trang Overview — `/`](#2-trang-overview)
+3. [Trang Game Detail — `/game/<slug>`](#3-trang-game-detail)
+4. [Panel: New / Active Session](#4-panel-new--active-session)
+5. [Panel: Registry — Verify Elements & Discover](#5-panel-registry)
+6. [Panel: Add Element (missed by AI)](#6-panel-add-element)
+7. [Panel: OCR Regions](#7-panel-ocr-regions)
+8. [Panel: Discovery Snapshots](#8-panel-discovery-snapshots)
+9. [Panel: Test Cases — Inspect & Run](#9-panel-test-cases)
+10. [Panel: App Log](#10-panel-app-log)
+11. [Workflow chuẩn cho 1 game mới](#11-workflow-chuẩn)
 12. [Troubleshooting](#12-troubleshooting)
 
 ---
 
-## 1. Quick start
+## 1. Khái niệm cơ bản
 
-5 bước để test 1 game lần đầu qua dashboard:
-
-```
-1. Khởi động:        npm run serve
-2. Mở browser:       http://localhost:3200/dashboard
-3. Paste GAME_URL → Create Task
-4. Click row task → "1. Collect Context" → đợi ~3 phút
-5. Tab Test Cases → 🎯 gen hybrid → ▶ run hybrid → xem kết quả
-```
-
-Sau bước 5, có 1 game pass deterministic regression test.
-
----
-
-## 2. Cấu trúc dashboard
-
-```
-┌──────────────────────────────────────────────────────────┐
-│  Crawler QA Agent                          Queue: idle   │  ← Top bar
-├──────────────────────────────────────────────────────────┤
-│  ┌─────────────────────────────────────────────────────┐ │
-│  │  New Task                                            │ │
-│  │  [Game URL_______] [Spins:3] [☐ Auto-run]  [Create]│ │  ← New Task form
-│  └─────────────────────────────────────────────────────┘ │
-│  ┌─────────────────────────────────────────────────────┐ │
-│  │  Tasks                                  3 total      │ │
-│  │  Game           Provider  URL    Status   Duration   │ │  ← Tasks table
-│  │  fiesta-magenta RG        ...    completed  2.3m    │ │
-│  │  ...                                                  │ │
-│  └─────────────────────────────────────────────────────┘ │
-│  ┌─────────────────────────────────────────────────────┐ │
-│  │  Task detail: fiesta-magenta                  [×]   │ │
-│  │  [Test Cases] [QA View] [Context] [JSON] [Errors]   │ │  ← Detail panel
-│  │  [Spin Events] [Screenshots] [Full Log]              │ │     (tabs)
-│  │  ┌────────────────────────────────────────────────┐ │ │
-│  │  │ ... tab content ...                             │ │ │
-│  │  └────────────────────────────────────────────────┘ │ │
-│  └─────────────────────────────────────────────────────┘ │
-└──────────────────────────────────────────────────────────┘
-```
-
-### URL aliases
-- `/` → redirect `/dashboard`
-- `/dashboard` → main UI
-- `/playwright-report/` → Playwright HTML report (chỉ có sau khi chạy ít nhất 1 test)
-
----
-
-## 3. Top bar
-
-```
-Crawler QA Agent                    Queue: 1 running, 2 queued
-```
-
-- **Title** (left): tên app
-- **Queue status** (right): tổng quan worker state
-  - `idle` — không có task chạy
-  - `N running, M queued` — N đang chạy + M đang đợi
-  - Auto-update qua SSE, không cần refresh
-
-Update event: bất kỳ task nào thay đổi status → tự refresh số liệu.
-
----
-
-## 4. New Task form
-
-```
-Game URL: [https://rc.dev.revenge-games.com/...]
-Spins / test: [3]      ☐ Auto-run all phases     [Create Task]
-```
-
-### Fields
-
-| Field | Mục đích | Default |
-|---|---|---|
-| **Game URL** | URL game đầy đủ với token. Tool tự parse slug từ host + path. | (required) |
-| **Spins / test** | Số spin mỗi test case khi chạy LLM-driven test (Phase 3 Run Tests). Không ảnh hưởng hybrid/stats. | 3 |
-| **Auto-run all phases** | Tick → tạo task xong tự chạy Collect → Generate → Run liên tục (legacy 1-click pipeline). | unchecked |
-
-### Behavior
-
-- **Validation**: Server check URL hợp lệ (parseable URL) trước khi tạo task. Lỗi hiển thị banner đỏ phía trên form.
-- **Slug auto-detect**: tool tự lấy slug từ URL (vd `/fiesta-magenta/` → slug=`fiesta-magenta`). Xem [src/utils/url.ts](../src/utils/url.ts) cho rules.
-- **Provider auto-detect**: tool detect provider từ host (`revenge-games.com` → RG, `pragmaticplay.com` → PP, etc.)
-- **Token redaction**: URL hiển thị trong table được redact `?t=***REDACTED***` để tránh leak token.
-
-### Khi nào tick "Auto-run all phases"?
-
-- ✅ Game đơn giản, đã test trước, biết flow OK
-- ✅ Smoke test trong CI
-- ❌ Game mới (nên control từng phase để debug)
-- ❌ Muốn dùng hybrid (auto chỉ chạy LLM flow cũ)
-
----
-
-## 5. Tasks table
-
-```
-| | Game            | Provider | URL              | Status      | Spins | RTP    | Duration | Updated | |
-| | fiesta-magenta  | RG       | rc.dev...        | completed   | 9     | 96.5%  | 2.3m     | 2m ago  | |
-| | sweet-bonanza   | PP       | demogamesfree... | running     | 3/10  | -      | 1.1m     | now     | |
-| | book-of-dead    | PNG      | demo.playngo...  | failed      | 0     | -      | 0.5m     | 5m ago  | |
-```
-
-### Columns
-
-| Column | Mô tả |
+| Thuật ngữ | Nghĩa |
 |---|---|
-| **Game** | Slug (vd `fiesta-magenta`) |
-| **Provider** | Code (RG, PP, PG, EVO, NE, PNG, SPR) |
-| **URL** | Redacted URL, hover để xem đầy đủ |
-| **Status** | `queued` / `running` / `completed` / `failed` / `cancelled` |
-| **Spins** | Số spin đã record / target (vd `9/9` = xong, `3/10` = đang chạy) |
-| **RTP** | Observed RTP nếu có data (chỉ show sau khi statistical sim hoặc nhiều spin) |
-| **Duration** | Tổng thời gian từ start tới giờ |
-| **Updated** | Last activity timestamp |
-| **Actions** | Cancel/Retry/Delete buttons (visible theo status) |
+| **Session** | 1 Playwright Chrome instance được mở cho 1 game cụ thể. Phải có session live mới chạy được Discover / Probe / Run cases. |
+| **Registry** | Danh sách UI elements (uiKey + tọa độ x/y) đã được xác minh trong game. Lưu vào `fixtures/registry/<slug>/`. |
+| **uiKey** | Tên định danh element, theo dạng `parent__child` (vd `menuButton`, `menuButton__historyButton`, `autoButton__autospins-10`). |
+| **Discover** | AI vision quét screenshot → đề xuất các element + vị trí. QA confirm hoặc reject. |
+| **Probe** | Backend tự click thử element → quan sát network / popup → tự verify (no AI needed sau khi đã propose). |
+| **Auto-Onboard** | Pipeline 1-click: Deep Discover → Probe → Calibrate Payout. Có thể mất 30 phút – 1 tiếng. |
+| **OCR Region** | Bounding box trên màn hình mà runtime sẽ OCR mỗi spin (Balance / Bet / Last Win / Free Spin). |
+| **Catalog** | Bộ test case do AI sinh từ rules + game spec. Mỗi case có translated actions (list click). |
+| **Calibrate Payout** | Spin ở ≥ 2 mức bet để derive payout model, dùng cho `payout-integrity` case. |
 
-### Row interactions
+Pipeline tổng quan: **Start session → Discover/Probe elements → Define OCR Regions → Calibrate Payout → Generate Cases → Run Cases**.
 
-- **Click row** → mở Task Detail panel (cuộn xuống dưới)
-- **Click row đang active** → close detail
-- Hover row → highlight + cursor pointer
+---
 
-### Status colors
+## 2. Trang Overview
 
-| Status | Color | Meaning |
+URL: `/` hoặc `/dashboard`.
+
+```
+┌────────────────────────────────────────────────────────┐
+│  QA · Games Overview                  N live · M on disk│
+├────────────────────────────────────────────────────────┤
+│  N games registered · M active sessions      [Refresh] │
+│  ┌──────────────────────────────────────────────────┐  │
+│  │ URL: [https://pp.dev.../<slug>/?t=…]             │  │
+│  │ ☐ auto-discover on start   [Start Session]       │  │
+│  └──────────────────────────────────────────────────┘  │
+│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐       │
+│  │ vs20rnriches│ │ candy-blitz │ │ sweet-bon   │  …    │
+│  │  live       │ │  idle       │ │  idle       │       │
+│  │ Reg: 24 Ver:24                                       │
+│  │ [Open] [Resume] [Delete]                             │
+│  └─────────────┘ └─────────────┘ └─────────────┘       │
+└────────────────────────────────────────────────────────┘
+```
+
+### Phần tử
+
+| Element | Mục đích |
+|---|---|
+| **Top bar — `N live · M on disk`** | N session đang chạy / M game đã lưu fixtures. |
+| **URL input** | Paste full game URL (kèm token `?t=…`). Slug tự derive từ host + path. |
+| **☐ auto-discover on start** | Nếu tick: ngay khi Start xong sẽ chạy AI Deep Discover. Không tick (mặc định): chỉ launch Chrome + load URL, sau đó QA tự bấm Discover khi cần. |
+| **[Start Session]** | Tạo session mới + chuyển sang trang detail. Mất ~10–30s (Chrome warm-up + dismiss popup). |
+| **[Refresh]** | Reload danh sách (cũng auto-refresh mỗi 5s). |
+| **Card — Open** | Mở trang detail của game (kể cả khi không có session). |
+| **Card — Resume** | Bật lại Chrome cho game đã có registry, không re-discover. |
+| **Card — Delete** | **Xóa registry + toàn bộ fixtures** (cases / scenarios / stats / evidence). Có confirm dialog. Không undo được. |
+
+> **Lưu ý**: Click vào thân card (ngoài button) = Open. Click button trong card không trigger card click (đã `stopPropagation`).
+
+---
+
+## 3. Trang Game Detail
+
+URL: `/game/<slug>` (auto-rewrite sang `manual-verify.html?gameSlug=<slug>`).
+
+```
+[← All Games]   QA · Manual Verify   [vs20rnriches]
+
+┌─ Registered Games · Resume Previous Work ────────────┐
+│ Game | URL | Created | Verified | Actions            │
+│ vs20rnriches | https://…/?t=…  [Save]  24  [Stop]    │
+│                                  [Generate Cases]    │
+│                                  [Load Cases]        │
+│                                  [Run Stats] spins:N │
+│                                  [Delete]            │
+└──────────────────────────────────────────────────────┘
+┌─ New / Active Session ───────────────────────────────┐
+└─ Registry · Verify Elements & Discover ──────────────┘
+┌─ Add Element ────────────────────────────────────────┐
+┌─ OCR Regions · Define widget bounding boxes ─────────┐
+┌─ Discovery Snapshots — what AI saw at each level ────┐
+┌─ Test Cases · Inspect & Run ─────────────────────────┐
+┌─ App Log · Dashboard ↔ Server ───────────────────────┐
+```
+
+Khi page được scope vào `?gameSlug=<slug>`, panel `Registered Games` chỉ show duy nhất row của game đó (cross-game overview chuyển hết về `/`).
+
+### Trên cùng
+
+- **`← All Games`** — quay về `/`.
+- **Badge `vs20rnriches`** — slug đang scope. Title browser cũng đổi thành `QA · <slug>`.
+- **Task banner xanh** — hiện khi có pipeline (Discover / Calibrate / Run All / …) đang chạy, có elapsed time real-time.
+
+### Action buttons trên row của Registered Games
+
+| Button | Mục đích | Khi nào enabled |
 |---|---|---|
-| `queued` | gray | Đợi worker rảnh |
-| `running` | blue (animated) | Đang chạy |
-| `completed` | green | Tất cả phase done OK |
-| `failed` | red | 1 phase fail |
-| `cancelled` | gray | User cancel |
-
-### Sort + filter
-
-Hiện tại không có sort/filter UI. Task ngầm sort theo `updated` desc (mới nhất trên top).
+| **Save** (cạnh URL input) | Update URL/token mà giữ nguyên registry — dùng khi token cũ hết hạn. | Always |
+| **Start session / Stop & Save** | Toggle session cho game này. | Theo trạng thái session |
+| **Generate Cases** | Gọi AI catalog → sinh + translate test cases. ~30–90s (có polling fallback 30 phút khi proxy time-out). | Always (có registry là chạy được) |
+| **Load Cases** | Đọc test cases từ disk vào panel "Test Cases". Không cần session live. | Always |
+| **Run Stats** | Spin số lượng lớn (input ở `spins:`) → tính RTP / Hit Rate / Volatility (không chạy test cases). | Có session live |
+| **Delete** | Xóa game + toàn bộ fixtures. Confirm dialog. | Always |
+| **`spins:` input** | Số spin cho Run Stats / Run Cases (1–100000, default 100). | Always |
 
 ---
 
-## 6. Task Detail panel
-
-Panel mở khi click vào row task. Có 3 phần:
-
-### 6.1. Header
+## 4. Panel: New / Active Session
 
 ```
-Task detail: fiesta-magenta                                       [Close]
-─────────────────────────────────────────────────────────────────────────
-Meta: provider=RG | gameUrl=... | status=completed | duration=2.3m
-      [1. Collect Context]  [2. Generate Tests]  [3. Run Tests]
-      [Cancel]  [Retry]  [Delete]
+URL: [https://pp.dev.revenge-games.com/<slug>/?t=…]
+☐ Auto-discover AI at Start    [Start Session]  [Refresh State]
+Not started.
 ```
 
-- **Title**: slug + provider name
-- **Close** button: đóng panel (giữ task trong table)
-- **Meta**: status, duration, current stage
-- **Phase buttons**: 3 phase chính của LLM flow cũ
-- **Action buttons**: thay đổi theo status
-
-### 6.2. Phase action buttons
-
-Đây là điều khiển **legacy LLM pipeline**. Mỗi button tương ứng 1 phase:
-
-| Button | Khi nào enabled | Effect |
-|---|---|---|
-| **1. Collect Context** | Always (stage `pending`) | LLM auto-play → record traffic → auto-extract scenarios. ~2-5 phút. |
-| **2. Generate Tests** | Sau khi Collect xong (stage `context_ready`) | LLM sinh test catalog + Playwright code. ~1-3 phút. |
-| **3. Run Tests** | Sau khi Generate xong (stage `catalog_ready`) | Chạy LLM-driven tests. ~5-30 phút. |
-
-Buttons disable nếu pre-condition chưa met (vd Generate disable khi chưa Collect).
-
-### 6.3. Tabs
-
-8 tabs ở dưới meta:
-
-```
-[Test Cases] [QA View] [Context (AI inputs)] [JSON] [Errors X] [Spin Events] [Screenshots] [Full Log]
-```
-
-- **Test Cases** (default active) — hiển thị test catalog + status per case + ACTION BUTTONS (xem section 7)
-- **QA View** — formatted markdown của test catalog
-- **Context (AI inputs)** — show data AI đã thấy khi gen catalog (rules, options, samples)
-- **JSON** — raw JSON snapshots (play screen, api samples, paytable, game spec)
-- **Errors** (có badge số lỗi) — failed tests với INLINE DIFF VISUALIZATION
-- **Spin Events** — real-time stream of spin events
-- **Screenshots** — per-test + global screenshots
-- **Full Log** — stdout/stderr stream của tất cả phase
-
-Click tab → switch pane. Active tab có border bottom highlighted.
+| Control | Effect |
+|---|---|
+| **URL** | Paste game URL. Token bắt buộc còn hạn. |
+| **Auto-discover AI at Start** | Tick → ngay sau Start sẽ chạy Deep Discover toàn bộ. Bỏ tick (mặc định) → chỉ load URL, QA tự bấm Discover. |
+| **Start Session** | Launch Playwright Chrome. ~10–30s. Sau khi xong, các button khác (Discover, OCR, …) mới enable. |
+| **Refresh State** | Re-fetch `/status` từ server và re-render registry/snapshots — dùng khi QA chỉnh fixtures bằng tay ngoài UI. |
+| **`sessionInfo`** | Hiển thị slug + provider + state hiện tại (vd `vs20rnriches · pragmaticplay · running`). |
 
 ---
 
-## 7. Test Cases tab — chi tiết action buttons
+## 5. Panel: Registry
 
-Đây là tab chính, có 2 row action buttons với 8 buttons tổng.
-
-### Row 1: Reports + Deterministic flow
+Danh sách UI elements + button hành động per row.
 
 ```
-[📄 report.md] [⬇ report.json] [📊 playwright report] 
-[🎯 gen hybrid] [▶ run hybrid] [📋 scenarios] · N scenarios available
+[Deep Discover (AI)] [Probe Pending] [Auto-Onboard] [⏸ Pause]
+
+▼ menuButton                pending  (720, 32)  [Test][✓ Verify][Pick][Discover][+][⧉][×]
+   ▼ menuButton__historyButton  verified  (480, 220) …
+   ▼ menuButton__settingsButton verified  (480, 280) …
+▼ autoButton                pending  (640, 810) …
+…
 ```
 
-#### 📄 report.md
-- **Endpoint**: `GET /api/tasks/:id/case-report.md`
-- **Action**: Mở markdown report của LLM-driven test run trong tab mới
-- **Khi dùng**: Sau khi click "3. Run Tests" xong, đọc kết quả từng test case với invariants
-- **Format**: QA-readable markdown với pass/fail per case + error details
-- **Yêu cầu**: Đã chạy `3. Run Tests` ít nhất 1 lần
+### Hàng button trên cùng
 
-#### ⬇ report.json
-- **Endpoint**: `GET /api/tasks/:id/case-report.json` (với download header)
-- **Action**: Download full report JSON
-- **Khi dùng**: Khi cần data programmatic (Python script analyze, dashboards bên ngoài)
+| Button | Mục đích |
+|---|---|
+| **Deep Discover (AI)** | AI recursively explore: mở từng button → hash state → discover children → loop. Bounded bởi depth + AI calls + states. Mất ~5–15 phút. |
+| **Probe Pending** | Auto-verify mọi element còn `pending`: click thử → quan sát network/popup → set verdict. Thay thế phần lớn QA Pick thủ công. |
+| **Auto-Onboard** | One-click: Deep Discover + Probe Pending + Calibrate Payout. Mất 30 phút – 1 tiếng tùy game. |
+| **⏸ Pause** | Pause Auto-Onboard sau khi phase hiện tại kết thúc (không pause giữa phase). Resume = bấm lại Auto-Onboard. |
 
-#### 📊 playwright report
-- **URL**: `/playwright-report/` (full HTML report)
-- **Action**: Mở Playwright HTML report viewer trong tab mới
-- **Features**: Visual diff viewer (cho toHaveScreenshot), trace viewer, console log, video playback per test, attachment browser
-- **Yêu cầu**: Đã chạy bất kỳ Playwright test nào (LLM hoặc hybrid)
+> **Khi nào dùng cái nào?** Game mới hoàn toàn → Auto-Onboard. Game đã có registry nhưng UI vừa thay đổi → Deep Discover. Có 1 vài element pending sau Discover → Probe Pending.
 
-#### 🎯 gen hybrid
-- **Endpoint**: `POST /api/tasks/:id/gen-hybrid`
-- **Action**: Sinh `tests/generated/{slug}.hybrid.spec.ts` từ scenarios có sẵn
-- **Output**: Status text update `gen ✓ tests/generated/...` với path file
-- **Behavior**: Template-based (không gọi LLM), instant (< 1 giây)
-- **Yêu cầu**: Phải có scenarios (status text show "N scenarios available")
-- **Error**: Nếu chưa có scenarios → status "no scenarios (run Collect first)"
+### Onboard Progress panel
 
-#### ▶ run hybrid
-- **Endpoint**: `POST /api/tasks/:id/run-hybrid`
-- **Action**: Spawn Playwright chạy hybrid spec → stream output qua tab "Full Log"
-- **Behavior**: Fire-and-forget — response trả ngay, kết quả qua SSE
-- **Duration**: ~2-3 phút (LLM pre-game + spin loop)
-- **Yêu cầu**: Phải gen hybrid trước (file `.hybrid.spec.ts` exists)
-- **Error**: 409 nếu chưa gen hoặc worker đang bận
-
-#### 📋 scenarios (toggle)
-- **Endpoint**: `GET /api/tasks/:id/scenarios`
-- **Action**: Click → toggle panel hiển thị danh sách scenarios với expected values
-- **Output panel**:
-  ```
-  ┌────────────────────────────────────────────┐
-  │ small_win [small_win]                       │
-  │ bet=1 win=0.5 ending_balance=981174.55 ... │
-  │                                             │
-  │ no_win [no_win]                             │
-  │ bet=1 win=0 ending_balance=981200.65 ...   │
-  └────────────────────────────────────────────┘
-  ```
-- **Khi dùng**: Verify scenario data trước khi gen hybrid, hoặc debug khi assertion fail
-
-### Row 2: Stats + Baseline updates
+Khi Auto-Onboard chạy, một block dưới hàng button sẽ hiện:
 
 ```
-[📊 run stats] [____1000____] spins (token preflight ngầm)
-[🔄 update region] [🔄 update json] · status
+Auto-Onboard Progress    3/5 phases done · 12m elapsed
+ ✓ Deep Discover  (1m 24s)
+ ✓ Probe Pending  (47s)
+ ⏳ Calibrate Payout  (running 2m 11s)
+ ⋯ Validate Catalog
+ ⋯ Final Snapshot
 ```
 
-#### 📊 run stats + input
-- **Input field**: số spin (10 - 100000, default 1000)
-- **Endpoint**: `POST /api/tasks/:id/run-stats` body `{ spins: N, concurrency: 4, throttleMs: 10 }`
-- **Action**: Bắn N spin trực tiếp tới game's spin endpoint (bypass UI)
-- **Flow**:
-  1. Preflight 1 request thử → check token valid
-     - HTTP 401/403 → fail ngay với hướng dẫn re-record
-     - HTTP 200/201 → continue
-  2. Mass-spin với concurrency 4 (4 worker parallel)
-  3. Stream progress qua tab "Full Log": `[simulate] 500/1000 RTP=98.2% hits=180`
-  4. Khi xong: formatted report (RTP, HF, distribution, max win) trong log
-  5. Save vào `fixtures/statistical/{slug}-{ISO}.json`
-- **Duration**: ~16s (100 spin) → ~15 phút (10k spin)
-- **Cost**: $0 LLM, nhưng tốn balance demo account (mỗi spin = 1 round thật)
+Persist sau khi xong để QA review timings + skip reasons.
 
-#### 🔄 update region
-- **Endpoint**: `POST /api/tasks/:id/update-baselines` body `{ type: "region" }`
-- **Action**: Spawn Playwright với `REGION_SNAPSHOT_UPDATE=1` → re-capture region snapshot baselines
-- **Yêu cầu**: Phải có hybrid spec đã gen
-- **Khi dùng**: Sau khi UI thay đổi có chủ đích, accept new state làm baseline
-- **Output**: Baseline mới ghi vào `fixtures/templates/{slug}/*.png`
-- **Workflow đúng**:
-  1. Run hybrid → fail vì region mismatch
-  2. Tab "Errors" → xem diff inline → verify visual change OK
-  3. Click button này → spawn re-capture
-  4. Run hybrid lại → pass
-  5. `git add fixtures/templates/ && git commit`
+### Per-row actions
 
-#### 🔄 update json
-- **Endpoint**: `POST /api/tasks/:id/update-baselines` body `{ type: "json" }`
-- **Action**: Tương tự update region nhưng với `JSON_SNAPSHOT_UPDATE=1`
-- **Output**: Baseline mới ghi vào `fixtures/snapshots/{slug}/*.json`
-- **Khi dùng**: Sau khi server đổi schema API có chủ đích
+| Button | Effect |
+|---|---|
+| **Test** | Backend click trên Playwright Chrome — verify visual mà chưa update status. |
+| **✓ Verify** | Đánh dấu element `verified` (status pill chuyển sang xanh). |
+| **✓ All (N)** | Verify toàn bộ children của row đang đứng. |
+| **Pick** | Mở picker overlay với screenshot tươi — QA click chính giữa element trên ảnh → set lại tọa độ. |
+| **Discover** | Backend click element này → đợi popup → AI capture sub-state → thêm children nested. |
+| **+** | Mở Add Element form với prefilled `<key>__`. |
+| **⧉** | Copy uiKey vào Add Element form (để rename/repick). |
+| **×** | Remove element khỏi registry. |
+| **AI Recover** | (Trên element đã reject) AI tìm lại element trên screen hiện tại. |
+
+### Status pill
+
+- `pending` (xám) — đã propose, chưa verify
+- `verified` (xanh) — đã verify (probe hoặc QA confirm)
+- `rejected` (đỏ) — verify thất bại, cần AI Recover hoặc Pick lại
+
+### Discovery Gaps
+
+Sau Deep Discover, block `discoveryGaps` báo những element kỳ vọng (theo provider profile) mà chưa thấy — vd `turboButton ở autoplay popup`. Dùng làm checklist cho QA.
 
 ---
 
-## 8. Các tab khác
+## 6. Panel: Add Element
 
-### 8.1. QA View
-Render markdown formatted version của test catalog. Dễ đọc hơn raw JSON. Có button download .csv (Excel/Sheets-ready).
-
-### 8.2. Context (AI inputs)
-Show toàn bộ input AI đã thấy khi sinh catalog:
-- **Rules summary** — paytable extracted
-- **Game spec** — bet sizes, symbols, features
-- **Config response** — structured config từ server
-- **Sample spin responses** — vài spin mẫu để AI suy ra invariants
-
-Dùng để **debug khi LLM sinh catalog sai** — kiểm tra AI đã thấy data nào.
-
-### 8.3. JSON
-Show raw JSON snapshots — 5 cards:
-- `play_screen` — game state lúc ready
-- `api_snapshot` — bundle authorize + config + balance
-- `paytable` — paytable extracted
-- `options` — bet options + autoplay options
-- `game_spec` — full GameSpec
-
-Click expand từng card → view JSON tree.
-
-### 8.4. Errors (có badge số lỗi)
-
-Tab quan trọng khi test fail. Cấu trúc:
+Khi AI bỏ sót 1 element và QA muốn thêm thủ công.
 
 ```
-┌─────────────────────────────────────────────────────┐
-│  3 errors  1 warning  across 2 phases               │
-│  ☑ Errors  ☑ Warnings    [Copy all]                 │
-├─────────────────────────────────────────────────────┤
-│  ▼ run-tests (2 errors)                              │
-│  ├─ 10:32:15 ERROR  Region snapshot mismatch: ...   │
-│  │    ┌──────────┬──────────┬──────────┐            │
-│  │    │ baseline │ actual   │ diff     │            │  ← INLINE DIFF VIZ
-│  │    │ [image]  │ [image]  │ [image]  │            │
-│  │    └──────────┴──────────┴──────────┘            │
-│  └─ 10:33:01 ERROR  JSON snapshot mismatch: ...     │
-│       [changed] winAmount: number→string             │  ← COLORIZED DIFF
-│       [added] bonusMultiplier: 2                     │
-│       [removed] status: "RESOLVED"                   │
-└─────────────────────────────────────────────────────┘
+uiKey: [autoplay_popup__autospins-10]   [Pick on Screenshot]
+or fill manually: x: [___]  y: [___]   [Add]
 ```
 
-**Features mới**:
-- **Region diff viz**: 3 ảnh side-by-side với border màu (gray=baseline, amber=actual, red=diff)
-- **JSON diff colorize**: added=green, removed=red, changed=amber, type_changed=purple
-- Click ảnh → mở fullsize tab mới
-- Filter checkbox: hide warnings để focus errors
-- Copy all → copy text errors vào clipboard
+| Field/Button | Mục đích |
+|---|---|
+| **uiKey input** | Theo convention `parent__child`. Vd `menuButton__historyButton`. |
+| **Pick on Screenshot** | Mở picker với screenshot tươi — click vào element → tọa độ auto-fill. |
+| **x / y manual** | Nhập trực tiếp pixel coord (đo bằng tay từ screenshot khác). |
+| **Add** | Ghi vào registry với status `pending` (chưa verify). |
 
-Diff fetch qua `/api/tasks/:id/attachment?path=...` (test-results/, reports/, etc.).
-
-### 8.5. Spin Events
-Real-time stream từng spin event với fields:
-- `spinNumber` — index trong test
-- `betAmount` / `winAmount` / `balanceBefore` / `balanceAfter` / `netChange`
-- `status` (RESOLVED, PENDING, ...)
-- `spinId` / `currency`
-
-Useful khi:
-- Verify LLM flow đang spin đúng
-- Debug balance chain issues
-- Live monitor trong khi test chạy
-
-### 8.6. Screenshots
-2 phần:
-- **Root screenshots** (flat) — pre-game iterations, ready state
-- **Per-case folders** — screenshots theo `caseId` (chỉ có khi LLM test)
-
-Click ảnh → mở fullsize modal. Modal có nút Close + label hiển thị tên file.
-
-### 8.7. Full Log
-Pure text dump của stdout + stderr từ tất cả phase. Useful khi:
-- Debug deep — xem console.log của test code
-- Verify LLM iteration sequence
-- Track timing
-
-Auto-scroll khi có dòng mới (nếu đang ở cuối).
+> Trên element parent có button **`+`** — dùng cái này thay vì panel để prefilled prefix tự động.
 
 ---
 
-## 9. Real-time events (SSE)
+## 7. Panel: OCR Regions
 
-Dashboard nhận events qua Server-Sent Events từ 2 endpoints:
+Define bbox cho runtime để OCR `balance` / `bet` / `last_win` / `free_spin_count` mỗi spin.
 
-- `/api/stream` — global events cho tất cả tasks (queue status, task creation)
-- `/api/tasks/:id/stream` — per-task events khi xem detail panel
+```
+[🔄 Refresh screenshot] [🤖 AI Auto-Detect] [✕ Cancel drawing]   (no session)
 
-### Event types
+| Key             | Color | Bbox     | Test value | Actions      |
+| balance widget  | green | not set  | —          | [✏️ Draw]    |
+| bet widget      | blue  | …        | $1.00      | [Redraw][Test OCR][Remove]
+| win widget      | orange|          |            |              |
+| free spin count | purple|          |            |              |
+```
 
-| Event | Emit khi | Update |
-|---|---|---|
-| `pre_game_start` | Pre-game LLM loop bắt đầu | Log |
-| `pre_game_iter` | Mỗi LLM iteration | Log |
-| `pre_game_ready` | AI confirm play screen ready | Status |
-| `open_game` | openGame() bắt đầu | Log |
-| `game_ready` | Game canvas ready | Status |
-| `spin` | Mỗi spin response captured | Spin Events tab |
-| `authorize` | Authorize-game response | Spin Events tab |
-| `case_start` | Test case bắt đầu | Test Cases tab (status running) |
-| `case_end` | Test case kết thúc | Test Cases tab (status pass/fail) |
-| `catalog_ready` | LLM xong catalog | Test Cases tab populate |
-| `phase_done` | Phase 1/2/3 xong | Status badge advance |
+### Workflow vẽ bbox
 
-UI tự auto-update qua các events này — không cần F5.
+1. Click **`✏️ Draw`** trên row tương ứng (vd `balance widget`).
+2. Screenshot tự load bên dưới. Banner cam: **STEP 1/2: Click TOP-LEFT corner**.
+3. Click **góc trên-trái** của widget trên ảnh — chấm cam đánh dấu vị trí.
+4. Di chuột → ghost rectangle preview. Banner đổi: **STEP 2/2: Click BOTTOM-RIGHT corner**.
+5. Click **góc dưới-phải** → backend test OCR luôn + lưu bbox.
 
-### Heartbeat
-SSE connection có ping mỗi 20s để giữ alive qua proxy.
+### Buttons khác
+
+| Button | Effect |
+|---|---|
+| **🔄 Refresh screenshot** | Re-capture nếu game state đã đổi (vd vừa close popup). |
+| **🤖 AI Auto-Detect** | AI vision đoán bbox của Balance / Bet / Win / Free Spin từ screenshot hiện tại. Pick có confidence ≥ threshold sẽ auto-save; thấp hơn sẽ propose để QA accept thủ công. |
+| **✕ Cancel drawing** | Hủy giữa draw (sau Step 1 mà chưa Step 2). |
+| **Test OCR** | OCR ngay bbox đã định nghĩa → hiển thị giá trị → confirm đúng. |
+| **Remove** | Xóa bbox. |
+
+> **Khi nào cần?** Test case dùng `screen.balance` / `screen.last_win` để assert, hoặc rule `UiBalanceMatchesApiRule`. Không define = case sẽ skip với `skipReason: missing OCR region`.
 
 ---
 
-## 10. Common workflows
+## 8. Panel: Discovery Snapshots
 
-### Workflow A: Test 1 game từ zero qua dashboard
-
-```
-1. npm run serve → mở http://localhost:3200/dashboard
-2. Paste GAME_URL → Create Task
-3. Click row → detail panel mở
-4. [1. Collect Context] → đợi ~3 phút
-   → Tab "Full Log" xem stream
-   → Khi xong: status "context_ready", scenarios auto-extract
-5. Tab Test Cases → [📋 scenarios] verify có scenarios
-6. [🎯 gen hybrid] → status "gen ✓ ..."
-7. [▶ run hybrid] → xem Full Log
-8. Khi xong → status pass/fail per test
-9. Nếu fail → tab "Errors" xem inline diff
-```
-
-### Workflow B: Statistical RTP check
+Visual record của những gì AI đã thấy ở mỗi state.
 
 ```
-1. Mở detail panel của task có recording fresh
-2. Tab Test Cases → input số spin = 10000 → [📊 run stats]
-3. Preflight ~1 giây
-4. Tab "Full Log" stream progress
-5. Khi xong → formatted report trong log
-6. Verify: RTP gần spec, hit freq hợp lý, max win cap đúng
+Discovery Snapshots — what AI saw at each level     [Refresh]
+
+| State                  | Elements | Verified | Created  | Actions |
+| main                   | 8        | 8        | 5m ago   | [View]  |
+| menuButton popup       | 6        | 6        | 4m ago   | [View]  |
+| autoButton popup       | 5        | 4        | 3m ago   | [View]  |
+| buyBonusButton popup   | 3        | 3        | 2m ago   | [View]  |
 ```
 
-### Workflow C: Update baseline sau UI change
+Click **View** trên row → hiển thị screenshot full với markers màu (green = verified, yellow = pending, red = rejected) tại các tọa độ AI đã propose. Marker có icon:
 
-```
-1. Designer push UI update
-2. Run hybrid → fail
-3. Tab "Errors" → xem region diff inline
-4. Verify visually OK
-5. Click [🔄 update region]
-6. Run hybrid lại → pass
-7. git add fixtures/templates/ && commit
-```
+- 🤖 — probe-verified (backend)
+- 👤 — QA-verified manually
 
-### Workflow D: Debug deep với Playwright report
-
-```
-1. Run hybrid → fail
-2. Tab Test Cases → [📊 playwright report] (mở tab mới)
-3. Click failed test trong tree
-4. Xem trace viewer (timeline + DOM snapshot + network)
-5. Verify đúng lúc nào fail, request gì, DOM state ra sao
-```
-
-### Workflow E: Multi-task parallel monitoring
-
-```
-1. Tạo 3 task cho 3 game khác nhau
-2. Tick "Auto-run all phases" cho mỗi task → queue
-3. Worker chạy tuần tự (workers=1 by default)
-4. Mở Task A detail → switch Task B detail → switch Task C detail
-5. Top bar show "1 running, 2 queued"
-6. Khi 1 task xong → auto next
-```
+Dùng để verify sau Discover: AI đã thấy đúng popup chưa, có element nào bị miss/wrong coord không.
 
 ---
 
-## 11. Tips & shortcuts
+## 9. Panel: Test Cases
 
-### Browser DevTools
-- **F12** → Network tab → filter `eventsource` để xem SSE events raw
-- Console tab → see `[browser] ...` log từ test code
+Panel quan trọng nhất sau khi onboard xong.
 
-### Hard reload
-Sau khi tôi (hoặc git pull) update `public/app.js`, browser cache HTML/JS cũ. Hard reload:
-- **Mac**: Cmd+Shift+R
-- **Windows/Linux**: Ctrl+Shift+R
+```
+Test Cases · Inspect & Run
+                       [Calibrate Payout][Run All cases][Run Unrun]
+                       [Load Cases][Re-translate Skipped]
+                       [Re-translate ALL][Clear Results]
 
-### Multiple tabs
-Mở dashboard ở nhiều tab cùng lúc — mỗi tab nhận SSE riêng. Không có race condition vì state ở server.
+Run All settings:
+  Max wait per case (sec): [90]
+  ☐ behavioral probe (uses 1 spin/case)
+  ☑ 🤖 Auto-mode (heuristic + auto-apply high-conf patches)
 
-### Direct API access
-Mọi action UI = REST call. Có thể automate qua curl/script:
-```bash
-# Create task
-curl -X POST http://localhost:3200/api/tasks \
-  -H 'content-type: application/json' \
-  -d '{"gameUrl":"https://..."}'
-
-# Trigger phase
-curl -X POST http://localhost:3200/api/tasks/<id>/collect
-
-# Run stats
-curl -X POST http://localhost:3200/api/tasks/<id>/run-stats \
-  -H 'content-type: application/json' \
-  -d '{"spins":1000}'
-
-# List scenarios
-curl http://localhost:3200/api/tasks/<id>/scenarios
+CATEGORY: BET (3 cases)
+| ▶ | Pass/Fail | Title              | Actions | Run | Edit |
+| ▼ | ✓ PASS   | min-bet-spin       | 4       | [Run] [✎ Edit] [Re-translate] |
+|   |          | ↳ Detailed assertions, OCR evidence, network capture, screenshot, video
 ```
 
-### Static assets caching
-Dashboard set `cache-control: no-store` → mọi GET không cache. Update CSS/JS thấy ngay sau reload.
+### Action buttons header (theo thứ tự)
+
+| Button | Effect |
+|---|---|
+| **Calibrate Payout** | Spin ở ≥ 2 mức bet → derive + self-validate payout model. One-time per game. Required cho `payout-integrity` case. |
+| **Run All cases** | Chạy toàn bộ case runnable tuần tự. Hiện banner + progress table real-time. |
+| **Run Unrun** | Chỉ chạy case chưa có verdict (unrun / skipped). |
+| **Load Cases** | Đọc từ disk vào panel. Bấm sau khi `Generate Cases`. |
+| **Re-translate Skipped** | Re-run AI translator chỉ với case có 0 actions hoặc skipReason. |
+| **Re-translate ALL** | Re-run AI translator cho **mọi** case (kể cả case đang chạy được — sẽ overwrite). |
+| **Clear Results** | Xóa cached run results trong localStorage cho game đang xem. |
+
+### Run All settings
+
+| Setting | Mục đích |
+|---|---|
+| **Max wait per case (sec)** | Tối đa bao lâu đợi game settle về main giữa 2 case. Poll mỗi 2s, đi tiếp khi detect "on main". Default 90s. |
+| **Behavioral probe (uses 1 spin/case)** | Tick → trước mỗi case sẽ click spinButton + đợi 3s spin response. Xác nhận "on main" chắc chắn nhưng tốn 1 spin (= bet) mỗi case. |
+| **🤖 Auto-mode** (tick mặc định) | Khi case FAIL_LOW / INCONCLUSIVE, tự run heuristic AI Review (free, không gọi LLM) + auto-apply patch nếu confidence ≥ 0.85 + rerun 1 lần. Capped 1 patch/case (cho full loop dùng button `🔁 Auto-Rerun Loop` per case). |
+
+### Run Progress Table
+
+Trong khi `Run All` chạy:
+
+```
+Running 24 cases…   13/24    [Cancel]
+| Status   | Case ID            | Elapsed |
+| ✓ PASS   | min-bet-spin       | 4.2s    |
+| ✓ PASS   | mid-bet-spin       | 5.0s    |
+| ⏳ run   | autospin-toggle    | 2.3s    |  ← highlighted blue, click → scroll xuống case row
+| ⋯ queue  | …                  |         |
+```
+
+Click row → scroll case panel xuống case đó.
+
+### Per-case row
+
+Click `▼` để expand. Mỗi case có:
+
+| Phần | Mục đích |
+|---|---|
+| **Pass/Fail badge** | Tổng verdict. Khi expand cho biết breakdown. |
+| **Action count + skipReason** | Số click trong translated actions; nếu 0 thường do thiếu element hoặc OCR region. |
+| **[Run]** | Chạy chỉ case này. |
+| **[✎ Edit]** | Mở modal sửa JSON actions trực tiếp (bypass AI — edit của QA là final). |
+| **[Re-translate]** | Re-run AI translator cho case này (dùng registry + game spec hiện tại). |
+| **Detailed assertions** | Bảng rule + verdict + diff per rule. |
+| **🔍 OCR Evidence (M/N)** | Show crop ảnh từng widget mỗi spin + OCR value. M/N = số pass / total. |
+| **🔬 Parser Diagnostic** | Khi rule mismatch — show raw vs parsed value, color theo severity. |
+| **📡 Network Capture (X spins / Y req)** | Bảng request/response. Có **`View full bodies →`** load chi tiết body. |
+| **📋 Action Log** | Trace từng click thực tế: timestamp, element key, coord, before/after screenshot ref. |
+| **📜 History Popup** | Khi case verify menu/history popup — show screenshot popup AI đã thấy. |
+| **Case screenshot** | Toggle xem ảnh state cuối case. |
+| **🎥 Case video** | Toggle video playback của case run (Playwright trace). |
+| **🤖 AI Review / 🔍 Quick Diagnose** | Khi case fail. Quick Diagnose = heuristic only, free. AI Review = heuristic + AI classifier, ~$0.02–0.05/call. Cho ra root cause + optional patch. |
+| **📝 Apply Patch** | Validate + apply patch (sau khi đã có review) + ghi audit log. |
+| **🔁 Auto-Rerun Loop** | Apply patch → rerun → nếu fail tiếp → AI review nữa (max 3 iter). |
+
+### Categories
+
+Cases được group theo category (BET / SPIN / AUTOPLAY / BUY_BONUS / PAYOUT / UI / …). Mỗi group có header `▼ CATEGORY (N)`.
+
+### Run Summary banner (sau khi Run All xong)
+
+Khi run xong toàn bộ, panel summary hiện lên trên cùng case panel:
+
+```
+Run Summary — 18/24 passed · 4 failed · 2 skipped         [✕]
+[Show all 4 failed]
+▼ Mismatch table — 4 rows
+  | Case          | Rule              | Expected | Actual |
+  | …             | balance-match     | 1000     | 999.95 |
+```
+
+Click **`✕`** → dismiss (cũng clear pointer trong localStorage).
+
+---
+
+## 10. Panel: App Log
+
+```
+App Log · Dashboard ↔ Server                       [Clear]
+
+[09:13:42] POST /api/qa/manual/start { url: '…', autoDiscover: false }
+[09:13:54] ✓ session started, slug=vs20rnriches
+[09:14:02] POST /api/qa/manual/deep-discover
+[09:14:08] [discover] state=main, found 8 elements
+…
+```
+
+Trace mọi API call frontend → server, kèm response status + timing. Dùng debug khi UI không phản hồi hoặc cần verify endpoint nào đang được gọi.
+
+**[Clear]** wipe log (chỉ client-side).
+
+---
+
+## 11. Workflow chuẩn
+
+### A. Onboard game mới từ zero (lần đầu)
+
+```
+1. /  → paste GAME_URL → [Start Session]
+2. (Tự nhảy sang /game/<slug>)
+3. Panel Registry → [Auto-Onboard]
+   → Theo dõi Onboard Progress panel
+   → ~30 phút – 1 tiếng
+4. Khi xong: tất cả element verified, payout model calibrated
+5. Panel OCR Regions → [🤖 AI Auto-Detect] → review + redraw nếu cần
+6. Registered Games row → [Generate Cases]   (~30–90s)
+7. Panel Test Cases → [Load Cases] → [Run All cases]
+8. Sau khi xong: review Run Summary → fix các case fail
+```
+
+### B. Game đã có registry, token vừa expire
+
+```
+1. /  → row của game → [Resume]
+   (HOẶC: trên detail page, Save URL mới rồi Start)
+2. Nếu token mới → bấm Save trên row Registered Games
+3. Panel Test Cases → [Run All cases]
+```
+
+### C. UI game thay đổi (ad-hoc Discover lại)
+
+```
+1. Resume session
+2. Panel Registry → [Deep Discover (AI)]   (~5–15 phút)
+3. Panel Discovery Snapshots → View → verify markers
+4. Panel Registry → [Probe Pending] nếu có pending
+5. Test lại từng case ảnh hưởng bằng [Run] per row
+```
+
+### D. Statistical RTP only (không cần case)
+
+```
+1. /  → Open game (không cần Run All)
+2. Registered Games row → set spins=10000 → [Run Stats]
+3. Theo dõi App Log + report cuối cùng
+```
+
+### E. Fix case fail bằng AI Auto-Rerun
+
+```
+1. Panel Test Cases — case nào fail → expand
+2. Bấm [🤖 AI Review]  (~$0.02–0.05)
+3. Review patch đề xuất
+4. [🔁 Auto-Rerun Loop] → apply + rerun max 3 lần
+5. Hoặc bấm [✎ Edit] tự sửa actions JSON
+```
 
 ---
 
 ## 12. Troubleshooting
 
 ### Dashboard không load
-- Verify `npm run serve` đang chạy (xem terminal output: `http://localhost:3200/dashboard`)
-- Verify port 3200 không bị process khác chiếm: `lsof -i :3200`
-- Try port khác: `PORT=3299 npm run serve`
 
-### Buttons không response (click no effect)
-- Mở F12 → Console — check JS error
-- Hard reload (Cmd+Shift+R) — cache cũ
-- Verify backend đã restart sau code update
+- Verify server đang chạy (`http://localhost:3200/dashboard` mở được).
+- Port 3200 bị chiếm → `lsof -i :3200`.
 
-### "0 scenarios available" sau Collect xong
-- Collect chạy thành công nhưng không có spin response trong recording
-- Verify trong Full Log: dòng `Auto-extracted N scenario(s)` — nếu N=0 hoặc dòng "No scenarios extracted"
-- Fix: chạy lại Collect (đôi khi AI không click được spin), hoặc dùng CLI `npm run auto` rồi `npm run extract-scenarios -- {slug}`
+### Start session timeout (10–30s đáng lẽ là OK, đợi > 60s không xong)
 
-### Hybrid run fail "no spin request fired after 4 clicks"
-- Game's spin button không ở coord (720, 810) — verify trong tab Screenshots
-- Hoặc game loading vẫn chưa xong → tăng `maxIterations` trong pre-game
-- Hoặc token expired → re-collect
+- Token URL hết hạn → 401/403 khi load game → Playwright vẫn mở nhưng game không vào main → check App Log.
+- Sửa URL trên Registered Games row → [Save] → bấm Resume lại.
 
-### Stats fail với 401/403
-- Token expired (recording > 24-48h cũ)
-- Solution: re-collect (Phase 1) với URL token fresh
+### Buttons disabled (xám)
 
-### Errors tab không show inline diff
-- Diff PNG path không match `test-results/` allowed prefix → check region-snapshot.ts ghi đúng dir
-- JSON error format không match pattern `[changed]/[added]/[removed]` → check json-snapshot.ts:formatDiff()
-- File diff bị clean → tránh `npm run clean` giữa test fail và view error
+- Tất cả button Discover / OCR / Add yêu cầu có **session live**. Nếu chưa Start → button disabled.
+- Kiểm tra `sessionInfo` (panel New / Active Session) — phải show slug + running state.
 
-### Playwright report 404
-- Chưa chạy test nào → reports/html/ chưa generate
-- Fix: chạy bất kỳ test (Run Tests hoặc run hybrid) ít nhất 1 lần
+### Deep Discover dừng giữa chừng
 
-### SSE disconnect
-- Browser timeout connection sau idle lâu
-- Dashboard tự re-connect khi detect close
-- Hoặc reload page
+- AI calls budget hoặc depth cap → check App Log line cuối.
+- Bấm lại Deep Discover sẽ resume từ state cuối cùng đã hash.
 
-### Multiple tasks queue nhưng chỉ 1 chạy
-- Worker count default = 1 (sequential)
-- Đây là intentional vì Playwright headed mode mặc định không parallel safe
-- Để chạy parallel: cần custom config (chưa expose qua dashboard)
+### Probe Pending verify hết thành rejected
 
----
+- Element thật sự không click được (overlay block, hoặc coord sai).
+- Try [Pick] lại bằng screenshot tươi rồi probe lại.
 
-## Phụ lục: Endpoint reference đầy đủ
+### "Generate Cases" trả 504 nhưng không có toast lỗi
 
-```
-GET    /api/tasks                              # List tất cả tasks
-POST   /api/tasks                              # Create task
-GET    /api/tasks/:id                          # Get task detail
-DELETE /api/tasks/:id                          # Delete task
-GET    /api/tasks/:id/log                      # Full log
-GET    /api/tasks/:id/events                   # Spin events
-GET    /api/tasks/:id/stream                   # SSE stream
-GET    /api/stream                             # Global SSE
-GET    /api/tasks/:id/test-cases               # Test catalog JSON
-GET    /api/tasks/:id/test-cases.md            # Markdown
-GET    /api/tasks/:id/test-cases.csv           # CSV
-GET    /api/tasks/:id/case-report.md           # Run report markdown
-GET    /api/tasks/:id/case-report.json         # Run report JSON
-GET    /api/tasks/:id/catalog-context          # AI inputs
-GET    /api/tasks/:id/json-snapshots           # Structured JSON snapshots
-GET    /api/tasks/:id/screenshots              # Screenshot list
-GET    /api/tasks/:id/screenshots/:filename    # Serve screenshot
-GET    /api/tasks/:id/attachment?path=...      # Serve attachment (test-results/, reports/, fixtures/tasks/)
+- Đây là proxy timeout, server vẫn chạy. Dashboard tự poll `/status` đến 30 phút.
+- Quan sát App Log dòng `polling… Ns elapsed (server still running)`.
 
-POST   /api/tasks/:id/collect                  # Phase 1
-POST   /api/tasks/:id/generate                 # Phase 2
-POST   /api/tasks/:id/run                      # Phase 3
-POST   /api/tasks/:id/retry                    # Retry failed task
-POST   /api/tasks/:id/cancel                   # Cancel running
-POST   /api/tasks/:id/cases/:caseId/run        # Re-run single case (LLM)
+### Run All bỏ qua nhiều case (skipped)
 
-# Deterministic / Hybrid (mới)
-GET    /api/tasks/:id/scenarios                # List scenarios + expected
-POST   /api/tasks/:id/gen-hybrid               # Gen hybrid spec
-POST   /api/tasks/:id/run-hybrid               # Run hybrid spec
+- Case có 0 actions / có `skipReason` → [Re-translate Skipped] hoặc fix root cause:
+  - Thiếu element trong registry → Add hoặc Discover
+  - Thiếu OCR region → Define bbox
+  - Thiếu payout model → Calibrate Payout
 
-# Statistical (mới)
-POST   /api/tasks/:id/run-stats                # Mass-spin sim
-GET    /api/tasks/:id/stats-report             # Latest stats report
+### Run All đứng lâu giữa 2 case
 
-# Baseline updates (mới)
-POST   /api/tasks/:id/update-baselines         # body: { type: "region"|"json"|"both" }
+- Đang đợi game settle về main. Max wait = 90s default.
+- Bật **behavioral probe** trong Run All settings cho game khó detect "on main" — tốn 1 spin/case nhưng chắc chắn.
 
-# Static
-GET    /                                       # → redirect /dashboard
-GET    /dashboard                              # Main UI (alias /index.html)
-GET    /style.css, /app.js                     # Static assets
-GET    /playwright-report/                     # Playwright HTML report
-GET    /playwright-report/*                    # Report sub-resources
-```
+### OCR widget output sai value
+
+- Bbox bao thiếu hoặc bao thừa số → [Redraw] cho khít hơn.
+- Test ngay bằng [Test OCR] sau khi redraw.
+
+### Case fail với `payout-integrity` mặc dù logic đúng
+
+- Payout model chưa calibrate → bấm [Calibrate Payout].
+- Đã calibrate nhưng game cập nhật paytable → calibrate lại.
+
+### "Stop & Save" không kết thúc Chrome
+
+- Đợi 5–10s (Playwright shutdown). Nếu vẫn không xong → check process: `ps aux | grep playwright`.
+
+### Toast lỗi `409 Conflict`
+
+- Có operation đang chạy cho session đó (vd đang Discover mà bấm Run All) → đợi xong hoặc Cancel.
 
 ---
 
-## TLDR — 30 giây skim
+## TLDR — 30 giây
 
-- Dashboard ở `http://localhost:3200/dashboard`
-- Tạo task → click row → detail panel
-- 3 button phase: Collect / Generate / Run (LLM flow)
-- Tab Test Cases có 2 row action: deterministic flow + math/baseline
-- Tab Errors có inline diff visualization khi snapshot fail
-- 📊 playwright report → full UI cho deep debug
-- Mọi thứ real-time qua SSE — không cần F5
+- `/` xem tất cả game → click card vào `/game/<slug>`.
+- Game mới: **Auto-Onboard** (1 button làm hết Discover + Probe + Calibrate, mất 30p–1h).
+- Định nghĩa OCR Regions (Draw bbox hoặc AI Auto-Detect) trước khi run case dùng `screen.*`.
+- **Generate Cases** → **Load Cases** → **Run All cases**. Bật Auto-mode để auto-fix case fail confidence cao.
+- Case fail → expand row → **🤖 AI Review** → **🔁 Auto-Rerun Loop**, hoặc **✎ Edit** sửa actions JSON tay.
+- Mọi pipeline lớn (Auto-Onboard / Generate / Run All) có banner + Onboard Progress / Run Progress table real-time.
 
-Đó là toàn bộ dashboard.
+Đó là toàn bộ dashboard. Không cần CLI.

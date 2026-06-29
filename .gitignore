@@ -3,6 +3,7 @@ node_modules/
 dist/
 *.tsbuildinfo
 coverage/
+.playwright-mcp/
 
 # ===== Reports & test outputs =====
 reports/
@@ -69,6 +70,9 @@ fixtures/registry/
 
 # Pregame stats (append-only log, regenerates)
 fixtures/pre-game/_stats.jsonl
+
+# Token-usage logs (append-only per-day, regenerates)
+fixtures/usage/
 
 # ===== Stray debug PNGs from Playwright MCP =====
 # Older agent runs wrote browser_take_screenshot output to CWD = repo root
