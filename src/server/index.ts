@@ -13,7 +13,7 @@ import { requestContext, getCurrentUser, type AuthIdentity } from "./request-con
 // Build marker — bump on each deploy-worthy change so `pm2 logs qa` (and
 // GET /api/qa/version) prove which code is actually running on the Mac mini.
 // "vẫn vậy" after a fix almost always = stale code; this makes it verifiable.
-export const BUILD_TAG = "2026-06-25g +dropdown-bet-select(scroll-locate,value-based)";
+export const BUILD_TAG = "2026-06-26b +debounce-lost-spins-inconclusive";
 const BOOT_AT = new Date().toISOString();
 
 loadEnv();

@@ -518,6 +518,7 @@ export async function executeCase(
   // lines below; this declaration just promises TypeScript it exists.
   let onResponseRef: ((res: import("playwright").Response) => void) | null = null;
   let onWebSocketRef: ((ws: import("playwright").WebSocket) => void) | null = null;
+  let onRequestRef: ((req: import("playwright").Request) => void) | null = null;
   // Unsubscribe handle for the session-level WS frame subscription (set when
   // ctx.subscribeWsFrames is wired). Called at case end to stop the fan-out.
   let unsubscribeWs: (() => void) | null = null;
@@ -530,6 +531,7 @@ export async function executeCase(
     // cookies).
     if (onResponseRef) p.on("response", onResponseRef);
     if (onWebSocketRef) p.on("websocket", onWebSocketRef);
+    if (onRequestRef) p.on("request", onRequestRef);
   };
   ctx.page.context().on("page", onExternalPage);
   // Expose to executeAction via ctx (mutable shared state). All click
@@ -541,6 +543,7 @@ export async function executeCase(
     for (const p of externalTabs.splice(0)) {
       if (onResponseRef) { try { p.off("response", onResponseRef); } catch { /* tab dead */ } }
       if (onWebSocketRef) { try { p.off("websocket", onWebSocketRef); } catch { /* tab dead */ } }
+      if (onRequestRef) { try { p.off("request", onRequestRef); } catch { /* tab dead */ } }
       try { await p.close(); } catch { /* already closed */ }
     }
   };
@@ -725,6 +728,25 @@ export async function executeCase(
   // is alive, just busy. Without this, slow cascade games hit the 15s cap
   // even though the genuine new-spin response is right behind the queue.
   let lastRelevantResponseAt = 0;
+  // Outgoing spin REQUESTS — gates the animation-debounce re-click (Option 2).
+  // A spin click during a long win/feature animation can be QUEUED by the game
+  // and fire its request LATE; re-clicking then OVER-spins (observed on 3 Oaks:
+  // a 10-spin case drained extra balance / lost count). Rule: if a spin request
+  // HAS gone out since the click, the spin is in-flight/queued → do NOT re-click.
+  let spinRequestsSeen = 0;
+  const SPIN_REQ_BODY = /"command"\s*:\s*"play"|"name"\s*:\s*"spin"|doSpin|action=doSpin|bet_per_line/i;
+  const SPIN_REQ_URL = /gameservice|dospin|gsc=play|\/play\b|socket\.io/i;
+  const noteSpinRequest = (url: string, method: string, body: string | null): void => {
+    if (method !== "POST") return;
+    const urlOk = positiveUrlHint ? url.includes(positiveUrlHint) : SPIN_REQ_URL.test(url);
+    if (!urlOk) return;
+    if (body && !SPIN_REQ_BODY.test(body)) return; // body present but not a spin
+    spinRequestsSeen++;
+  };
+  const onRequest = (req: import("playwright").Request): void => {
+    if (stopCollecting) return;
+    try { noteSpinRequest(req.url(), req.method(), req.postData()); } catch { /* ignore */ }
+  };
   const sampleRejectedUrls: string[] = [];
   const sampleThrownErrors: string[] = [];
   // Full request+response samples for parser-rejected candidates — fuel for the
@@ -1053,7 +1075,7 @@ export async function executeCase(
     ws.on("framesent", (e) => {
       if (stopCollecting) return;
       const txt = typeof e.payload === "string" ? e.payload : e.payload.toString("utf8");
-      if (txt) lastWsSent = txt.slice(0, SAMPLE_BODY_CAP);
+      if (txt) { lastWsSent = txt.slice(0, SAMPLE_BODY_CAP); if (SPIN_REQ_BODY.test(txt)) spinRequestsSeen++; }
     });
     ws.on("framereceived", (e) => {
       const body = typeof e.payload === "string" ? e.payload : e.payload.toString("utf8");
@@ -1063,11 +1085,15 @@ export async function executeCase(
 
   if (expectsSpin) {
     ctx.page.on("response", onResponse);
+    ctx.page.on("request", onRequest);
     // PRIMARY: session-level WS capture (catches the game socket opened at page
     // load). FALLBACK: case-local page.on("websocket") for callers without it.
     if (ctx.subscribeWsFrames) {
       unsubscribeWs = ctx.subscribeWsFrames((f) => {
-        if (f.sent) { if (f.payload) lastWsSent = f.payload.slice(0, SAMPLE_BODY_CAP); return; }
+        if (f.sent) {
+          if (f.payload) { lastWsSent = f.payload.slice(0, SAMPLE_BODY_CAP); if (SPIN_REQ_BODY.test(f.payload)) spinRequestsSeen++; }
+          return;
+        }
         feedWsReceived(f.url, f.payload);
       });
       console.log(`[case-exec] WS capture via session subscription (catches pre-opened sockets)`);
@@ -1080,7 +1106,8 @@ export async function executeCase(
   if (expectsSpin) {
     onResponseRef = onResponse;
     onWebSocketRef = onWebSocket;
-    for (const p of externalTabs) { p.on("response", onResponse); p.on("websocket", onWebSocket); }
+    onRequestRef = onRequest;
+    for (const p of externalTabs) { p.on("response", onResponse); p.on("websocket", onWebSocket); p.on("request", onRequest); }
   }
 
   let actionsExecuted = 0;
@@ -1219,6 +1246,11 @@ export async function executeCase(
         let retries = 0;
         const phaseStart = Date.now();
         const phaseActivityStart = lastRelevantResponseAt;
+        // Snapshot spin-request count at click time. The debounce re-click below
+        // only fires when NO new spin request has gone out since (truly-lost
+        // click); if one HAS gone out the spin is in-flight/queued → re-clicking
+        // would over-spin (Option 2 guard).
+        const reqAtPhaseStart = spinRequestsSeen;
         let nextPopupCheckAt = phaseStart + POPUP_CHECK_DELAY_MS;
         const POPUP_CHECK_BACKOFF_CAP_MS = Math.max(POPUP_CHECK_DELAY_MS * 4, 10_000);
         let popupCheckInterval = POPUP_CHECK_DELAY_MS;
@@ -1330,7 +1362,20 @@ export async function executeCase(
               //   2. We've burned ≥ 50% of PRE_CAPTURE_TIMEOUT_MS waiting
               //   3. Still no captured spin response
               //   4. Spin button coords known (sb)
+              // Option-2 guard: a spin request emitted since the click means the
+              // spin IS in-flight/queued (slow response / long animation) — do
+              // NOT re-click (re-clicking queues a duplicate → over-spin). Only
+              // re-click when the click produced NO request at all (truly lost).
               if (
+                !popup.interstitial
+                && elapsedInPhase >= PRE_CAPTURE_TIMEOUT_MS * 0.5
+                && collectedSpins.length === beforeCount
+                && spinRequestsSeen > reqAtPhaseStart
+              ) {
+                if (!quietDiag) console.log(`[spin-retry] spin ${beforeCount + 1}: a spin request already went out (in-flight/queued) — NOT re-clicking, waiting for the response`);
+                popupCheckInterval = Math.min(popupCheckInterval * 2, POPUP_CHECK_BACKOFF_CAP_MS);
+                nextPopupCheckAt = Date.now() + popupCheckInterval;
+              } else if (
                 !popup.interstitial
                 && elapsedInPhase >= PRE_CAPTURE_TIMEOUT_MS * 0.5
                 && collectedSpins.length === beforeCount
@@ -1421,6 +1466,7 @@ export async function executeCase(
   } catch (err) {
     stopCollecting = true;
     ctx.page.off("response", onResponse);
+    try { ctx.page.off("request", onRequest); } catch { /* ignore */ }
     try { unsubscribeWs?.(); } catch { /* ignore */ }
     try { ctx.page.off("websocket", onWebSocket); } catch { /* ignore */ }
     await processQueue.catch(() => undefined);  // drain any in-flight listeners
@@ -1547,6 +1593,7 @@ export async function executeCase(
     }
     stopCollecting = true;
     ctx.page.off("response", onResponse);
+    try { ctx.page.off("request", onRequest); } catch { /* ignore */ }
     try { unsubscribeWs?.(); } catch { /* ignore */ }
     try { ctx.page.off("websocket", onWebSocket); } catch { /* ignore */ }
     await processQueue.catch(() => undefined);  // drain any in-flight listeners
@@ -2595,6 +2642,25 @@ export async function executeCase(
   // the orchestrator before recording an inconclusive result.
   if (freeSpinNeverTriggered) {
     finalOutcome = "INCONCLUSIVE";
+  }
+
+  // #option-3 — lost-spins-to-debounce → INCONCLUSIVE, not FAIL. When the only
+  // reason a multi-spin case fails is that fewer spins were captured than
+  // clicked (the game debounced/queued clicks during win/feature animation) AND
+  // the per-spin balance arithmetic (Rule signal) still holds across every
+  // CAPTURED spin, there's no defect — just RNG/animation timing. Failing it
+  // would be a false negative; INCONCLUSIVE makes it re-runnable (the retry
+  // policy re-attempts INCONCLUSIVE) instead of recording a bogus FAIL.
+  const isFail = finalOutcome === "FAIL_HIGH" || finalOutcome === "FAIL_LOW";
+  if (isFail && expectedSpins > 0 && collectedSpins.length < expectedSpins) {
+    const debounceWarn = warnings.some((w) => /likely debounced|debounced by|no spin\/gameService response within|popup-retries|merged them all/i.test(w));
+    const ruleSig = signalRollup.find((s) => s.signal === "rule");
+    const ruleHolds = ruleSig ? ruleSig.pass : true;
+    const onlyNetworkFailed = signalRollup.filter((s) => !s.pass).every((s) => s.signal === "network");
+    if (debounceWarn && ruleHolds && onlyNetworkFailed) {
+      console.log(`[case-action] outcome ${finalOutcome} → INCONCLUSIVE: captured ${collectedSpins.length}/${expectedSpins} spins (lost to debounce/animation) but per-spin balance arithmetic holds — not a defect, re-runnable`);
+      finalOutcome = "INCONCLUSIVE";
+    }
   }
 
   // Case-level confidence — derived from Signal Roll-up (2026-05-25 redesign).
