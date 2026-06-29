@@ -59,22 +59,13 @@ fixtures/reviews/
 # Vision / AI debug dumps
 fixtures/debug/
 
-# ===== Per-game runtime artifacts =====
-# These are produced during runs / discovery — large + regenerable.
-# Source-of-truth files (ui-registry.json, test-cases.json, network.jsonl,
-# pregame/, play-screen.png, auxiliary-sources/, _meta.json) STAY tracked.
-fixtures/registry/*/case-evidence/
-fixtures/registry/*/case-failures/
-fixtures/registry/*/case-history/
-fixtures/registry/*/debug-subdiscover/
-fixtures/registry/*/debug-ai-recover/
-fixtures/registry/*/debug-agent/
-fixtures/registry/*/audit-logs/
-fixtures/registry/*/network/
-fixtures/registry/*/ante-debug/
-fixtures/registry/*/_onboard-state.json
-fixtures/registry/*/rtp-runs.json
-fixtures/registry/_rtp-inbox/
+# ===== Per-game registry (LOCAL-ONLY — not versioned) =====
+# The entire learned registry is per-MACHINE state, re-derived by onboarding
+# each game (ui-registry, provider-cache, parser overlays, test-cases, paytable,
+# plus all runtime artifacts: case-evidence, discovery-snapshots, network/,
+# debug-*, _onboard-state, rtp-runs). It is NOT shared via git — each host
+# onboards its own games.
+fixtures/registry/
 
 # Pregame stats (append-only log, regenerates)
 fixtures/pre-game/_stats.jsonl
