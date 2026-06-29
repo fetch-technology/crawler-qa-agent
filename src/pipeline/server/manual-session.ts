@@ -5344,6 +5344,26 @@ CHECK_CODE RULES
   }> {
     if (!this.session || !this.gameSlug || !this.registry) return { ok: false, reason: "no active session" };
     const page = this.session.page;
+
+    // Provider gate. The payout model is derived from Pragmatic `wlc_v`
+    // winning-line combos, and the side-channel below captures them with the
+    // HARDCODED `pragmaticProvider` (URL pattern + parseBody). Other providers
+    // either don't expose wlc_v (ThreeOaks) or don't even spin over HTTP
+    // (Playtech = WebSocket), so the run would fire ~50 spins and ALWAYS report
+    // "0 spin responses" — falsely blaming autoplay/spin coords. Skip up front
+    // with the real reason. Pragmatic + Generic (PP-clone JSON served from the
+    // same endpoints) are the only formats the side-channel can read.
+    const pc = await providerCache.load(this.gameSlug).catch(() => null);
+    const provider = pc?.provider;
+    if (provider && provider !== "Pragmatic" && provider !== "Generic") {
+      const wire = provider === "Playtech" ? "WebSocket frames" : "a non-Pragmatic HTTP format";
+      console.warn(`[calibrate-payout] ${this.gameSlug}: provider=${provider} — payout-model calibration skipped (wlc_v combo model is Pragmatic-only; spins use ${wire}).`);
+      return {
+        ok: false,
+        reason: `payout-model calibration not applicable to provider "${provider}" — the model is derived from Pragmatic \`wlc_v\` combos, which this game does not expose (spins use ${wire}). This is NOT an autoplay/spin-coords problem; the game spins fine. Skipped without running spins.`,
+      };
+    }
+
     // Target rounds PER bet level. When the registry exposes the autoplay UI
     // we run this as ONE native autoplay batch per level (default ~100 rounds)
     // — far faster wall-clock than per-click spins and yields more winning

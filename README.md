@@ -138,7 +138,55 @@ install it with `brew install cpulimit` to enforce the cap.
 
 ---
 
-## 8. Tests
+## 8. Geo-restricted games (proxy)
+
+Some games only load from an IP in an allowed country (e.g. **US** or **Brazil**).
+Instead of putting the whole host on a VPN, route **only the game browser**
+through a proxy — the server's Claude/DB traffic and every other Mac mini
+service stay on the direct connection, untouched.
+
+Set in `.env` (unset → no proxy, behaviour unchanged):
+
+```bash
+QA_PROXY=socks5://127.0.0.1:1080
+# QA_PROXY_USER= / QA_PROXY_PASS=   # HTTP proxy auth only (Chromium can't do SOCKS5 auth)
+# QA_PROXY_BYPASS=*.local,127.0.0.1
+```
+
+On startup the log prints `[browser] routing via proxy …` to confirm it's active.
+
+### Free exit IP — Oracle Cloud Always Free + SSH tunnel
+
+A free, isolated way to get a US/Brazil IP (nothing installed on the Mac mini,
+no system network change — `ssh -D` just opens a local SOCKS port that only this
+tool uses):
+
+1. **Create a free VM** at [Oracle Cloud Always Free](https://www.oracle.com/cloud/free/)
+   — pick a region in the target country:
+   - US: `us-ashburn-1`, `us-phoenix-1`, `us-sanjose-1`
+   - Brazil: `sa-saopaulo-1`, `sa-vinhedo-1`
+
+   (the VM's public IP is in that country). Add your SSH key during setup.
+2. **Open a SOCKS tunnel** from the Mac mini (keep it running while QA runs):
+   ```bash
+   # ssh -D opens a local SOCKS5 proxy at 127.0.0.1:1080 — no system change.
+   # autossh auto-reconnects if the link drops. -N = tunnel only, -f = background.
+   autossh -M 0 -f -N -D 1080 opc@<vm-public-ip>
+   ```
+   (`ssh -f -N -D 1080 opc@<vm-public-ip>` also works without autossh.)
+3. **Point the tool at it** and restart:
+   ```bash
+   echo 'QA_PROXY=socks5://127.0.0.1:1080' >> .env
+   pm2 restart qa --update-env
+   ```
+
+Only the game browser now exits via the VM's US/Brazil IP. If a game still blocks
+the datacenter IP (rare for geo-by-country licensing), switch `QA_PROXY` to a
+commercial **residential** HTTP proxy instead.
+
+---
+
+## 9. Tests
 
 ```bash
 npm test                 # full Playwright suite

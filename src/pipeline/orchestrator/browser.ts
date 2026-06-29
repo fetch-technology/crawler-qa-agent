@@ -13,6 +13,32 @@ export type BrowserSession = {
   cdpEndpoint?: string;
 };
 
+/**
+ * Per-browser proxy for geo-restricted games. Some games only load from an IP
+ * in an allowed country; instead of putting the whole host on a VPN, route ONLY
+ * the game browser through a proxy/VPN endpoint (the server's Claude/DB traffic
+ * stays direct). Opt-in via env — unset → no proxy, behaviour unchanged.
+ *
+ *   QA_PROXY=socks5://127.0.0.1:1080         # SSH dynamic-forward / local VPN
+ *   QA_PROXY=http://gw.example.com:8080      # HTTP(S) proxy
+ *   QA_PROXY_USER / QA_PROXY_PASS            # proxy auth (HTTP only — see note)
+ *   QA_PROXY_BYPASS="*.local,127.0.0.1"      # comma-list of no-proxy hosts
+ *
+ * Note: Chromium (via Playwright) does NOT support SOCKS5 *with* auth — use an
+ * HTTP proxy for authenticated endpoints, or an unauthenticated SOCKS5 (e.g. an
+ * SSH `-D` tunnel) for geo routing.
+ */
+function proxyFromEnv(): { server: string; username?: string; password?: string; bypass?: string } | undefined {
+  const server = process.env.QA_PROXY?.trim();
+  if (!server) return undefined;
+  return {
+    server,
+    username: process.env.QA_PROXY_USER?.trim() || undefined,
+    password: process.env.QA_PROXY_PASS || undefined,
+    bypass: process.env.QA_PROXY_BYPASS?.trim() || undefined,
+  };
+}
+
 async function getFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const srv = net.createServer();
@@ -45,10 +71,15 @@ export async function openBrowser(headless = false): Promise<BrowserSession> {
   // both channels coexist without conflict. Random free port avoids
   // collisions when multiple sessions run concurrently.
   const cdpPort = await getFreePort();
+  const proxy = proxyFromEnv();
+  if (proxy) {
+    console.log(`[browser] routing via proxy ${proxy.server}${proxy.username ? " (auth)" : ""}${proxy.bypass ? ` bypass=${proxy.bypass}` : ""}`);
+  }
   const browser = await chromium.launch({
     headless,
     slowMo,
     args: [`--remote-debugging-port=${cdpPort}`],
+    ...(proxy ? { proxy } : {}),
   });
   const context = await browser.newContext({ viewport });
   const page = await context.newPage();
