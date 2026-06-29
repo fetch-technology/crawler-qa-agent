@@ -39,6 +39,9 @@ fixtures/options/
 fixtures/specs/
 fixtures/tasks/
 
+# ===== Auth — QA accounts & login sessions (SECRETS, never commit) =====
+fixtures/auth/
+
 # ===== Runtime / derived fixtures (regeneratable) =====
 # Per-run outputs — HTML/PDF/JSON reports, screenshots
 fixtures/test-runs/
@@ -67,6 +70,11 @@ fixtures/registry/*/debug-subdiscover/
 fixtures/registry/*/debug-ai-recover/
 fixtures/registry/*/debug-agent/
 fixtures/registry/*/audit-logs/
+fixtures/registry/*/network/
+fixtures/registry/*/ante-debug/
+fixtures/registry/*/_onboard-state.json
+fixtures/registry/*/rtp-runs.json
+fixtures/registry/_rtp-inbox/
 
 # Pregame stats (append-only log, regenerates)
 fixtures/pre-game/_stats.jsonl
