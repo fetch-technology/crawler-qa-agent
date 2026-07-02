@@ -3607,6 +3607,7 @@ export class ManualSessionManager {
     layers: {
       ocr?: { hasPopup: boolean; matched: string[]; durationMs: number };
       overlay?: { overlayPresent: boolean; cornerBrightness: number[]; durationMs: number };
+      aiReady?: { playScreenReady: boolean | null; durationMs: number };
       probe?: { spinFired: boolean; durationMs: number };
     };
     reason?: string;
@@ -3623,6 +3624,7 @@ export class ManualSessionManager {
     const layers: {
       ocr?: { hasPopup: boolean; matched: string[]; durationMs: number };
       overlay?: { overlayPresent: boolean; cornerBrightness: number[]; durationMs: number };
+      aiReady?: { playScreenReady: boolean | null; durationMs: number };
       probe?: { spinFired: boolean; durationMs: number };
     } = {};
     let recovered = false;
@@ -3676,7 +3678,9 @@ export class ManualSessionManager {
       // CASH COLLECT"). When aiDismiss is on, ask AI vision to classify: a real
       // play screen → proceed; a blocker → keep it blocking so recovery runs.
       if (overlay.overlayPresent && !overlayBlocking && opts.aiDismiss) {
+        const aiStart = Date.now();
         const ready = await this.aiIsPlayScreenReady();
+        layers.aiReady = { playScreenReady: ready, durationMs: Date.now() - aiStart };
         if (ready === false) {
           overlayBlocking = true;
           console.log(`[ensure-main] attempt ${attempt}: AI says NOT the play screen → overlay is a blocker, recovering`);
@@ -3705,8 +3709,40 @@ export class ManualSessionManager {
         }
         // Probe failed → treat as off-main; fall through to recovery.
       } else if (!popupSignalB) {
-        // B passed, probe not requested → trust B and proceed
-        return { ok: true, onMain: true, recovered, layers, attempts: attempt };
+        // B passed, probe not requested. When AI dismissal is enabled, require
+        // positive play-screen evidence before trusting an otherwise "clean"
+        // screenshot: Playtech/GPAS feature splashes can show a large PLAY
+        // launcher button without OCR/popup/dark-overlay signals, and those
+        // screens are NOT MAIN yet.
+        if (opts.aiDismiss) {
+          const aiStart = Date.now();
+          const ready = await this.aiIsPlayScreenReady();
+          layers.aiReady = { playScreenReady: ready, durationMs: Date.now() - aiStart };
+          if (ready === false) {
+            console.log(`[ensure-main] attempt ${attempt}: AI says clean screen is NOT MAIN → recovering/dismissing blocker`);
+          } else if (ready === true) {
+            console.log(`[ensure-main] attempt ${attempt}: AI positive MAIN evidence confirmed`);
+            return { ok: true, onMain: true, recovered, layers, attempts: attempt };
+          } else {
+            console.log(`[ensure-main] attempt ${attempt}: AI MAIN check inconclusive → falling back to OCR/overlay verdict`);
+            return { ok: true, onMain: true, recovered, layers, attempts: attempt };
+          }
+        } else {
+          // Legacy fast path for callers that explicitly disable AI dismissal.
+          return { ok: true, onMain: true, recovered, layers, attempts: attempt };
+        }
+        // AI says this clean-looking screen is still pre-game/off-main; fall
+        // through to recovery.
+        recovered = true;
+        if (attempt < maxAttempts) {
+          if (attempt >= 2) {
+            const ai = await this.aiDismissToMain(3);
+            console.log(`[ensure-main] attempt ${attempt}: AI dismissal issued ${ai.clicked} click(s), ready=${ai.ready}`);
+          } else {
+            await this.recoverToMain();
+          }
+          continue;
+        }
       }
 
       // OFF MAIN → recover, UNLESS a free-spin chain is playing (don't ESC/click
@@ -3741,6 +3777,8 @@ export class ManualSessionManager {
         ? `popup detected: ${layers.ocr.matched.join(", ")}`
         : layers.overlay?.overlayPresent
         ? `dark overlay covering corners [${layers.overlay.cornerBrightness.join(",")}]`
+        : layers.aiReady?.playScreenReady === false
+        ? "AI classifier says current screen is not the main play screen"
         : layers.probe && !layers.probe.spinFired
         ? "spinButton click did not fire a spin within 3s"
         : "unknown",
@@ -4242,7 +4280,8 @@ export class ManualSessionManager {
         break;
       }
       console.log(`[recover-main/ai] iter ${i + 1}: action=${decision.action} blocker=${decision.blocker_type} ready=${decision.play_screen_ready} conf=${decision.confidence?.toFixed?.(2) ?? "?"} (${decision.reason ?? ""})`);
-      if (decision.play_screen_ready || decision.action === "done") return { clicked, ready: true };
+      if (decision.play_screen_ready) return { clicked, ready: true };
+      if (decision.action === "done") break;
       if (decision.action === "wait") { await page.waitForTimeout(1500); continue; }
       if (decision.action === "click" && (decision.confidence ?? 0) >= 0.5 && decision.x > 0 && decision.y > 0) {
         await page.mouse.click(decision.x, decision.y).catch(() => undefined);
