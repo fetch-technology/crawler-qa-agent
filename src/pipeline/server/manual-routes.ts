@@ -617,6 +617,30 @@ export async function handleManualRoute(
       return sendJson(res, r.ok ? 200 : 400, r), true;
     }
 
+    // POST /api/qa/manual/case-action/test { caseId, actionIndex?, action?, ensureMain? }
+    // Execute ONE translated action in the live browser so QA can verify action
+    // behavior without running the whole testcase.
+    if (url === "/api/qa/manual/case-action/test" && method === "POST") {
+      const body = await asJsonBody<{
+        caseId?: string;
+        actionIndex?: number;
+        action?: import("../step7-testcase-gen/case-action-translator.js").CaseAction;
+        ensureMain?: boolean;
+        gameSlug?: string;
+      }>(req);
+      if (!body.caseId) return sendJson(res, 400, { error: "caseId required" }), true;
+      if (body.actionIndex === undefined && body.action === undefined) {
+        return sendJson(res, 400, { error: "actionIndex or action required" }), true;
+      }
+      const r = await resolveSession(req, body as any, url).previewCaseAction({
+        caseId: body.caseId,
+        actionIndex: body.actionIndex,
+        action: body.action,
+        ensureMain: body.ensureMain,
+      });
+      return sendJson(res, r.ok ? 200 : 400, r), true;
+    }
+
     // POST /api/qa/manual/wait-for-stable — wait until game UI settles between cases
     if (url === "/api/qa/manual/wait-for-stable" && method === "POST") {
       const body = await asJsonBody<{ uiKey?: string; minDelayMs?: number; maxMs?: number }>(req);

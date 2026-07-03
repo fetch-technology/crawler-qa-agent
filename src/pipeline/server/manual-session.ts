@@ -22,7 +22,7 @@ import {
   translateCase,
   buildAutoplayBatch,
 } from "../step7-testcase-gen/case-action-translator.js";
-import { executeCase, type CaseResult } from "../step8-run-scenarios/case-executor.js";
+import { executeAction, executeCase, type CaseResult } from "../step8-run-scenarios/case-executor.js";
 import "../step6-build-model/index.js";
 import { createParserForGame } from "../step6-build-model/parser-factory.js";
 import { tryLoadProviderSpec } from "../step6-build-model/providers/spec-loader.js";
@@ -403,6 +403,15 @@ function computeSuggestions(registry: UiRegistry | null): SubStateSuggestion[] {
     out.push({ triggerKey, stateLabel, description, alreadyDiscovered });
   }
   return out;
+}
+
+type AiStateElement = { key: string; x: number; y: number; confidence?: number; role?: string };
+
+function parseDiscoveredBetOptionValue(key: string): { prefix: string; value: number } | null {
+  const m = key.match(/^([a-zA-Z]*bet[a-zA-Z]*)-(\d+(?:\.\d+)?)$/i);
+  if (!m) return null;
+  const value = Number(m[2]);
+  return Number.isFinite(value) ? { prefix: m[1]!, value } : null;
 }
 
 /** Snap a proposed bbox into the page viewport so `page.screenshot({clip})`
@@ -1144,6 +1153,117 @@ export class ManualSessionManager {
     }
   }
 
+  private async enrichScrollableBetDropdownOptions(
+    page: import("playwright").Page,
+    safeLabel: string,
+    aiElements: AiStateElement[],
+    debugDir: string,
+  ): Promise<{ added: number; totalValues: number; values: number[] }> {
+    const dropdown = aiElements.find((e) =>
+      /dropdown/i.test(e.key)
+      && (/bet/i.test(e.key) || aiElements.some((x) => parseDiscoveredBetOptionValue(x.key) != null)));
+    if (!dropdown) return { added: 0, totalValues: 0, values: [] };
+
+    const visibleBetRows = aiElements
+      .map((e) => parseDiscoveredBetOptionValue(e.key))
+      .filter((v): v is { prefix: string; value: number } => v != null);
+    const rowPrefix = visibleBetRows.find((r) => /totalbet/i.test(r.prefix))?.prefix
+      ?? visibleBetRows[0]?.prefix
+      ?? "bet";
+    const vp = page.viewportSize() ?? { width: 1280, height: 720 };
+    const { transcribeBetDropdown } = await import("../../ai/vision.js");
+
+    const readRows = async (): Promise<import("../../ai/vision.js").BetDropdownRead> => {
+      const p = path.join(debugDir, `bet-dropdown-${safeLabel}-${Date.now()}.png`);
+      await writeFile(p, await page.screenshot({ type: "png", fullPage: false }));
+      return transcribeBetDropdown({ screenshotPath: p, viewport: vp });
+    };
+    const sig = (rows: { value: number }[]) => rows.map((r) => r.value).sort((a, b) => a - b).join(",");
+    const scrollOnce = async (dir: 1 | -1, beforeSig: string): Promise<import("../../ai/vision.js").BetDropdownRead | null> => {
+      const methods: Array<"wheel" | "keys" | "drag"> = ["wheel", "keys", "drag"];
+      for (const m of methods) {
+        try {
+          if (m === "wheel") {
+            await page.mouse.move(dropdown.x, dropdown.y);
+            await page.mouse.wheel(0, dir * 260);
+          } else if (m === "keys") {
+            await page.mouse.click(dropdown.x, dropdown.y);
+            await page.keyboard.press(dir > 0 ? "PageDown" : "PageUp");
+          } else {
+            await page.mouse.move(dropdown.x, dropdown.y);
+            await page.mouse.down();
+            await page.mouse.move(dropdown.x, dropdown.y - dir * 170, { steps: 8 });
+            await page.mouse.up();
+          }
+        } catch { /* try next method */ }
+        await page.waitForTimeout(450);
+        const after = await readRows();
+        if (sig(after.rows) !== beforeSig) return after;
+      }
+      return null;
+    };
+
+    try {
+      let read = await readRows();
+      if (read.rows.length === 0) return { added: 0, totalValues: 0, values: [] };
+
+      const seen = new Map<number, { value: number; y: number }>();
+      const remember = (rows: Array<{ value: number; y: number }>) => {
+        for (const r of rows) {
+          const value = Number(r.value.toFixed(2));
+          if (!Number.isFinite(value)) continue;
+          seen.set(value, { value, y: r.y });
+        }
+      };
+
+      // First normalize to the top; discover may start from the current
+      // selected value, so visible rows are only a middle slice.
+      for (let i = 0; i < 12; i++) {
+        const before = sig(read.rows);
+        const moved = await scrollOnce(-1, before);
+        if (!moved) break;
+        read = moved;
+      }
+
+      for (let i = 0; i < 24; i++) {
+        remember(read.rows);
+        const before = sig(read.rows);
+        const moved = await scrollOnce(1, before);
+        if (!moved) break;
+        read = moved;
+      }
+
+      const existingValues = new Set(
+        aiElements
+          .map((e) => parseDiscoveredBetOptionValue(e.key)?.value)
+          .filter((v): v is number => typeof v === "number")
+          .map((v) => Number(v.toFixed(2))),
+      );
+      let added = 0;
+      const sorted = [...seen.values()].sort((a, b) => a.value - b.value);
+      for (const row of sorted) {
+        if (existingValues.has(row.value)) continue;
+        aiElements.push({
+          key: `${rowPrefix}-${row.value.toFixed(2)}`,
+          x: Math.round(dropdown.x),
+          y: Math.round(row.y),
+          confidence: 0.55,
+          role: "option",
+        });
+        existingValues.add(row.value);
+        added++;
+      }
+
+      if (seen.size > 0) {
+        console.log(`[manual/discover] ${safeLabel}: scroll-enumerated ${seen.size} bet dropdown value(s) [${sorted.map((r) => r.value.toFixed(2)).join(", ")}]; row coords are snapshot-only, runtime selects by live value`);
+      }
+      return { added, totalValues: seen.size, values: sorted.map((r) => r.value) };
+    } catch (err) {
+      console.warn(`[manual/discover] ${safeLabel}: bet dropdown scroll enumeration failed: ${err instanceof Error ? err.message : String(err)}`);
+      return { added: 0, totalValues: 0, values: [] };
+    }
+  }
+
   /**
    * Multi-level discovery — after QA opens a popup/sub-screen (e.g. clicks
    * buyBonusButton → popup appears), QA invokes this with a state label.
@@ -1239,6 +1359,14 @@ export class ManualSessionManager {
       // (`bet-0.40`, `autoCountSlide-10`) are meaningful + stable → left alone.
       normalizeVolatileRowKeys(aiElements);
 
+      const snapshotElements = [...aiElements];
+
+      // Scrollable bet dropdowns only expose a slice of their option ladder at
+      // any one scrollbar position. Enumerate the list by scrolling now, but
+      // keep runtime selection value-driven (the executor ignores stale row
+      // coords for dropdown bet values and re-locates the value live).
+      await this.enrichScrollableBetDropdownOptions(discoverPage, safeLabel, aiElements, debugDir);
+
       // Persist the AI's view of this state for visual QA review. Save with
       // NAMESPACED keys (matching the registry) so the dashboard can cross-ref
       // each marker against current verify status by key. Non-fatal on error.
@@ -1247,7 +1375,7 @@ export class ManualSessionManager {
           this.gameSlug,
           safeLabel,
           result.pngBuf,
-          aiElements.map((e) => ({
+          snapshotElements.map((e) => ({
             key: `${safeLabel}__${e.key}`,
             x: e.x,
             y: e.y,
@@ -5066,6 +5194,99 @@ CHECK_CODE RULES
     return { ok: true };
   }
 
+  /** Execute ONE translated action against the live browser so QA can verify
+   *  action behavior without running the whole testcase. Mirrors the
+   *  dashboard's element-level [Test] button, but routes through the case
+   *  action runtime (set_bet_to_value, dropdown bet selection, waits, etc.).
+   *  This is intentionally stateful: the action may change bet, open/close
+   *  popups, start autoplay, or spin if the selected action is a spin. */
+  async previewCaseAction(args: {
+    caseId: string;
+    actionIndex?: number;
+    action?: import("../step7-testcase-gen/case-action-translator.js").CaseAction;
+    ensureMain?: boolean;
+  }): Promise<{
+    ok: boolean;
+    caseId: string;
+    actionIndex?: number;
+    action?: unknown;
+    durationMs?: number;
+    reason?: string;
+  }> {
+    if (!this.session || !this.gameSlug || !this.registry) {
+      return { ok: false, caseId: args.caseId, reason: "no active session" };
+    }
+    if (this.previewCaseInProgress) {
+      return { ok: false, caseId: args.caseId, reason: "another case/action preview is already running on this session — please wait" };
+    }
+    const actionsCache = await loadActionsCache(this.gameSlug);
+    const translated = actionsCache?.cases[args.caseId];
+    if (!translated && !args.action) {
+      return { ok: false, caseId: args.caseId, reason: "no translated actions for this case — run translate first" };
+    }
+    const idx = typeof args.actionIndex === "number" ? args.actionIndex : undefined;
+    const action = args.action ?? (idx !== undefined ? translated?.actions[idx] : undefined);
+    if (!action) {
+      return { ok: false, caseId: args.caseId, actionIndex: idx, reason: `action index ${idx ?? "(missing)"} not found` };
+    }
+
+    this.previewCaseInProgress = true;
+    this.previewCaseId = `${args.caseId}#action${idx ?? "custom"}`;
+    const start = Date.now();
+    try {
+      if (args.ensureMain === true) {
+        const w = await this.waitForMainScreen({ maxWaitMs: Number(process.env.QA_ACTION_PREFLIGHT_MAX_WAIT_MS ?? 30_000) });
+        if (!w.onMain) {
+          return {
+            ok: false,
+            caseId: args.caseId,
+            actionIndex: idx,
+            action,
+            durationMs: Date.now() - start,
+            reason: `not on main before action after ${(w.elapsedMs / 1000).toFixed(0)}s — ${w.reason ?? "could not reach main"}`,
+          };
+        }
+      }
+      const parser = await createParserForGame(this.gameSlug);
+      const loadedPayoutModel = await payoutModel.load(this.gameSlug).catch(() => null);
+      await executeAction(action, {
+        page: this.session.page,
+        uiMap: this.registry,
+        parser,
+        priorBalance: this.lastBalance,
+        liveBalance: () => this.lastBalance,
+        gameSlug: this.gameSlug,
+        payoutModel: loadedPayoutModel,
+        subscribeWsFrames: (cb: (f: { url: string; sent: boolean; payload: string }) => void) => this.subscribeWsFrames(cb),
+        isOnMainScreen: async () => {
+          const r = await this.ensureMainScreen({ probe: false, autoRecover: false, aiDismiss: false });
+          return r.onMain;
+        },
+      });
+      return {
+        ok: true,
+        caseId: args.caseId,
+        actionIndex: idx,
+        action,
+        durationMs: Date.now() - start,
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        caseId: args.caseId,
+        actionIndex: idx,
+        action,
+        durationMs: Date.now() - start,
+        reason: err instanceof Error ? err.message : String(err),
+      };
+    } finally {
+      this.previewCaseInProgress = false;
+      this.previewCaseId = null;
+      this.previewCaseLastFinishedId = args.caseId;
+      this.previewCaseLastFinishedAt = new Date().toISOString();
+    }
+  }
+
   /**
    * Batch re-translate all cases that are currently skipped (empty actions or
    * have skipReason). Useful after QA has discovered + verified more UI
@@ -5290,6 +5511,10 @@ CHECK_CODE RULES
       // from the session-level capture (attached at start, catches the socket
       // opened at page load) instead of a too-late case-local listener.
       subscribeWsFrames: (cb: (f: { url: string; sent: boolean; payload: string }) => void) => this.subscribeWsFrames(cb),
+      isOnMainScreen: async () => {
+        const r = await this.ensureMainScreen({ probe: false, autoRecover: false, aiDismiss: false });
+        return r.onMain;
+      },
     };
 
     // Retry loop policy (forced): run exactly once — no retry on failure.

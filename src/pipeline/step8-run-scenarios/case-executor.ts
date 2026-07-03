@@ -413,6 +413,10 @@ export type CaseExecutorContext = {
    *  arrive already envelope-stripped to inner JSON. When provided, the case
    *  uses THIS instead of its own page.on("websocket"). */
   subscribeWsFrames?: (cb: (f: { url: string; sent: boolean; payload: string }) => void) => (() => void);
+  /** Optional MAIN-screen probe supplied by manual-session. Used after bet
+   *  selection to decide whether a selector auto-closed, without doing blind
+   *  close clicks or invoking recovery/AI from inside the action executor. */
+  isOnMainScreen?: () => Promise<boolean>;
 };
 
 export type CaseInput = {
@@ -3223,18 +3227,73 @@ export function findBetChipExtreme(
 
 /** True when the game's bet selector is a DROPDOWN (discovered as e.g.
  *  `betButton__totalBetDropdown` + `__confirmButton`) rather than discrete chips
- *  or +/- steppers. Precise min/max/value selection from an un-enumerated
- *  dropdown isn't supported yet — but we must NOT throw on set_bet, or the spin
- *  never fires (and the provider learner never gets a sample). Detecting this
- *  lets set_bet leave the current/default bet and proceed. */
-function hasDropdownBetSelector(registry: import("../registry/types.js").UiRegistry): boolean {
+ *  or +/- steppers. Runtime must treat this as a live scrollable list, not a
+ *  set of stable absolute child coords, because the list often reopens around
+ *  the currently-selected value instead of the scroll offset used at Discover. */
+export function hasDropdownBetSelector(registry: import("../registry/types.js").UiRegistry): boolean {
   return Object.keys(registry).some((k) => /bet[a-z0-9_]*__.*dropdown/i.test(k));
 }
 
-/** Open a bet-chooser popup via its opener, click the target chip, and dismiss.
+export function parseBetValueFromChipKey(key: string): number | null {
+  const m = key.match(/__(?:bet(?:Amount)?|totalBet)-(\d+(?:\.\d+)?)(?:-selected)?$/i);
+  if (!m) return null;
+  const value = Number(m[1]);
+  return Number.isFinite(value) ? value : null;
+}
+
+type BetSelectorVisibility = "open" | "closed" | "unknown";
+
+async function detectBetSelectorVisibility(page: Page): Promise<BetSelectorVisibility> {
+  try {
+    const popup = await detectAnyPopup(page, {
+      substateKeywords: ["bet options", "bet option", "select bet", "bet selector"],
+      interstitialKeywords: [],
+    });
+    return popup.matchedKeywords.length > 0 ? "open" : "closed";
+  } catch {
+    return "unknown";
+  }
+}
+
+async function detectPostBetSelectionState(ctx: CaseExecutorContext): Promise<BetSelectorVisibility> {
+  if (ctx.isOnMainScreen) {
+    try {
+      const onMain = await ctx.isOnMainScreen();
+      if (onMain) return "closed";
+    } catch (err) {
+      console.warn(`[case-action] MAIN probe after bet selection failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  return detectBetSelectorVisibility(ctx.page);
+}
+
+async function dismissBetSelectorIfStillOpen(
+  ctx: CaseExecutorContext,
+  closeButton: import("../registry/types.js").UiElement | undefined,
+  label: string,
+): Promise<boolean> {
+  await ctx.page.waitForTimeout(250);
+  const visibility = await detectPostBetSelectionState(ctx);
+  if (visibility === "closed") {
+    console.log(`[case-action] ${label}: MAIN/bet-selector probe says selector is closed — skip close`);
+    return false;
+  }
+  if (visibility === "unknown") {
+    console.warn(`[case-action] ${label}: could not verify whether bet selector closed — dismissing defensively`);
+  }
+  if (closeButton) await ctx.page.mouse.click(closeButton.x, closeButton.y);
+  else await ctx.page.keyboard.press("Escape");
+  await ctx.page.waitForTimeout(500);
+  return true;
+}
+
+/** Open a bet-chooser popup via its opener, click the target chip, and dismiss
+ *  only when the selector is still visible. Some games auto-close immediately
+ *  after a chip click; clicking the stored close coordinate afterward can hit
+ *  the main UI underneath and corrupt the flow.
  *  Used by set_bet_to_min/max/value when adjusting the stake through a popup
- *  (the only path for games without betPlus/betMinus). Best-effort dismiss:
- *  registered closeButton in the same namespace, else Escape. Does NOT verify —
+ *  (the only path for games without betPlus/betMinus). Best-effort dismiss when
+ *  still open: registered closeButton in the same namespace, else Escape. Does NOT verify —
  *  the caller OCR-verifies and decides whether to retry/fall through. */
 async function clickBetChipFlow(ctx: CaseExecutorContext, m: BetChipMatch): Promise<void> {
   await ctx.page.mouse.click(m.parent.x, m.parent.y);
@@ -3252,9 +3311,7 @@ async function clickBetChipFlow(ctx: CaseExecutorContext, m: BetChipMatch): Prom
   await ctx.page.waitForTimeout(800); // popup render
   await ctx.page.mouse.click(m.chip.x, m.chip.y);
   await ctx.page.waitForTimeout(400);
-  if (m.closeButton) await ctx.page.mouse.click(m.closeButton.x, m.closeButton.y);
-  else await ctx.page.keyboard.press("Escape");
-  await ctx.page.waitForTimeout(500);
+  await dismissBetSelectorIfStillOpen(ctx, m.closeButton, `chip ${m.chipKey}`);
 }
 
 type DropdownWant = { kind: "min" } | { kind: "max" } | { kind: "value"; value: number };
@@ -3369,8 +3426,20 @@ async function setBetViaDropdown(
     console.log(`[case-action] set_bet dropdown: ${targetLabel} → clicking option ${chosen.value} @ y=${chosen.y}`);
     await page.mouse.click(dropdown.x, chosen.y);
     await page.waitForTimeout(400);
-    if (confirm) { await page.mouse.click(confirm.x, confirm.y); await page.waitForTimeout(500); }
-    else { await dismiss(); }
+    let selectorStillOpen = true;
+    try {
+      const afterSelect = await readRows();
+      selectorStillOpen = afterSelect.rows.length > 0
+        || (await detectPostBetSelectionState(ctx)) !== "closed";
+    } catch {
+      selectorStillOpen = (await detectPostBetSelectionState(ctx)) !== "closed";
+    }
+    if (selectorStillOpen) {
+      if (confirm) { await page.mouse.click(confirm.x, confirm.y); await page.waitForTimeout(500); }
+      else { await dismissBetSelectorIfStillOpen(ctx, closeBtn, `set_bet dropdown ${targetLabel}`); }
+    } else {
+      console.log(`[case-action] set_bet dropdown: selector auto-closed after choosing ${chosen.value} — skip confirm/close`);
+    }
 
     let landed: number | null = null;
     if (readBet) {
@@ -3390,7 +3459,7 @@ async function setBetViaDropdown(
   }
 }
 
-async function executeAction(
+export async function executeAction(
   action: CaseAction,
   ctx: CaseExecutorContext,
   timing?: { dismissPreWaitMs: number; dismissInterClickMs: number },
@@ -3417,6 +3486,13 @@ async function executeAction(
   if (action.kind === "click") {
     const el = ctx.uiMap[action.uiKey];
     if (!el) throw new Error(`uiKey '${action.uiKey}' not in registry`);
+    const betChipValue = parseBetValueFromChipKey(action.uiKey);
+    if (betChipValue != null && hasDropdownBetSelector(ctx.uiMap)) {
+      console.log(`[case-action] click ${action.uiKey}: routing dropdown bet row through live value selector (${betChipValue})`);
+      const r = await setBetViaDropdown(ctx, { kind: "value", value: betChipValue }, null);
+      if (r.ok) return;
+      console.warn(`[case-action] click ${action.uiKey}: live dropdown selection failed — falling back to registered coord`);
+    }
     const times = action.times ?? 1;
     // Route to the right page: elements flagged `externalPage: true` were
     // discovered on a separate browser tab opened by their parent trigger.
@@ -3522,6 +3598,15 @@ async function executeAction(
     return;
   }
   if (action.kind === "set_bet_to_min") {
+    // Scrollable dropdown selectors must be driven live. Registry child coords
+    // are captured at one scroll offset during Discover, but the game's list
+    // reopens around the currently-selected bet on later runs, so stale row
+    // coords can click the wrong value.
+    if (hasDropdownBetSelector(ctx.uiMap)) {
+      const r = await setBetViaDropdown(ctx, { kind: "min" }, null);
+      if (r.ok) { console.log(`[case-action] set_bet_to_min — selected lowest via dropdown`); return; }
+      console.warn(`[case-action] set_bet_to_min: dropdown selection failed — falling back to step/chip strategy`);
+    }
     const minus = ctx.uiMap.betMinus;
     if (minus) {
       const clicks = betControls?.minBetClicks ?? 20;
@@ -3549,6 +3634,12 @@ async function executeAction(
     return;
   }
   if (action.kind === "set_bet_to_max") {
+    // See set_bet_to_min: dropdown row coords are scroll-position dependent.
+    if (hasDropdownBetSelector(ctx.uiMap)) {
+      const r = await setBetViaDropdown(ctx, { kind: "max" }, null);
+      if (r.ok) { console.log(`[case-action] set_bet_to_max — selected highest via dropdown`); return; }
+      console.warn(`[case-action] set_bet_to_max: dropdown selection failed — falling back to step/chip strategy`);
+    }
     const plus = ctx.uiMap.betPlus;
     if (plus) {
       const clicks = betControls?.maxBetClicks ?? 20;
@@ -3615,6 +3706,21 @@ async function executeAction(
       }
     }
 
+    // ─── Strategy 0: live dropdown selection ──────────────────────────
+    // If the game exposes a scrollable dropdown, prefer value-driven live
+    // selection over registry chip coords. Discover records child coords at
+    // whatever scroll offset was active then; after selecting a middle value,
+    // reopening the dropdown often starts scrolled to the middle, so clicking
+    // the old absolute y selects the wrong row.
+    if (hasDropdownBetSelector(ctx.uiMap)) {
+      const r = await setBetViaDropdown(ctx, { kind: "value", value: target }, readBet);
+      if (r.ok) {
+        console.log(`[case-action] set_bet_to_value ${target} — selected via dropdown (landed=${r.landed ?? "?"})`);
+        return;
+      }
+      console.warn(`[case-action] set_bet_to_value ${target}: dropdown selection failed — falling back to chip/ladder strategy`);
+    }
+
     // ─── Strategy 1: direct chip click (popup-style games) ────────────
     // Many PP slots open a bet selector popup when clicking betPlus/Minus
     // (or a dedicated bet_settings button). The popup contains chips like
@@ -3650,18 +3756,14 @@ async function executeAction(
         // Click the exact chip.
         await ctx.page.mouse.click(chipMatch.chip.x, chipMatch.chip.y);
         await ctx.page.waitForTimeout(400);
-        // Dismiss popup. Prefer registered closeButton in same namespace
-        // (cleaner UX); fall back to Escape (works on PP popups). NOTE
-        // for vs20olympgate-style games where closeButton revertS the
-        // candidate: chip click on PP usually commits IMMEDIATELY, so
-        // close just dismisses the dialog, not the value. If a specific
-        // game inverts this (close = cancel), QA must rely on Strategy 2.
-        if (chipMatch.closeButton) {
-          await ctx.page.mouse.click(chipMatch.closeButton.x, chipMatch.closeButton.y);
-        } else {
-          await ctx.page.keyboard.press("Escape");
-        }
-        await ctx.page.waitForTimeout(500);
+        // Dismiss only if the popup is still visible. Some games commit the
+        // chip and auto-close immediately; in that state the old close click
+        // lands on the main UI underneath and can trigger the wrong behavior.
+        const dismissedAfterChip = await dismissBetSelectorIfStillOpen(
+          ctx,
+          chipMatch.closeButton,
+          `set_bet_to_value ${target} chip ${chipMatch.chipKey}`,
+        );
         // VERIFY the chip actually committed — a click is not a state change.
         // Clicks landing on a locked UI (autoplay still animating, popup not
         // rendered, close-reverts-value games) silently leave the bet at the
@@ -3679,14 +3781,19 @@ async function executeAction(
           // CANCELS the selected chip (close-reverts pattern) — the chip click
           // itself committed, then our closeButton click undid it. Re-select
           // the chip and dismiss via Escape instead.
-          if (after != null && chipMatch.closeButton) {
+          if (after != null && dismissedAfterChip && chipMatch.closeButton) {
             console.warn(`[case-action] set_bet_to_value ${target}: chip click did NOT land (OCR=${after}) — retrying with Escape-close (X may cancel the selection)`);
             await ctx.page.mouse.click(chipMatch.parent.x, chipMatch.parent.y);
             await ctx.page.waitForTimeout(800);
             await ctx.page.mouse.click(chipMatch.chip.x, chipMatch.chip.y);
             await ctx.page.waitForTimeout(400);
-            await ctx.page.keyboard.press("Escape");
-            await ctx.page.waitForTimeout(500);
+            const retryVisibility = await detectPostBetSelectionState(ctx);
+            if (retryVisibility !== "closed") {
+              await ctx.page.keyboard.press("Escape");
+              await ctx.page.waitForTimeout(500);
+            } else {
+              console.log(`[case-action] set_bet_to_value ${target}: retry selector auto-closed — skip Escape`);
+            }
             after = await readBet();
             if (after == null) { await ctx.page.waitForTimeout(400); after = await readBet(); }
             if (after != null && Math.abs(after - target) <= tolerance) {

@@ -7,7 +7,12 @@
 
 import { test, expect } from "@playwright/test";
 import type { CaseAction } from "../../src/pipeline/step7-testcase-gen/case-action-translator.ts";
-import { findBetChip, findBetChipExtreme } from "../../src/pipeline/step8-run-scenarios/case-executor.ts";
+import {
+  findBetChip,
+  findBetChipExtreme,
+  hasDropdownBetSelector,
+  parseBetValueFromChipKey,
+} from "../../src/pipeline/step8-run-scenarios/case-executor.ts";
 import type { UiRegistry } from "../../src/pipeline/registry/types.ts";
 
 const el = (x = 1, y = 1) => ({ x, y, strategy: "coord" }) as unknown as UiRegistry[string];
@@ -151,6 +156,23 @@ test("findBetChip nearest (infinite tolerance) snaps to closest available chip",
   // target 0.9 has no exact chip; nearest is 1.00.
   const m = findBetChip(reg, 0.9, Number.POSITIVE_INFINITY);
   expect(m?.chipKey).toBe("betButton__bet-1.00");
+});
+
+test("detects scrollable bet dropdown selectors", () => {
+  const reg = {
+    betButton: el(9, 9),
+    "betButton__totalBetDropdown": el(20, 200),
+    "betButton__bet-8.00": el(20, 280),
+  } as unknown as UiRegistry;
+  expect(hasDropdownBetSelector(reg)).toBe(true);
+});
+
+test("parseBetValueFromChipKey extracts direct bet-row values", () => {
+  expect(parseBetValueFromChipKey("betButton__bet-8.00")).toBe(8);
+  expect(parseBetValueFromChipKey("betPlus__betAmount-30.00")).toBe(30);
+  expect(parseBetValueFromChipKey("betButton__totalBetDropdown__totalBet-60.00")).toBe(60);
+  expect(parseBetValueFromChipKey("betButton__bet-400.00-selected")).toBe(400);
+  expect(parseBetValueFromChipKey("betButton__closeButton")).toBeNull();
 });
 
 test("regression for hardcoded count bug: user's example case", () => {

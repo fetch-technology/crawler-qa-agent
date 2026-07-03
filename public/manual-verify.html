@@ -3108,7 +3108,14 @@
       const setup = c.setupInstructions || "(empty)";
       const actionsHtml = c.actions.length === 0
         ? `<div style="color: #5e6772; font-style: italic;">No translated actions${c.skipReason ? ` — ${escapeHtml(c.skipReason)}` : ""}</div>`
-        : `<ol style="margin: 4px 0 0; padding-left: 20px; font-size: 12px; line-height: 1.6;">${c.actions.map((a) => `<li>${escapeHtml(describeAction(a))}</li>`).join("")}</ol>`;
+        : `<ol style="margin: 4px 0 0; padding-left: 20px; font-size: 12px; line-height: 1.6;">${c.actions.map((a, idx) => `
+            <li style="margin-bottom: 6px;">
+              <div style="display:flex;align-items:center;gap:6px;">
+                <code style="color:#8b939c;font-size:10px;">#${idx + 1}</code>
+                <span style="flex:1;">${escapeHtml(describeAction(a))}</span>
+                <button onclick="doTestCaseAction('${c.id}', ${idx})" style="background:#5e6772;font-size:10px;padding:2px 8px;" title="Execute only this action in the live browser, without running assertions or the rest of the testcase">Test</button>
+              </div>
+            </li>`).join("")}</ol>`;
       const editActionsBtn = `<button onclick="openActionEditor('${c.id}')" style="background: #3b82f6; font-size: 10px; padding: 2px 8px; margin-left: 8px;" title="Edit translated actions for this case (bypasses AI — your edit is final)">✎ Edit</button>`;
       // Delete + Add buttons per assertion. QA design choice: add-only +
       // delete-only (no inline edit) — replace a bad assertion via
@@ -3174,6 +3181,7 @@
     }
 
     function lastRunHtml(r, c) {
+      const caseSlug = window.__lastCasesSlug ?? "";
       const presentation = outcomePresentation(r);
       const statusPill = r.status === "pass" ? "verified" : r.status === "fail" ? "rejected" : "pending";
       const skipHtml = r.skipReason ? `<div style="color: #d9534f; font-size: 12px;">Skip: ${escapeHtml(r.skipReason)}</div>` : "";
@@ -3628,7 +3636,7 @@
         ? `<div style="margin-top:6px;padding:8px 10px;background:#2a1a2e;border-left:3px solid #a855f7;border-radius:4px;font-size:11px;">
             <div style="color:#d8b4fe;font-weight:600;margin-bottom:4px;">🧩 Provider not supported</div>
             <div style="color:#cbb8e0;line-height:1.5;">Parser rejected all ${pd.rejectedCount} spin responses (${pd.seenCount} responses seen). This game's wire format isn't recognised yet.</div>
-            <button onclick="learnProvider('${escapeHtml(slug)}', this)" style="margin-top:8px;font-size:11px;padding:5px 12px;background:#7c3aed;color:#fff;border:none;border-radius:4px;cursor:pointer;">🧠 Learn provider from ${pd.samples.length} sample(s)</button>
+            <button onclick="learnProvider('${escapeHtml(caseSlug)}', this)" style="margin-top:8px;font-size:11px;padding:5px 12px;background:#7c3aed;color:#fff;border:none;border-radius:4px;cursor:pointer;">🧠 Learn provider from ${pd.samples.length} sample(s)</button>
             <div class="learn-provider-result" style="margin-top:8px;font-size:11px;"></div>
           </div>`
         : "";
@@ -4508,6 +4516,34 @@
       // Re-render from cache
       const cases = window.__cases || [];
       renderCases(cases, window.__lastCasesSlug);
+    };
+
+    window.doTestCaseAction = async (caseId, actionIndex) => {
+      const cases = window.__cases || [];
+      const tc = cases.find((c) => c.id === caseId);
+      const action = tc?.actions?.[actionIndex];
+      if (!tc || !action) return toast(`Action #${actionIndex + 1} not found for ${caseId}`, true);
+      if (action.kind === "spin" && !confirm(`Action #${actionIndex + 1} is a real spin and may deduct balance.\n\nRun only this action for "${caseId}"?`)) return;
+      const label = `${caseId} #${actionIndex + 1}: ${describeAction(action)}`;
+      toast(`Testing action: ${label}`);
+      appendLog(`[action-test] starting ${label}`);
+      try {
+        const r = await api("/api/qa/manual/case-action/test", {
+          method: "POST",
+          body: { caseId, actionIndex, gameSlug: window.__lastCasesSlug, ensureMain: false },
+        });
+        if (!r.ok) {
+          appendLog(`[action-test] ${label} failed: ${r.reason || "unknown"}`);
+          toast(`Action test failed: ${r.reason || "unknown"}`, true);
+          return;
+        }
+        appendLog(`[action-test] ${label} ok in ${((r.durationMs || 0) / 1000).toFixed(2)}s`);
+        toast(`✓ Action #${actionIndex + 1} ok`);
+        refresh().catch(() => {});
+      } catch (err) {
+        appendLog(`[action-test] ${label} error: ${err.message}`);
+        toast(`Action test error: ${err.message}`, true);
+      }
     };
 
     // Quiet runner: POST preview-case + store result + log. Does NOT expand /
