@@ -118,6 +118,8 @@ export const UI_ELEMENT_SCHEMA: Schema = {
     verifiedBy: { type: "string", nullable: true },
     status: { type: "string", enum: ["pending", "verified", "rejected"], nullable: true },
     baselineImage: { type: "string", nullable: true },
+    preferredGesture: { type: "string", enum: ["click", "hold"], nullable: true },
+    preferredHoldMs: { type: "number", nullable: true },
   },
 };
 

@@ -3,9 +3,11 @@
 // When a popup opens with a dimmed background, AI vision sometimes still
 // flags main-game controls visible THROUGH the dim (spin/bet/menu in the
 // background). Those are not popup content — they're the same buttons that
-// already live in the main registry. We deterministically drop any
-// AI-proposed popup element whose coord is within ~30px of a CANONICAL main
-// registry entry (a key without the `__` namespace separator).
+// already live in the main registry.
+//
+// Important nuance: some real popup buttons are centered over the main
+// button row. A coordinate-only filter would silently drop them. We therefore
+// drop only when the proposed key/name also looks like a main-screen control.
 //
 // IMPORTANT — sub-state overlaps are NOT filtered: two popups can legitimately
 // share coords (e.g., `betMinus` and `betPlus` both open the SAME bet-selector
@@ -54,7 +56,7 @@ export function buildMainElementsHint(
     "them faintly through the popup's dimmed overlay. SKIP THEM ALL:",
     ...lines,
     "",
-    `If you see a button at any of those coords (within ~${POPUP_MAIN_OVERLAP_TOLERANCE_PX}px), DO NOT return it. Only return elements that are INSIDE the popup overlay itself.`,
+    `If you see a BACKGROUND/main-game button at any of those coords (within ~${POPUP_MAIN_OVERLAP_TOLERANCE_PX}px), DO NOT return it. If a foreground popup button is drawn on top of the same coord, DO return the popup button with its popup-specific label/key.`,
   ].join("\n");
 }
 
@@ -135,7 +137,7 @@ export function filterMainOverlap<T extends PopupCandidate>(
   for (const c of candidates) {
     let overlap: string | null = null;
     for (const [k, v] of mainEntries) {
-      if (Math.abs(v.x - c.x) <= tolerancePx && Math.abs(v.y - c.y) <= tolerancePx) {
+      if (Math.abs(v.x - c.x) <= tolerancePx && Math.abs(v.y - c.y) <= tolerancePx && isMainLikePopupCandidate(c.key, k)) {
         overlap = k;
         break;
       }
@@ -144,4 +146,31 @@ export function filterMainOverlap<T extends PopupCandidate>(
     else kept.push(c);
   }
   return { kept, dropped };
+}
+
+function normalizeKeyForCompare(key: string): string {
+  return key.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+/** True only when an overlapped popup candidate is probably a dimmed
+ *  main-screen control, not a real foreground popup button drawn over the same
+ *  coordinate. */
+export function isMainLikePopupCandidate(candidateKey: string, mainKey: string): boolean {
+  const c = normalizeKeyForCompare(candidateKey);
+  const m = normalizeKeyForCompare(mainKey);
+  if (!c || !m) return false;
+  if (c.includes(m) || m.includes(c)) return true;
+
+  const family = (key: string): string | null => {
+    if (/spin|turbo|quickspin/.test(key)) return "spin";
+    if (/bet|stake|wager|coin|chip/.test(key)) return "bet";
+    if (/menu|hamburger|settings|setting/.test(key)) return "menu";
+    if (/sound|audio|volume|mute|speaker/.test(key)) return "sound";
+    if (/info|help|paytable|rules|question/.test(key)) return "info";
+    if (/auto|autoplay/.test(key)) return "auto";
+    return null;
+  };
+  const mf = family(m);
+  const cf = family(c);
+  return Boolean(mf && cf && mf === cf);
 }

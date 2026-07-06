@@ -14,6 +14,7 @@ import type { UiRegistry, UiElement } from "../registry/types.js";
 
 export type CaseAction =
   | { kind: "click"; uiKey: string; times?: number; reason?: string }
+  | { kind: "hold"; uiKey: string; ms?: number; reason?: string }
   | { kind: "wait_ms"; ms: number }
   | { kind: "spin" }
   | { kind: "set_bet_to_min" }
@@ -100,6 +101,7 @@ const SYSTEM_PROMPT = `You are a QA test automation engineer. You translate natu
 
 Available actions:
 - {"kind":"click","uiKey":"<key>","times":N,"reason":"<short>"} — click a UI element N times (default 1). uiKey MUST EXIST in the provided uiMap_hierarchy (case-sensitive, exact match).
+- {"kind":"hold","uiKey":"<key>","ms":<int>,"reason":"<short>"} — press-and-hold a UI element, then release. Use for controls whose label/instructions say HOLD/LONG PRESS, especially spin/autoplay controls like "HOLD FOR AUTOPLAY". Default ms is 5000. uiKey MUST EXIST.
 - {"kind":"wait_ms","ms":<int>} — fixed wait (PREFER predicate waits below for non-trivial pauses)
 - {"kind":"wait_until_state","state":"<MAIN|FREE_SPIN|BIG_WIN_POPUP|...>","maxMs":<int>,"reason":"<short>"} — poll game state every 500ms until matched (or timeout). Use INSTEAD of wait_ms when waiting for a known state transition. Less flaky than fixed timing.
 - {"kind":"wait_until_network_idle","idleMs":<int>,"maxMs":<int>} — wait until no network requests in flight for idleMs (default 1500ms). Use after triggering an action that fires API calls (spin, buy, autoplay start).
@@ -135,12 +137,14 @@ Critical rules about the uiMap_hierarchy:
 - Keys with "__" are NESTED (e.g. "buyBonusButton__freeSpinsOption" means clicking buyBonusButton opens a popup containing freeSpinsOption).
 - To click a nested element, your action sequence MUST first click each ancestor in order so the popup is open. Example to click "a__b__c": [{click a}, {wait_ms 1500}, {click a__b}, {wait_ms 1500}, {click a__b__c}].
 - Entries marked [human-verified] have HIGHLY trusted coordinates; prefer them over unverified ones if alternatives exist.
+- Entries marked [hold] or [hold Nms] require a long-press gesture. Use {"kind":"hold","uiKey":"<key>","ms":N} for those entries instead of click when opening/using that control.
 - Entries marked [external-tab] live on a SEPARATE browser tab opened by their PARENT trigger (e.g. \`historyButton\` opens a new tab → \`historyButton__roundsTable\` is in that tab). When the action sequence needs to click an [external-tab] element:
   1. First click the PARENT trigger (the top-level key, NOT marked [external-tab]).
   2. Add a longer wait_ms (≥2000ms) so the new tab has time to load.
   3. Then click the [external-tab] children. The case-executor auto-routes clicks to the captured tab; you don't need any special action.
   4. After interacting, the tab is closed automatically at end of case. If the case is mid-flow and you need to return to the game (e.g. to spin afterwards), DO emit a click on the tab's closeButton (also [external-tab]) so the page focus returns cleanly.
 - DO NOT invent uiKeys not in the hierarchy. If a required element is missing, output {"actions":[],"reason":"missing uiKey <name>"}.
+- If the UI text or setup says "hold", "long press", "press and hold", or the registered control is a "Hold for Autoplay" style button, emit {"kind":"hold","uiKey":"<key>","ms":5000} instead of click. Add a wait_ms 1500 afterward if a popup/panel needs to render.
 
 Bet adjustment rules (CRITICAL):
 - **DEFAULT: emit \`{"kind":"set_bet_to_value","value":<target>}\` for ANY arbitrary bet target.** Engine reads bet widget via OCR after each click and stops when displayed value matches target. Robust to unknown starting bet (auto-detects current value). Use this UNLESS target is exactly min or max (then use set_bet_to_min / set_bet_to_max).
@@ -493,7 +497,7 @@ export async function translateCase(input: {
 
   // Validate uiKey references.
   for (const a of parsed.actions) {
-    if (a.kind === "click" && !input.uiMap[a.uiKey]) {
+    if ((a.kind === "click" || a.kind === "hold") && !input.uiMap[a.uiKey]) {
       return {
         caseId: input.caseId,
         actions: [],
@@ -523,7 +527,7 @@ export async function translateCase(input: {
     if (stripped > 0) {
       console.warn(`[case-translator/${input.caseId}] SPIN POLICY=FORBIDDEN — stripped ${stripped} contaminating action(s) the AI emitted (${policy.reason})`);
     }
-    return { caseId: input.caseId, actions: filtered, aiCalled: true };
+    return { caseId: input.caseId, actions: normalizeNestedUiActions(filtered, input.uiMap), aiCalled: true };
   }
 
   // POST-PROCESS SAFETY NET: enforce BET BEFORE FIRST SPIN. The game session
@@ -573,7 +577,8 @@ export async function translateCase(input: {
   // autoplay, no manual edit). Faster + far more robust than N manual clicks,
   // and the only practical way to reach the spin counts that organically
   // trigger free spins. Runs LAST so the ante/bet prelude is preserved.
-  const finalActions = ensureAutoplayHygiene(maybeConvertToAutoplay(parsed.actions, {
+  const normalizedActions = normalizeNestedUiActions(parsed.actions, input.uiMap);
+  const finalActions = ensureAutoplayHygiene(maybeConvertToAutoplay(normalizedActions, {
     category: input.category,
     spinCount: input.spinCount,
     uiMap: input.uiMap,
@@ -676,6 +681,123 @@ export function ensureAutoplayHygiene(actions: CaseAction[], uiMap: UiRegistry):
     { kind: "stop_autoplay_if_running", reason: "ensure no leftover autoplay before evaluation / later steps" },
   ];
   return [...actions.slice(0, insertAt), ...tail, ...actions.slice(insertAt)];
+}
+
+function uiActionKey(a: CaseAction): string | null {
+  return (a.kind === "click" || a.kind === "hold") ? a.uiKey : null;
+}
+
+function isCloseLikeUiKey(uiKey: string): boolean {
+  const last = uiKey.split("__").pop() ?? uiKey;
+  return /close|cancel|back|exit|dismiss/i.test(last);
+}
+
+function isPassiveContainerAncestor(uiKey: string): boolean {
+  const last = uiKey.split("__").pop() ?? uiKey;
+  return /dropdown|panel|popup|modal|selector|list/i.test(last);
+}
+
+function actionForRegistryElement(uiKey: string, uiMap: UiRegistry, reason: string): CaseAction {
+  const el = uiMap[uiKey];
+  if (el?.preferredGesture === "hold") {
+    return { kind: "hold", uiKey, ms: el.preferredHoldMs ?? 5000, reason };
+  }
+  return { kind: "click", uiKey, reason };
+}
+
+function dropdownOpenerForOption(uiKey: string, uiMap: UiRegistry): string | null {
+  const parts = uiKey.split("__");
+  const leaf = parts.at(-1);
+  if (!leaf || parts.length < 2) return null;
+  const m = /^(.+?)-(?:until-)?\d+(?:\.\d+)?(?:-.+)?$/i.exec(leaf);
+  if (!m) return null;
+  const parent = parts.slice(0, -1).join("__");
+  const base = m[1]!;
+  const candidates = [
+    `${parent}__${base}Dropdown`,
+    `${parent}__${base}Selector`,
+    `${parent}__${base}List`,
+  ];
+  return candidates.find((k) => Boolean(uiMap[k])) ?? null;
+}
+
+/** Post-process AI-authored UI actions so nested keys are physically reachable.
+ *  The prompt tells AI to click every ancestor for `a__b__c`, but models still
+ *  sometimes jump straight to the leaf. This inserts any missing ancestor
+ *  action, and honors registry `[hold]` metadata for both inserted ancestors
+ *  and AI-authored clicks. */
+export function normalizeNestedUiActions(actions: CaseAction[], uiMap: UiRegistry): CaseAction[] {
+  const out: CaseAction[] = [];
+  const active = new Set<string>();
+  let skipNextWaitMs = false;
+
+  const markActive = (uiKey: string) => {
+    const parts = uiKey.split("__");
+    for (let i = 1; i <= parts.length; i++) active.add(parts.slice(0, i).join("__"));
+  };
+
+  const nextUiKeyAfter = (idx: number): string | null => {
+    for (let j = idx + 1; j < actions.length; j++) {
+      const next = actions[j]!;
+      if (next.kind === "wait_ms") continue;
+      return uiActionKey(next);
+    }
+    return null;
+  };
+
+  for (let idx = 0; idx < actions.length; idx++) {
+    const raw = actions[idx]!;
+    if (skipNextWaitMs && raw.kind === "wait_ms") {
+      skipNextWaitMs = false;
+      continue;
+    }
+    skipNextWaitMs = false;
+    const rawUiKey = uiActionKey(raw);
+    if (!rawUiKey) {
+      out.push(raw);
+      if (raw.kind === "dismiss" || raw.kind === "reset") active.clear();
+      continue;
+    }
+
+    if (raw.kind === "click" && isPassiveContainerAncestor(rawUiKey)) {
+      const nextUiKey = nextUiKeyAfter(idx);
+      if (nextUiKey?.startsWith(`${rawUiKey}__`)) {
+        markActive(rawUiKey);
+        skipNextWaitMs = true;
+        continue;
+      }
+    }
+
+    const parts = rawUiKey.split("__");
+    for (let i = 1; i < parts.length; i++) {
+      const ancestor = parts.slice(0, i).join("__");
+      if (active.has(ancestor)) continue;
+      if (!uiMap[ancestor]) continue;
+      if (isPassiveContainerAncestor(ancestor)) {
+        markActive(ancestor);
+        continue;
+      }
+      out.push(actionForRegistryElement(ancestor, uiMap, `open ancestor ${ancestor} for ${rawUiKey}`));
+      out.push({ kind: "wait_ms", ms: 1500 });
+      markActive(ancestor);
+    }
+
+    const optionOpener = raw.kind === "click" ? dropdownOpenerForOption(rawUiKey, uiMap) : null;
+    if (optionOpener && !active.has(optionOpener) && rawUiKey !== optionOpener) {
+      out.push(actionForRegistryElement(optionOpener, uiMap, `open dropdown ${optionOpener} for ${rawUiKey}`));
+      out.push({ kind: "wait_ms", ms: 500 });
+      markActive(optionOpener);
+    }
+
+    const action = raw.kind === "click" && uiMap[raw.uiKey]?.preferredGesture === "hold"
+      ? { kind: "hold" as const, uiKey: raw.uiKey, ms: uiMap[raw.uiKey]?.preferredHoldMs ?? 5000, reason: raw.reason ?? "registry marks this control as hold" }
+      : raw;
+    out.push(action);
+    markActive(rawUiKey);
+    if (isCloseLikeUiKey(rawUiKey)) active.clear();
+  }
+
+  return out;
 }
 
 /** Build a native autoplay batch action sequence for ~targetSpins rounds.

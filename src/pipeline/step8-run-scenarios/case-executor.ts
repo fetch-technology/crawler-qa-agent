@@ -1125,7 +1125,7 @@ export async function executeCase(
   const autoplayTargetCount = (() => {
     let n: number | undefined;
     for (const a of input.actions) {
-      if (a.kind === "click" && typeof a.uiKey === "string") {
+      if ((a.kind === "click" || a.kind === "hold") && typeof a.uiKey === "string") {
         const m = /__autoCountSlide-(\d+)\b/.exec(a.uiKey);
         if (m) n = Number(m[1]); // last one wins if multiple
       }
@@ -1455,7 +1455,7 @@ export async function executeCase(
       if (
         isUiOnlyCase
         && !uiMidShot
-        && action.kind === "click"
+        && (action.kind === "click" || action.kind === "hold")
         && isOpenUiKey(action.uiKey)
       ) {
         try {
@@ -3241,6 +3241,32 @@ export function parseBetValueFromChipKey(key: string): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
+export function parseNumberOfSpinsValueFromKey(key: string): number | null {
+  const m = key.match(/__numberOfSpins-(until[\w-]*|-?\d+(?:\.\d+)?)(?:-.+)?$/i);
+  if (!m) return null;
+  const raw = m[1]!;
+  if (/^until/i.test(raw)) return -1;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : null;
+}
+
+function findNumberOfSpinsDropdownForOption(
+  registry: import("../registry/types.js").UiRegistry,
+  optionKey: string,
+): { key: string; el: import("../registry/types.js").UiElement } | null {
+  const parentKey = optionKey.split("__").slice(0, -1).join("__");
+  const candidates = [
+    `${parentKey}__numberOfSpinsDropdown`,
+    parentKey,
+    ...Object.keys(registry).filter((k) => k.startsWith(`${parentKey}__`) && /dropdown/i.test(k)),
+  ];
+  for (const key of candidates) {
+    const el = registry[key];
+    if (el) return { key, el };
+  }
+  return null;
+}
+
 type BetSelectorVisibility = "open" | "closed" | "unknown";
 
 async function detectBetSelectorVisibility(page: Page): Promise<BetSelectorVisibility> {
@@ -3341,14 +3367,20 @@ async function setBetViaDropdown(
   const page = ctx.page;
   const vp = page.viewportSize() ?? { width: 1280, height: 720 };
   const tol = 0.01;
-  const MAX_SCROLLS = 12;
+  const MAX_SCROLLS = Math.max(2, Math.min(16, Math.round(Number(process.env.QA_BET_DROPDOWN_RUNTIME_SCROLLS ?? 8))));
+  const MAX_AI_READS = Math.max(3, Math.min(20, Math.round(Number(process.env.QA_BET_DROPDOWN_RUNTIME_MAX_READS ?? 8))));
   const targetLabel = want.kind === "value" ? `value ${want.value}` : want.kind;
 
   const os = await import("node:os");
   const pathMod = await import("node:path");
   const { writeFile } = await import("node:fs/promises");
   const { transcribeBetDropdown } = await import("../../ai/vision.js");
+  let aiReads = 0;
   const readRows = async (): Promise<import("../../ai/vision.js").BetDropdownRead> => {
+    aiReads++;
+    if (aiReads > MAX_AI_READS) {
+      throw new Error(`AI read budget exceeded (${MAX_AI_READS}) while selecting bet dropdown`);
+    }
     const p = pathMod.join(os.tmpdir(), `qa-betdd-${process.pid}-${Date.now()}.png`);
     await writeFile(p, await page.screenshot({ type: "png" }));
     return transcribeBetDropdown({ screenshotPath: p, viewport: vp });
@@ -3358,8 +3390,9 @@ async function setBetViaDropdown(
   // Try-and-verify scroll: attempt methods in order until the VALUE set changes;
   // remember the winner for subsequent scrolls in this op. dir +1 = down.
   let scrollMethod: "wheel" | "keys" | "drag" | null = null;
-  const scrollOnce = async (dir: 1 | -1, beforeSig: string): Promise<boolean> => {
-    const methods: Array<"wheel" | "keys" | "drag"> = scrollMethod ? [scrollMethod] : ["wheel", "keys", "drag"];
+  const enableFallbackScroll = process.env.QA_BET_DROPDOWN_FALLBACK_SCROLL === "1";
+  const scrollOnce = async (dir: 1 | -1, beforeSig: string): Promise<import("../../ai/vision.js").BetDropdownRead | null> => {
+    const methods: Array<"wheel" | "keys" | "drag"> = scrollMethod ? [scrollMethod] : enableFallbackScroll ? ["wheel", "keys", "drag"] : ["wheel"];
     for (const m of methods) {
       try {
         if (m === "wheel") { await page.mouse.move(dropdown.x, dropdown.y); await page.mouse.wheel(0, dir * 220); }
@@ -3368,9 +3401,9 @@ async function setBetViaDropdown(
       } catch { /* try next */ }
       await page.waitForTimeout(450);
       const after = await readRows();
-      if (sig(after.rows) !== beforeSig) { scrollMethod = m; return true; }
+      if (sig(after.rows) !== beforeSig) { scrollMethod = m; return after; }
     }
-    return false; // nothing moved the value set
+    return null; // nothing moved the value set
   };
 
   const dismiss = async () => {
@@ -3403,14 +3436,16 @@ async function setBetViaDropdown(
         if (!goDown && !goUp) { // target is within the visible numeric range but not an exact row → not in ladder
           break;
         }
+        if ((goDown && !read.moreBelow) || (goUp && !read.moreAbove)) break;
         const moved = await scrollOnce(goDown ? 1 : -1, sig(read.rows));
         if (!moved) break; // reached an end without finding it
-        read = await readRows();
+        read = moved;
       } else {
         // min / max: keep scrolling toward the extreme until the value set stops changing.
+        if ((dir > 0 && !read.moreBelow) || (dir < 0 && !read.moreAbove)) break;
         const moved = await scrollOnce(dir, sig(read.rows));
         if (!moved) break; // at the end
-        read = await readRows();
+        read = moved;
       }
     }
 
@@ -3423,7 +3458,7 @@ async function setBetViaDropdown(
     }
 
     if (!chosen) { await dismiss(); return { ok: false }; }
-    console.log(`[case-action] set_bet dropdown: ${targetLabel} → clicking option ${chosen.value} @ y=${chosen.y}`);
+    console.log(`[case-action] set_bet dropdown: ${targetLabel} → clicking option ${chosen.value} @ y=${chosen.y} (AI reads ${aiReads}/${MAX_AI_READS})`);
     await page.mouse.click(dropdown.x, chosen.y);
     await page.waitForTimeout(400);
     let selectorStillOpen = true;
@@ -3459,6 +3494,113 @@ async function setBetViaDropdown(
   }
 }
 
+async function selectNumberOfSpinsViaDropdown(
+  ctx: CaseExecutorContext,
+  optionKey: string,
+  targetValue: number,
+): Promise<{ ok: boolean }> {
+  const reg = ctx.uiMap as import("../registry/types.js").UiRegistry;
+  const dropdown = findNumberOfSpinsDropdownForOption(reg, optionKey);
+  if (!dropdown) return { ok: false };
+
+  const page = ctx.page;
+  const vp = page.viewportSize() ?? { width: 1280, height: 720 };
+  const MAX_SCROLLS = Math.max(1, Math.min(12, Math.round(Number(process.env.QA_AUTOPLAY_DROPDOWN_RUNTIME_SCROLLS ?? 5))));
+  const MAX_AI_READS = Math.max(2, Math.min(12, Math.round(Number(process.env.QA_AUTOPLAY_DROPDOWN_RUNTIME_MAX_READS ?? 6))));
+  const tol = 0.001;
+
+  const os = await import("node:os");
+  const pathMod = await import("node:path");
+  const { writeFile } = await import("node:fs/promises");
+  const { transcribeNumericDropdown } = await import("../../ai/vision.js");
+
+  let aiReads = 0;
+  const readRows = async (): Promise<import("../../ai/vision.js").BetDropdownRead> => {
+    aiReads++;
+    if (aiReads > MAX_AI_READS) {
+      throw new Error(`AI read budget exceeded (${MAX_AI_READS}) while selecting autoplay dropdown`);
+    }
+    const p = pathMod.join(os.tmpdir(), `qa-autoplaydd-${process.pid}-${Date.now()}.png`);
+    await writeFile(p, await page.screenshot({ type: "png" }));
+    return transcribeNumericDropdown({
+      screenshotPath: p,
+      viewport: vp,
+      label: "number-of-spins / autoplay rounds selector",
+    });
+  };
+  const sig = (rows: { value: number }[]) => rows.map((r) => r.value).sort((a, b) => a - b).join(",");
+  const findTarget = (rows: { value: number; y: number }[]) => rows.find((r) => Math.abs(r.value - targetValue) <= tol) ?? null;
+
+  const openDropdown = async () => {
+    await page.mouse.click(dropdown.el.x, dropdown.el.y);
+    await page.waitForTimeout(600);
+  };
+
+  const scrollOnce = async (dir: 1 | -1, beforeSig: string): Promise<import("../../ai/vision.js").BetDropdownRead | null> => {
+    await page.mouse.move(dropdown.el.x, dropdown.el.y);
+    await page.mouse.wheel(0, dir * 220);
+    await page.waitForTimeout(450);
+    const after = await readRows();
+    return sig(after.rows) !== beforeSig ? after : null;
+  };
+
+  try {
+    let read = await readRows();
+    const initialHit = findTarget(read.rows);
+    if (initialHit) {
+      console.log(`[case-action] autoplay dropdown: value ${targetValue} already visible @ y=${initialHit.y} (AI reads ${aiReads}/${MAX_AI_READS})`);
+      await page.mouse.click(dropdown.el.x, initialHit.y);
+      await page.waitForTimeout(400);
+      return { ok: true };
+    }
+
+    // If the list is collapsed, the vision prompt should return no rows. Some
+    // games draw the current value like a lone row; treat a single, non-target
+    // row with no continuation hints as collapsed and click the opener once.
+    const looksCollapsed = read.rows.length === 0
+      || (read.rows.length === 1 && !read.moreAbove && !read.moreBelow);
+    if (looksCollapsed) {
+      await openDropdown();
+      read = await readRows();
+    }
+
+    let hit = findTarget(read.rows);
+    if (hit) {
+      console.log(`[case-action] autoplay dropdown: value ${targetValue} → clicking visible option @ y=${hit.y} (AI reads ${aiReads}/${MAX_AI_READS})`);
+      await page.mouse.click(dropdown.el.x, hit.y);
+      await page.waitForTimeout(400);
+      return { ok: true };
+    }
+
+    for (let i = 0; i < MAX_SCROLLS; i++) {
+      if (read.rows.length === 0) break;
+      const vals = read.rows.map((r) => r.value);
+      const minV = Math.min(...vals);
+      const maxV = Math.max(...vals);
+      const goDown = targetValue > maxV || targetValue === -1;
+      const goUp = targetValue < minV && targetValue !== -1;
+      if (!goDown && !goUp) break;
+      if ((goDown && !read.moreBelow) || (goUp && !read.moreAbove)) break;
+      const moved = await scrollOnce(goDown ? 1 : -1, sig(read.rows));
+      if (!moved) break;
+      read = moved;
+      hit = findTarget(read.rows);
+      if (hit) {
+        console.log(`[case-action] autoplay dropdown: value ${targetValue} → clicking scrolled option @ y=${hit.y} (AI reads ${aiReads}/${MAX_AI_READS})`);
+        await page.mouse.click(dropdown.el.x, hit.y);
+        await page.waitForTimeout(400);
+        return { ok: true };
+      }
+    }
+
+    console.warn(`[case-action] autoplay dropdown: exact value ${targetValue} not found in live list (AI reads ${aiReads}/${MAX_AI_READS})`);
+    return { ok: false };
+  } catch (err) {
+    console.warn(`[case-action] autoplay dropdown threw: ${err instanceof Error ? err.message : String(err)}`);
+    return { ok: false };
+  }
+}
+
 export async function executeAction(
   action: CaseAction,
   ctx: CaseExecutorContext,
@@ -3483,6 +3625,25 @@ export async function executeAction(
     await ctx.page.waitForTimeout(action.ms);
     return;
   }
+  if (action.kind === "hold") {
+    const el = ctx.uiMap[action.uiKey];
+    if (!el) throw new Error(`uiKey '${action.uiKey}' not in registry`);
+    const holdMs = Math.max(300, Math.min(15_000, Math.round(action.ms ?? Number(process.env.QA_ACTION_HOLD_MS ?? 5000))));
+    const holdPage = el.externalPage
+      ? (ctx.externalTabs && ctx.externalTabs.length > 0 ? ctx.externalTabs[ctx.externalTabs.length - 1] : null)
+      : ctx.page;
+    if (el.externalPage && !holdPage) {
+      console.warn(`[case-action] hold ${action.uiKey}: externalPage=true but no tab captured yet — skipping (was the parent trigger clicked?)`);
+      return;
+    }
+    console.log(`[case-action] hold ${action.uiKey} (${el.x},${el.y}) for ${holdMs}ms${el.externalPage ? " [external tab]" : ""}${action.reason ? ` — ${action.reason}` : ""}`);
+    await holdPage!.mouse.move(el.x, el.y);
+    await holdPage!.mouse.down();
+    await holdPage!.waitForTimeout(holdMs);
+    await holdPage!.mouse.up();
+    await holdPage!.waitForTimeout(500);
+    return;
+  }
   if (action.kind === "click") {
     const el = ctx.uiMap[action.uiKey];
     if (!el) throw new Error(`uiKey '${action.uiKey}' not in registry`);
@@ -3491,7 +3652,14 @@ export async function executeAction(
       console.log(`[case-action] click ${action.uiKey}: routing dropdown bet row through live value selector (${betChipValue})`);
       const r = await setBetViaDropdown(ctx, { kind: "value", value: betChipValue }, null);
       if (r.ok) return;
-      console.warn(`[case-action] click ${action.uiKey}: live dropdown selection failed — falling back to registered coord`);
+      throw new Error(`click ${action.uiKey}: live dropdown selection failed — refusing stale registry coord for scrollable dropdown option`);
+    }
+    const numberOfSpinsValue = parseNumberOfSpinsValueFromKey(action.uiKey);
+    if (numberOfSpinsValue != null) {
+      console.log(`[case-action] click ${action.uiKey}: routing autoplay dropdown row through live value selector (${numberOfSpinsValue})`);
+      const r = await selectNumberOfSpinsViaDropdown(ctx, action.uiKey, numberOfSpinsValue);
+      if (r.ok) return;
+      throw new Error(`click ${action.uiKey}: live autoplay dropdown selection failed — refusing stale registry coord`);
     }
     const times = action.times ?? 1;
     // Route to the right page: elements flagged `externalPage: true` were
@@ -4673,6 +4841,7 @@ function serializePaytableForPrompt(
 function describeActionTarget(action: CaseAction): string | undefined {
   switch (action.kind) {
     case "click": return action.uiKey;
+    case "hold": return `${action.uiKey} (${action.ms ?? Number(process.env.QA_ACTION_HOLD_MS ?? 5000)}ms)`;
     case "wait_ms": return `${action.ms}ms`;
     case "spin": return undefined;
     case "set_bet_to_value": return `${action.value}`;

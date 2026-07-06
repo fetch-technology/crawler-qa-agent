@@ -67,8 +67,9 @@ export function formatRegistryHierarchy(registry: UiRegistry, opts: HierarchyOpt
     // routes the click automatically based on the flag at runtime; this
     // marker is just to help AI write better setup_instructions.
     const externalMark = el.externalPage ? " [external-tab]" : "";
+    const gestureMark = el.preferredGesture === "hold" ? ` [hold${el.preferredHoldMs ? ` ${el.preferredHoldMs}ms` : ""}]` : "";
     const prefix = indent.repeat(depth);
-    lines.push(`${prefix}- ${key} → ${displayKey} (${el.x},${el.y}) ${statusMark}${verifiedByQA}${externalMark} [${el.strategy}]`);
+    lines.push(`${prefix}- ${key} → ${displayKey} (${el.x},${el.y}) ${statusMark}${verifiedByQA}${externalMark}${gestureMark} [${el.strategy}]`);
     const children = childrenMap.get(key) ?? [];
     for (const c of children) renderNode(c, depth + 1);
   }

@@ -370,6 +370,18 @@ export async function handleManualRoute(
       return sendJson(res, r.ok ? 200 : 400, { ...r, status: resolveSession(req, body as any, url).status() }), true;
     }
 
+    // POST /api/qa/manual/remove-children { parentKey } — delete ALL
+    // descendants of a parent element, keeping the parent itself.
+    if (url === "/api/qa/manual/remove-children" && method === "POST") {
+      const body = await asJsonBody<{ parentKey?: string }>(req);
+      if (!body.parentKey) {
+        return sendJson(res, 400, { error: "parentKey required" }), true;
+      }
+      const sess = resolveSession(req, body as any, url);
+      const r = await sess.removeChildren(body.parentKey);
+      return sendJson(res, r.ok ? 200 : 400, { ...r, status: sess.status() }), true;
+    }
+
     // POST /api/qa/manual/update { uiKey, x, y }
     if (url === "/api/qa/manual/update" && method === "POST") {
       const body = await asJsonBody<{ uiKey?: string; x?: number; y?: number }>(req);
@@ -409,15 +421,18 @@ export async function handleManualRoute(
       return sendJson(res, 200, resolveSession(req, null, url).status()), true;
     }
 
-    // POST /api/qa/manual/discover-via { triggerKey, stateLabel }
+    // POST /api/qa/manual/discover-via { triggerKey, stateLabel, gesture?, holdMs? }
     // One-click sub-state discovery: backend clicks trigger button, waits for
     // popup, AI detects elements, saves under namespace.
     if (url === "/api/qa/manual/discover-via" && method === "POST") {
-      const body = await asJsonBody<{ triggerKey?: string; stateLabel?: string }>(req);
+      const body = await asJsonBody<{ triggerKey?: string; stateLabel?: string; gesture?: "click" | "hold"; holdMs?: number }>(req);
       if (!body.triggerKey || !body.stateLabel) {
         return sendJson(res, 400, { error: "triggerKey and stateLabel required" }), true;
       }
-      const r = await resolveSession(req, body as any, url).discoverVia(body.triggerKey, body.stateLabel);
+      const r = await resolveSession(req, body as any, url).discoverVia(body.triggerKey, body.stateLabel, {
+        gesture: body.gesture,
+        holdMs: body.holdMs,
+      });
       return sendJson(res, r.ok ? 200 : 400, { ...r, status: resolveSession(req, body as any, url).status() }), true;
     }
 

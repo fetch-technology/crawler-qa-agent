@@ -620,6 +620,42 @@ Rules:
   return { rows, moreBelow: parsed?.moreBelow === true, moreAbove: parsed?.moreAbove === true };
 }
 
+/** Read visible numeric rows from a generic canvas dropdown (for example
+ *  Playtech "Number of spins" autoplay selector). */
+export async function transcribeNumericDropdown(args: {
+  screenshotPath: string;
+  viewport: { width: number; height: number };
+  label?: string;
+}): Promise<BetDropdownRead> {
+  const imageBase64 = readFileSync(args.screenshotPath).toString("base64");
+  const label = args.label ?? "numeric selector";
+  const prompt = `Viewport ${args.viewport.width}x${args.viewport.height}. An OPEN ${label} dropdown/list is visible. Read EVERY selectable numeric option row currently visible.
+
+Return ONLY:
+{
+  "rows": [ { "value": number, "y": number } ],
+  "moreBelow": boolean,
+  "moreAbove": boolean
+}
+Rules:
+- ONLY list selectable numeric option rows inside the open dropdown/list. Ignore the collapsed/current-value field, title/header text, close button, Start/Confirm buttons, reels, balance.
+- For labels like "Until Feature" or "Until Bonus", use value -1.
+- value: numeric only. y: vertical CENTER of that option row in viewport px.
+- Order rows top→bottom by y.
+- If no dropdown/list is open, return {"rows":[],"moreBelow":false,"moreAbove":false}.
+- Output ONLY the JSON.`;
+  const raw = await askClaudeVision(prompt, imageBase64);
+  const parsed = extractJsonFromText<{ rows?: Array<{ value?: number; y?: number }>; moreBelow?: boolean; moreAbove?: boolean }>(raw);
+  const rows: BetDropdownRow[] = [];
+  for (const r of parsed?.rows ?? []) {
+    if (typeof r?.value === "number" && Number.isFinite(r.value) && typeof r.y === "number") {
+      rows.push({ value: r.value, y: Math.round(r.y) });
+    }
+  }
+  rows.sort((a, b) => a.y - b.y);
+  return { rows, moreBelow: parsed?.moreBelow === true, moreAbove: parsed?.moreAbove === true };
+}
+
 export async function extractPlayScreenSnapshot(args: {
   screenshotPath: string;
   viewport: { width: number; height: number };

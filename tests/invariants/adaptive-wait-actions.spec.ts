@@ -49,11 +49,16 @@ test("legacy wait_ms still in CaseAction union (backward compat)", () => {
   expect(a.kind).toBe("wait_ms");
 });
 
+test("hold action supports long-press UI controls", () => {
+  const a: CaseAction = { kind: "hold", uiKey: "spinButton", ms: 5000 };
+  expect(a.kind).toBe("hold");
+});
+
 test("CaseAction discriminated union — exhaustive kinds", () => {
   const allKinds: Array<CaseAction["kind"]> = [
-    "click", "wait_ms", "spin", "set_bet_to_min", "set_bet_to_max",
+    "click", "hold", "wait_ms", "spin", "set_bet_to_min", "set_bet_to_max",
     "dismiss", "reset",
     "wait_until_state", "wait_until_network_idle", "wait_until_pixel_stable",
   ];
-  expect(allKinds.length).toBe(10);
+  expect(allKinds.length).toBe(11);
 });

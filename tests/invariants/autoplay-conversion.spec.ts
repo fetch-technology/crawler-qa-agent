@@ -2,7 +2,7 @@
 // the game's native autoplay (deterministic post-process), so re-translate
 // reliably produces autoplay without manual editing.
 import { test, expect } from "@playwright/test";
-import { maybeConvertToAutoplay, buildAutoplayBatch } from "../../src/pipeline/step7-testcase-gen/case-action-translator.ts";
+import { maybeConvertToAutoplay, buildAutoplayBatch, normalizeNestedUiActions } from "../../src/pipeline/step7-testcase-gen/case-action-translator.ts";
 import type { CaseAction } from "../../src/pipeline/step7-testcase-gen/case-action-translator.ts";
 import type { UiRegistry } from "../../src/pipeline/registry/types.ts";
 
@@ -99,6 +99,43 @@ test("already-autoplay actions (no discrete spins) are left unchanged", () => {
   ];
   const out = maybeConvertToAutoplay(actions, { category: "free_spins", spinCount: 100, uiMap: REG_WITH_AUTOPLAY });
   expect(out).toEqual(actions);
+});
+
+test("nested spin-button autoplay option opens the inner number-of-spins dropdown, not the outer panel container", () => {
+  const reg = {
+    spinButton: { ...el(), preferredGesture: "hold", preferredHoldMs: 5000 },
+    "spinButton__numberOfSpinsDropdown": el(),
+    "spinButton__numberOfSpinsDropdown__numberOfSpinsDropdown": el(),
+    "spinButton__numberOfSpinsDropdown__numberOfSpins-20": el(),
+    "spinButton__numberOfSpinsDropdown__startButton": el(),
+  } as unknown as UiRegistry;
+  const actions: CaseAction[] = [
+    { kind: "hold", uiKey: "spinButton", ms: 5000 },
+    { kind: "wait_ms", ms: 1500 },
+    { kind: "click", uiKey: "spinButton__numberOfSpinsDropdown__numberOfSpins-20" },
+    { kind: "wait_ms", ms: 500 },
+    { kind: "click", uiKey: "spinButton__numberOfSpinsDropdown__startButton" },
+  ];
+
+  const out = normalizeNestedUiActions(actions, reg);
+  expect(out.map((a) => a.kind === "click" || a.kind === "hold" ? `${a.kind}:${a.uiKey}` : `${a.kind}`)).toEqual([
+    "hold:spinButton",
+    "wait_ms",
+    "click:spinButton__numberOfSpinsDropdown__numberOfSpinsDropdown",
+    "wait_ms",
+    "click:spinButton__numberOfSpinsDropdown__numberOfSpins-20",
+    "wait_ms",
+    "click:spinButton__numberOfSpinsDropdown__startButton",
+  ]);
+});
+
+test("nested action normalizer converts AI-authored clicks on hold-preferred controls into holds", () => {
+  const reg = {
+    spinButton: { ...el(), preferredGesture: "hold", preferredHoldMs: 5000 },
+    "spinButton__numberOfSpinsDropdown": el(),
+  } as unknown as UiRegistry;
+  const out = normalizeNestedUiActions([{ kind: "click", uiKey: "spinButton" }], reg);
+  expect(out).toEqual([{ kind: "hold", uiKey: "spinButton", ms: 5000, reason: "registry marks this control as hold" }]);
 });
 
 // === ensureAutoplayHygiene (stop tail — leftover-autoplay race fix) ===

@@ -38,6 +38,9 @@ test("isCloseUiKey: matches close button variants", () => {
 function click(uiKey: string): CaseAction {
   return { kind: "click", uiKey };
 }
+function hold(uiKey: string): CaseAction {
+  return { kind: "hold", uiKey, ms: 5000 };
+}
 function wait(ms = 500): CaseAction {
   return { kind: "wait_ms", ms };
 }
@@ -73,6 +76,16 @@ test("Reopen-to-verify pattern: open → toggle → close → reopen", () => {
   const r = detectUiOnlyCase(actions);
   expect(r.isUiOnlyCase).toBe(true);
   expect(r.endsOnReopen).toBe(true); // ← skip _auto_returned_to_main_after_close
+});
+
+test("UI-only detection treats hold as an open UI action", () => {
+  const actions = [
+    hold("menuButton"),
+    wait(1500),
+    click("menuButton__closeButton"),
+  ];
+  const r = detectUiOnlyCase(actions);
+  expect(r.isUiOnlyCase).toBe(true);
 });
 
 test("Not UI-only when actions contain spin", () => {

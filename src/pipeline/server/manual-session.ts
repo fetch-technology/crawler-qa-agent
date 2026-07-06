@@ -21,6 +21,7 @@ import {
   saveCache as saveActionsCache,
   translateCase,
   buildAutoplayBatch,
+  normalizeNestedUiActions,
 } from "../step7-testcase-gen/case-action-translator.js";
 import { executeAction, executeCase, type CaseResult } from "../step8-run-scenarios/case-executor.js";
 import "../step6-build-model/index.js";
@@ -967,6 +968,27 @@ export class ManualSessionManager {
     return { ok: true, count: childKeys.length };
   }
 
+  /**
+   * Remove ALL descendants of a parent element (keys starting with
+   * `<parentKey>__`, including grandchildren). The parent itself is kept so QA
+   * can re-run Discover from that same trigger after clearing bad children.
+   */
+  async removeChildren(parentKey: string): Promise<{ ok: boolean; count: number; removedKeys?: string[]; reason?: string }> {
+    if (!this.session || !this.gameSlug || !this.registry) return { ok: false, count: 0, reason: "no active session" };
+    const prefix = `${parentKey}__`;
+    const childKeys = Object.keys(this.registry).filter((k) => k.startsWith(prefix) && this.registry?.[k]);
+    if (childKeys.length === 0) return { ok: false, count: 0, removedKeys: [], reason: `no children under ${parentKey}` };
+    for (const k of childKeys) {
+      delete this.registry[k];
+      delete this.verifyState[k];
+      this.skippedMainKeys.delete(k);
+    }
+    await this.saveSkippedMainKeys(this.gameSlug);
+    await uiRegistry.save(this.gameSlug, this.registry);
+    console.log(`[manual] removed ${childKeys.length} children of ${parentKey}`);
+    return { ok: true, count: childKeys.length, removedKeys: childKeys };
+  }
+
   /** QA manually corrects coord by clicking on dashboard screenshot. */
   async updateCoord(uiKey: string, x: number, y: number): Promise<void> {
     if (!this.session || !this.gameSlug || !this.registry) throw new Error("no active session");
@@ -1041,8 +1063,13 @@ export class ManualSessionManager {
    *
    * Works regardless of starting state because step 1 force-resets to main.
    */
-  async discoverVia(triggerKey: string, stateLabel: string): Promise<{ ok: boolean; addedKeys?: string[]; reason?: string; clickedPath?: Array<{ key: string; x: number; y: number }> }> {
+  async discoverVia(
+    triggerKey: string,
+    stateLabel: string,
+    opts: { gesture?: "click" | "hold"; holdMs?: number } = {},
+  ): Promise<{ ok: boolean; addedKeys?: string[]; reason?: string; clickedPath?: Array<{ key: string; x: number; y: number; gesture?: "click" | "hold"; holdMs?: number }> }> {
     if (!this.session || !this.gameSlug || !this.registry) return { ok: false, reason: "no active session" };
+    const holdMs = Math.max(300, Math.min(15_000, Math.round(opts.holdMs ?? Number(process.env.QA_DISCOVER_HOLD_MS ?? 5000))));
 
     // 1. Reset to main state. Send ESC twice to close any nested popups, then
     //    click an empty corner to dismiss any non-ESC-respecting overlay. Slot
@@ -1067,7 +1094,7 @@ export class ManualSessionManager {
     const ancestors: string[] = [];
     for (let i = 1; i <= parts.length; i++) ancestors.push(parts.slice(0, i).join("__"));
 
-    const clickedPath: Array<{ key: string; x: number; y: number }> = [];
+    const clickedPath: Array<{ key: string; x: number; y: number; gesture?: "click" | "hold"; holdMs?: number }> = [];
     // External-tab detection (same mechanism graph-explorer uses): the FINAL
     // trigger may window.open a separate browser tab (e.g. historyButton →
     // external game-history page). Listen on the context before that click;
@@ -1096,9 +1123,21 @@ export class ManualSessionManager {
           return { ok: false, reason: `ancestor missing in registry: ${key} (need to discover + verify it first)`, clickedPath };
         }
         if (isLast) pageCtx.on("page", onNewPage);
-        clickedPath.push({ key, x: el.x, y: el.y });
+        const gesture = (opts.gesture === "hold" || el.preferredGesture === "hold") ? "hold" : "click";
+        const stepHoldMs = Math.max(300, Math.min(15_000, Math.round(el.preferredHoldMs ?? holdMs)));
+        clickedPath.push({ key, x: el.x, y: el.y, gesture, ...(gesture === "hold" ? { holdMs: stepHoldMs } : {}) });
         try {
-          if (!this.session.cdpEndpoint) {
+          if (gesture === "hold") {
+            console.log(`[manual/discover] walk ${key}: holding @ (${el.x},${el.y}) for ${stepHoldMs}ms`);
+            el.preferredGesture = "hold";
+            el.preferredHoldMs = stepHoldMs;
+            await uiRegistry.save(this.gameSlug, this.registry);
+            await this.session.page.mouse.move(el.x, el.y);
+            await this.session.page.mouse.down();
+            await this.session.page.waitForTimeout(stepHoldMs);
+            await this.session.page.mouse.up();
+            await this.session.page.waitForTimeout(2000);
+          } else if (!this.session.cdpEndpoint) {
             // No CDP endpoint → can't run the agent; click directly so the walk
             // can still proceed (unverified).
             console.warn(`[manual/discover] walk ${key}: no CDP endpoint — clicking unverified`);
@@ -1172,15 +1211,24 @@ export class ManualSessionManager {
       ?? "bet";
     const vp = page.viewportSize() ?? { width: 1280, height: 720 };
     const { transcribeBetDropdown } = await import("../../ai/vision.js");
+    const maxAiReads = Math.max(3, Math.min(20, Math.round(Number(process.env.QA_BET_DROPDOWN_DISCOVER_MAX_READS ?? 8))));
+    const maxNormalizeTopScrolls = Math.max(0, Math.min(8, Math.round(Number(process.env.QA_BET_DROPDOWN_DISCOVER_TOP_SCROLLS ?? 4))));
+    const maxDownScrolls = Math.max(1, Math.min(16, Math.round(Number(process.env.QA_BET_DROPDOWN_DISCOVER_DOWN_SCROLLS ?? 8))));
+    const enableFallbackScroll = process.env.QA_BET_DROPDOWN_FALLBACK_SCROLL === "1";
+    let aiReads = 0;
 
     const readRows = async (): Promise<import("../../ai/vision.js").BetDropdownRead> => {
+      aiReads++;
+      if (aiReads > maxAiReads) {
+        throw new Error(`AI read budget exceeded (${maxAiReads}) while enumerating bet dropdown`);
+      }
       const p = path.join(debugDir, `bet-dropdown-${safeLabel}-${Date.now()}.png`);
       await writeFile(p, await page.screenshot({ type: "png", fullPage: false }));
       return transcribeBetDropdown({ screenshotPath: p, viewport: vp });
     };
     const sig = (rows: { value: number }[]) => rows.map((r) => r.value).sort((a, b) => a - b).join(",");
     const scrollOnce = async (dir: 1 | -1, beforeSig: string): Promise<import("../../ai/vision.js").BetDropdownRead | null> => {
-      const methods: Array<"wheel" | "keys" | "drag"> = ["wheel", "keys", "drag"];
+      const methods: Array<"wheel" | "keys" | "drag"> = enableFallbackScroll ? ["wheel", "keys", "drag"] : ["wheel"];
       for (const m of methods) {
         try {
           if (m === "wheel") {
@@ -1218,15 +1266,16 @@ export class ManualSessionManager {
 
       // First normalize to the top; discover may start from the current
       // selected value, so visible rows are only a middle slice.
-      for (let i = 0; i < 12; i++) {
+      for (let i = 0; i < maxNormalizeTopScrolls && read.moreAbove; i++) {
         const before = sig(read.rows);
         const moved = await scrollOnce(-1, before);
         if (!moved) break;
         read = moved;
       }
 
-      for (let i = 0; i < 24; i++) {
+      for (let i = 0; i < maxDownScrolls; i++) {
         remember(read.rows);
+        if (!read.moreBelow) break;
         const before = sig(read.rows);
         const moved = await scrollOnce(1, before);
         if (!moved) break;
@@ -1255,7 +1304,7 @@ export class ManualSessionManager {
       }
 
       if (seen.size > 0) {
-        console.log(`[manual/discover] ${safeLabel}: scroll-enumerated ${seen.size} bet dropdown value(s) [${sorted.map((r) => r.value.toFixed(2)).join(", ")}]; row coords are snapshot-only, runtime selects by live value`);
+        console.log(`[manual/discover] ${safeLabel}: scroll-enumerated ${seen.size} bet dropdown value(s) in ${aiReads}/${maxAiReads} AI read(s) [${sorted.map((r) => r.value.toFixed(2)).join(", ")}]; row coords are snapshot-only, runtime selects by live value`);
       }
       return { added, totalValues: seen.size, values: sorted.map((r) => r.value) };
     } catch (err) {
@@ -1359,13 +1408,12 @@ export class ManualSessionManager {
       // (`bet-0.40`, `autoCountSlide-10`) are meaningful + stable → left alone.
       normalizeVolatileRowKeys(aiElements);
 
-      const snapshotElements = [...aiElements];
-
       // Scrollable bet dropdowns only expose a slice of their option ladder at
       // any one scrollbar position. Enumerate the list by scrolling now, but
       // keep runtime selection value-driven (the executor ignores stale row
       // coords for dropdown bet values and re-locates the value live).
       await this.enrichScrollableBetDropdownOptions(discoverPage, safeLabel, aiElements, debugDir);
+      const snapshotElements = [...aiElements];
 
       // Persist the AI's view of this state for visual QA review. Save with
       // NAMESPACED keys (matching the registry) so the dashboard can cross-ref
@@ -4575,8 +4623,10 @@ export class ManualSessionManager {
     const catalog = await loadAiCatalog(slug);
     if (!catalog) return { ok: false, reason: `test-cases.json not found for ${slug} — run Generate Cases first` };
     const actionsCache = await loadActionsCache(slug);
+    const reg = (this.gameSlug === slug && this.registry) ? this.registry : await uiRegistry.load(slug);
     const out = catalog.cases.map((c) => {
       const translated = actionsCache?.cases[c.id];
+      const actions = translated?.actions && reg ? normalizeNestedUiActions(translated.actions, reg) : translated?.actions;
       return {
         id: c.id,
         name: c.name,
@@ -4584,9 +4634,9 @@ export class ManualSessionManager {
         severity: c.severity,
         setupSummary: (c.setup_instructions ?? "").slice(0, 200),
         setupInstructions: c.setup_instructions ?? "",
-        actionCount: translated?.actions.length ?? 0,
+        actionCount: actions?.length ?? 0,
         assertionCount: c.custom_assertions?.length ?? 0,
-        actions: translated?.actions ?? [],
+        actions: actions ?? [],
         assertions: (c.custom_assertions ?? []).map((a) => ({
           id: a.id,
           description: a.description,
@@ -5127,10 +5177,11 @@ CHECK_CODE RULES
       return { ok: true, caseId, actions: null, availableUiKeys, reason: "case not in actions cache (run translate first)" };
     }
     const entry = cache.cases[caseId];
+    const actions = reg ? normalizeNestedUiActions(entry.actions, reg) : entry.actions;
     return {
       ok: true,
       caseId,
-      actions: entry.actions,
+      actions,
       skipReason: entry.skipReason,
       availableUiKeys,
     };
@@ -5159,10 +5210,10 @@ CHECK_CODE RULES
       if (!a || typeof a !== "object" || typeof (a as { kind: unknown }).kind !== "string") {
         return { ok: false, reason: "each action must be an object with a 'kind' field" };
       }
-      if ((a as { kind: string }).kind === "click") {
+      if ((a as { kind: string }).kind === "click" || (a as { kind: string }).kind === "hold") {
         const uiKey = (a as { uiKey?: unknown }).uiKey;
         if (typeof uiKey !== "string" || uiKey.length === 0) {
-          return { ok: false, reason: "click action requires a non-empty uiKey" };
+          return { ok: false, reason: `${(a as { kind: string }).kind} action requires a non-empty uiKey` };
         }
         if (!reg[uiKey]) invalidUiKeys.push(uiKey);
       }
@@ -5225,7 +5276,8 @@ CHECK_CODE RULES
       return { ok: false, caseId: args.caseId, reason: "no translated actions for this case — run translate first" };
     }
     const idx = typeof args.actionIndex === "number" ? args.actionIndex : undefined;
-    const action = args.action ?? (idx !== undefined ? translated?.actions[idx] : undefined);
+    const normalizedActions = translated ? normalizeNestedUiActions(translated.actions, this.registry) : undefined;
+    const action = args.action ?? (idx !== undefined ? normalizedActions?.[idx] : undefined);
     if (!action) {
       return { ok: false, caseId: args.caseId, actionIndex: idx, reason: `action index ${idx ?? "(missing)"} not found` };
     }

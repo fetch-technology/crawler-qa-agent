@@ -41,6 +41,11 @@ export type UiElement = {
    *  descendant clicks on namespaced children (`parentKey__child`) target
    *  the same tab until it's closed. */
   externalPage?: boolean;
+  /** Preferred runtime gesture for this element. Set when QA used a long-press
+   *  Discover flow (e.g. "Hold for Autoplay") so testcase translation/replay
+   *  can emit a hold action instead of a normal click. */
+  preferredGesture?: "click" | "hold";
+  preferredHoldMs?: number;
   /** PNG baseline crop of the element in its known-OFF state — captured
    *  by ante-normalize after enforcing ante OFF during Discover. Used by
    *  runtime ensure_ante_off lambda (Tier 2 pixel diff) and by discover-

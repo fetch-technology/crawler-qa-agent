@@ -12,6 +12,7 @@ import {
   findBetChipExtreme,
   hasDropdownBetSelector,
   parseBetValueFromChipKey,
+  parseNumberOfSpinsValueFromKey,
 } from "../../src/pipeline/step8-run-scenarios/case-executor.ts";
 import type { UiRegistry } from "../../src/pipeline/registry/types.ts";
 
@@ -173,6 +174,14 @@ test("parseBetValueFromChipKey extracts direct bet-row values", () => {
   expect(parseBetValueFromChipKey("betButton__totalBetDropdown__totalBet-60.00")).toBe(60);
   expect(parseBetValueFromChipKey("betButton__bet-400.00-selected")).toBe(400);
   expect(parseBetValueFromChipKey("betButton__closeButton")).toBeNull();
+});
+
+test("parseNumberOfSpinsValueFromKey extracts autoplay dropdown option values", () => {
+  expect(parseNumberOfSpinsValueFromKey("spinButton__numberOfSpinsDropdown__numberOfSpins-20")).toBe(20);
+  expect(parseNumberOfSpinsValueFromKey("spinButton__numberOfSpinsDropdown__numberOfSpins-50-selected")).toBe(50);
+  expect(parseNumberOfSpinsValueFromKey("spinButton__numberOfSpinsDropdown__numberOfSpins-untilFeature")).toBe(-1);
+  expect(parseNumberOfSpinsValueFromKey("spinButton__numberOfSpinsDropdown__numberOfSpins-until-1")).toBe(-1);
+  expect(parseNumberOfSpinsValueFromKey("spinButton__numberOfSpinsDropdown__startButton")).toBeNull();
 });
 
 test("regression for hardcoded count bug: user's example case", () => {

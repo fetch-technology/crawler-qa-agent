@@ -1377,6 +1377,9 @@
       const vs = el?.status || "pending";
       const verifiedBy = el?.verifiedBy;
       const probeSignal = el?.probeSignal;
+      const gestureTag = el?.preferredGesture === "hold"
+        ? `<span title="Replay/testcase should long-press this element${el.preferredHoldMs ? ` for ${el.preferredHoldMs}ms` : ""}" style="font-size: 10px; color: #fbbf24; margin-left: 4px;">[hold]</span>`
+        : "";
       const verifierTag = verifiedBy === "probe"
         ? `<span title="Auto-verified by runtime probe — signal: ${probeSignal || 'observed'}" style="font-size: 10px; color: #b39cff; margin-left: 4px;">🤖 probe</span>`
         : verifiedBy === "QA"
@@ -1397,14 +1400,16 @@
         <span class="num">${el?.y ?? '—'}</span>
         <span style="font-size: 11px; color: #8b939c;">${el?.strategy || ''}</span>
         <span class="num">${(el?.confidence ?? 0).toFixed(2)}</span>
-        <span><span class="pill ${vs}">${vs}</span>${verifierTag}</span>
+        <span><span class="pill ${vs}">${vs}</span>${verifierTag}${gestureTag}</span>
         <span class="tree-actions">
           <button onclick="doClick('${key}')">Test</button>
           <button class="green" onclick="doConfirm('${key}')">✓ Verify</button>
           ${hasChildren ? `<button class="green" title="Verify ALL ${children.length} child element(s) under ${key}" onclick="doConfirmChildren('${key}')">✓ All (${children.length})</button>` : ""}
+          ${hasChildren ? `<button class="red" title="Delete ALL descendants under ${key}; keeps the parent element" onclick="doRemoveChildren('${key}')">× Children</button>` : ""}
           ${hasChildren ? `<button class="gray" title="View discover-time screenshot + child markers" onclick="viewChildrenSnapshot('${key.replace(/'/g, "\\'")}')">View</button>` : ""}
           <button style="background: #6366f1;" onclick="doPickElement('${key}')" title="Pick by clicking on a fresh screenshot in this dashboard">Pick</button>
           <button class="purple" onclick="doDiscoverFromButton('${key}')">Discover</button>
+          <button class="purple" title="Hold this element, then AI-discover the resulting state. Use for buttons like 'Hold for Autoplay'." onclick="doDiscoverFromButton('${key}', 'hold')">Discover by hold</button>
           <button class="green" title="Add child element under this key (prefills '${key}__' in form)" onclick="doAddChild('${key}')">+</button>
           <button class="gray" title="Copy key to Add Element form (edit & repick)" onclick="doCopyKey('${key}')">⧉</button>
           <button class="gray" onclick="doRemove('${key}')">×</button>
@@ -3180,11 +3185,43 @@
       return { outcome, confidence, ...p };
     }
 
+    function likelyFailureSummary(r) {
+      if (!r || r.status !== "fail") return null;
+      if (r.skipReason) return { label: "Skip / setup failed", detail: r.skipReason };
+      const failedAssertion = (r.assertions || []).find((a) => a && a.pass === false);
+      if (failedAssertion) {
+        return {
+          label: failedAssertion.id?.startsWith("_precheck_") ? "Setup precheck failed" : "Assertion failed",
+          detail: `${failedAssertion.id || "assertion"}: ${failedAssertion.detail || failedAssertion.description || "no detail"}`,
+        };
+      }
+      const failedSignal = (r.signalRollup || []).find((s) => s && s.pass === false);
+      if (failedSignal) {
+        const failedCheck = (failedSignal.checks || []).find((ck) => ck && ck.match === false);
+        const checkDetail = failedCheck
+          ? `${failedCheck.field}: expected ${typeof failedCheck.expected === "object" ? JSON.stringify(failedCheck.expected) : failedCheck.expected}, actual ${typeof failedCheck.actual === "object" ? JSON.stringify(failedCheck.actual) : failedCheck.actual}${failedCheck.note ? ` (${failedCheck.note})` : ""}`
+          : (failedSignal.detail || "signal failed");
+        return { label: `Signal failed: ${failedSignal.signal}`, detail: checkDetail };
+      }
+      if (Array.isArray(r.warnings) && r.warnings.length > 0) {
+        return { label: "Warnings present", detail: r.warnings[0] };
+      }
+      if (!r.spin && (r.spinsCount ?? 0) === 0) return { label: "No spin captured", detail: "The case finished without a parsed spin response. Check Action Log and Network Capture." };
+      return { label: "Fail reason unavailable", detail: "Open Signal Roll-up / Action Log / Quick Diagnose for more evidence." };
+    }
+
     function lastRunHtml(r, c) {
       const caseSlug = window.__lastCasesSlug ?? "";
       const presentation = outcomePresentation(r);
       const statusPill = r.status === "pass" ? "verified" : r.status === "fail" ? "rejected" : "pending";
       const skipHtml = r.skipReason ? `<div style="color: #d9534f; font-size: 12px;">Skip: ${escapeHtml(r.skipReason)}</div>` : "";
+      const likely = likelyFailureSummary(r);
+      const likelyHtml = likely
+        ? `<div style="margin-top:6px;padding:7px 10px;background:#2a1414;border-left:3px solid #d9534f;border-radius:4px;font-size:11px;color:#f0a39e;">
+            <strong>Likely cause:</strong> ${escapeHtml(likely.label)}
+            <div style="margin-top:3px;color:#e8d7b5;font-family:ui-monospace,monospace;white-space:pre-wrap;">${escapeHtml(String(likely.detail)).replace(/ \| /g, '<br>')}</div>
+          </div>`
+        : "";
       const spinsCount = r.spinsCount ?? (r.spin ? 1 : 0);
       const spinHtml = r.spin
         ? `<div style="font-size: 12px; line-height: 1.6;">
@@ -3669,6 +3706,7 @@
         </div>
         ${timelineHtml}
         <div style="font-size: 12px; line-height: 1.6; margin-top: 4px;"></div>
+        ${likelyHtml}
         ${skipHtml}
         ${spinHtml}
         ${(() => {
@@ -3933,6 +3971,7 @@
 
     function describeAction(a) {
       if (a.kind === "click") return `click ${a.uiKey}${a.times ? ` ×${a.times}` : ""}${a.reason ? ` // ${a.reason}` : ""}`;
+      if (a.kind === "hold") return `hold ${a.uiKey} for ${a.ms ?? 5000}ms${a.reason ? ` // ${a.reason}` : ""}`;
       if (a.kind === "wait_ms") return `wait ${a.ms}ms`;
       if (a.kind === "spin") return "spin (clicks spinButton)";
       if (a.kind === "set_bet_to_min") return "set bet to min (betMinus, or lowest bet chip if no +/-)";
@@ -3942,6 +3981,7 @@
       if (a.kind === "wait_until_state") return `wait_until_state ${a.state} (max ${a.maxMs ?? 30000}ms)${a.reason ? ` // ${a.reason}` : ""}`;
       if (a.kind === "wait_until_network_idle") return `wait_until_network_idle (idle ${a.idleMs ?? 1500}ms, max ${a.maxMs ?? 15000}ms)`;
       if (a.kind === "wait_until_pixel_stable") return `wait_until_pixel_stable (${a.consecutiveStable ?? 3} consecutive, max ${a.maxMs ?? 30000}ms)`;
+      if (a.kind === "wait_until_no_spin_response") return `wait_until_no_spin_response (quiet ${a.quietMs ?? 5000}ms, max ${a.maxMs ?? 180000}ms)${a.reason ? ` // ${a.reason}` : ""}`;
       return JSON.stringify(a);
     }
 
@@ -5673,23 +5713,37 @@
       } catch (err) { toast(err.message, true); }
     };
 
-    window.doDiscoverFromButton = async (triggerKey) => {
+    window.doRemoveChildren = async (parentKey) => {
+      const registry = currentStatus?.registry || {};
+      const prefix = `${parentKey}__`;
+      const count = Object.keys(registry).filter((k) => k.startsWith(prefix)).length;
+      if (count === 0) return toast(`No children under ${parentKey}`, true);
+      if (!confirm(`Remove ALL ${count} child element(s) under ${parentKey}?\n\nThe parent element is kept. This deletes descendants from the registry and cannot be undone except by Discover/Pick again.`)) return;
+      try {
+        const r = await api("/api/qa/manual/remove-children", { method: "POST", body: { parentKey } });
+        if (r.status) renderStatus(r.status);
+        toast(`Removed ${r.count ?? 0} children of ${parentKey}`);
+      } catch (err) { toast(err.message, true); }
+    };
+
+    window.doDiscoverFromButton = async (triggerKey, gesture = "click") => {
       const stateLabel = triggerKey;
       const depth = triggerKey.split("__").length;
       const walkInfo = depth > 1
         ? `walking ${depth} ancestors → click each in sequence`
-        : "single click";
+        : (gesture === "hold" ? "single hold" : "single click");
+      const holdMs = gesture === "hold" ? 5000 : undefined;
       toast(`AI: ${walkInfo} → discover children of "${triggerKey}"…`);
       try {
         const r = await api("/api/qa/manual/discover-via", {
-          method: "POST", body: { triggerKey, stateLabel },
+          method: "POST", body: { triggerKey, stateLabel, gesture, holdMs },
         });
         if (r.ok) {
           // Auto-expand parent so newly discovered children are visible
           expandedSet.add(triggerKey);
           renderStatus(r.status);
-          const path = (r.clickedPath || []).map((p) => p.key).join(" → ");
-          toast(`Clicked ${path} · Added ${r.addedKeys.length} children`);
+          const path = (r.clickedPath || []).map((p) => p.gesture === "hold" ? `${p.key} (hold ${p.holdMs || holdMs}ms)` : p.key).join(" → ");
+          toast(`${gesture === "hold" ? "Held" : "Clicked"} ${path} · Added ${r.addedKeys.length} children`);
         } else {
           toast(`Discover failed: ${r.reason}`, true);
         }
