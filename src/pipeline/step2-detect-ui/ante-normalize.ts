@@ -24,8 +24,9 @@
 //       time guards. Pixel-diffs current ante button vs saved baseline.
 //
 //   - ensureAnteOff(page, slug, registry, …)
-//       Runtime preamble (case-run): if baseline exists, pixel-diff →
-//       click once if drifted. If no baseline, run full normalizeAnteOff.
+//       Runtime preamble (case-run): toggle-probe by total-bet delta and land
+//       on the smaller-bet state. If deterministic probe cannot decide, ask AI
+//       vision to drive the visible ante/special-bet UI to OFF.
 //
 // All three are no-ops when registry has no `anteButton` entry — games
 // without ante feature.
@@ -40,6 +41,7 @@ import { ocrRegion, parseNumericFromOcr, isOcrReadImplausible } from "../utils/o
 import type { UiRegistry } from "../registry/types.js";
 import { ocrRegions as ocrRegionsStore } from "../registry/ocr-regions.js";
 import { readFile } from "node:fs/promises";
+import { askClaude, extractJsonFromText } from "../../ai/claude.js";
 
 /** A toggle is only a real bet change when the two readings differ by more
  *  than this fraction — filters OCR jitter on the last digit. Ante surcharge
@@ -882,9 +884,10 @@ export async function verifyAnteOff(
 /**
  * Runtime preamble for test cases. Idempotent:
  *   - If no anteButton in registry → no-op.
- *   - If baseline present + verify says OFF → no-op.
- *   - If verify says drifted → click ante once, re-verify, fail if still drifted.
- *   - If no baseline → fall back to normalizeAnteOff (writes baseline).
+ *   - Toggle-probe by total-bet delta; OFF is the smaller-bet state.
+ *   - If deterministic bet/OCR/pixel handling cannot force OFF, ask AI vision
+ *     to drive the visible ante/special-bet UI to OFF, then re-check.
+ *   - Fail only when both deterministic and AI fallback fail.
  *
  * Returns { ok, wasOff, toggledCount, reason }.
  */
@@ -917,8 +920,150 @@ export async function ensureAnteOff(
     console.log(`[ensure-ante-off] ${slug}: ✅ ${forced.resolvedByBet ? "bet-delta" : "pixel-fallback"} → OFF after ${forced.toggledCount} click(s)`);
     return { ok: true, wasOff: forced.wasAlreadyOff, toggledCount: forced.toggledCount };
   }
-  console.log(`[ensure-ante-off] ${slug}: ❌ FAIL — could not force OFF (${forced.reason})`);
-  return { ok: false, wasOff: false, toggledCount: forced.toggledCount, reason: forced.reason };
+  console.warn(`[ensure-ante-off] ${slug}: deterministic force failed (${forced.reason}) — trying AI fallback`);
+  const ai = await forceAnteOffWithAi(page, slug, registry, entry, forced.reason);
+  if (ai.ok) {
+    console.log(`[ensure-ante-off] ${slug}: ✅ AI fallback → OFF after ${forced.toggledCount + ai.clickedCount} total click(s)`);
+    return { ok: true, wasOff: false, toggledCount: forced.toggledCount + ai.clickedCount };
+  }
+  const reason = `deterministic failed: ${forced.reason ?? "unknown"}; AI fallback failed: ${ai.reason ?? "unknown"}`;
+  console.log(`[ensure-ante-off] ${slug}: ❌ FAIL — ${reason}`);
+  return { ok: false, wasOff: false, toggledCount: forced.toggledCount + ai.clickedCount, reason };
+}
+
+type AnteAiOffDecision = {
+  action?: "click" | "done" | "close_popup" | "error";
+  x?: number | null;
+  y?: number | null;
+  confidence?: number | null;
+  ante_state?: "off" | "on" | "popup_open" | "unknown";
+  reason?: string;
+};
+
+async function forceAnteOffWithAi(
+  page: Page,
+  slug: string,
+  registry: UiRegistry,
+  entry: AnteEntry,
+  deterministicReason?: string,
+): Promise<{ ok: boolean; clickedCount: number; reason?: string }> {
+  if (process.env.QA_ANTE_AI_OFF_FALLBACK === "0") {
+    return { ok: false, clickedCount: 0, reason: "AI fallback disabled by QA_ANTE_AI_OFF_FALLBACK=0" };
+  }
+  const maxSteps = Math.max(1, Math.min(6, Math.round(Number(process.env.QA_ANTE_AI_OFF_MAX_STEPS ?? 3))));
+  let clickedCount = 0;
+  let lastReason = deterministicReason ?? "";
+
+  const controls = Object.entries(registry)
+    .filter(([k, v]) => v && (k === "anteButton" || k.startsWith("anteButton__") || /ante|special|base|close|cancel|confirm|apply|off/i.test(k)))
+    .map(([k, v]) => `- ${k} @ (${Math.round(v!.x)},${Math.round(v!.y)})`)
+    .slice(0, 40)
+    .join("\n");
+
+  for (let step = 1; step <= maxSteps; step++) {
+    const vp = page.viewportSize() ?? { width: 1280, height: 720 };
+    const curBet = await readTotalBet(page, slug, registry).catch(() => null);
+    const shot = await page.screenshot({ type: "png" });
+    const prompt = `Viewport ${vp.width}x${vp.height}. We failed to deterministically force a slot game's ante/special-bet control OFF.
+
+Goal: make the ante / double-chance / special-bet / bet-boost feature OFF, without spinning and without buying/selecting any paid special-bet option.
+
+Known registry controls:
+${controls || `- anteButton @ (${Math.round(entry.x)},${Math.round(entry.y)})`}
+
+Current OCR total bet: ${curBet ?? "unreadable"}
+Prior deterministic failure: ${lastReason || "unknown"}
+
+Return ONLY JSON:
+{
+  "action": "done" | "click" | "close_popup" | "error",
+  "x": number | null,
+  "y": number | null,
+  "ante_state": "off" | "on" | "popup_open" | "unknown",
+  "confidence": number,
+  "reason": string
+}
+
+Rules:
+- If ante is visually OFF / base bet is selected / no special bet is active, return action="done".
+- If a Special Bet / Ante / Super Spin chooser popup is open and a paid option is selected or highlighted, click the Base Bet / Off / No Special Bet option if visible.
+- If a chooser popup is open but no paid option is selected, close it using X/Close/Cancel; use action="close_popup" with that coordinate when visible.
+- If a simple ante toggle is visibly ON, click the ante/off toggle to turn it OFF.
+- NEVER click Spin, Start Autoplay, Buy, Confirm Purchase, or any paid feature option.
+- Prefer coordinates from the known registry controls when they match what you see.`;
+
+    let parsed: AnteAiOffDecision | null = null;
+    try {
+      const raw = await askClaude({
+        content: [
+          { type: "image", source: { type: "base64", media_type: "image/png", data: shot.toString("base64") } },
+          { type: "text", text: prompt },
+        ],
+        system: "You are a careful vision QA agent controlling a slot-game canvas. Return only the requested JSON.",
+      });
+      parsed = extractJsonFromText<AnteAiOffDecision>(raw);
+      if (!parsed) lastReason = `AI JSON parse failed: ${raw.slice(0, 160)}`;
+    } catch (err) {
+      lastReason = `AI fallback errored: ${err instanceof Error ? err.message : String(err)}`;
+    }
+    if (!parsed) continue;
+
+    const action = parsed.action ?? "error";
+    const confidence = typeof parsed.confidence === "number" ? parsed.confidence : 0;
+    lastReason = parsed.reason ?? action;
+    console.log(`[ensure-ante-off/ai] ${slug}: step ${step}/${maxSteps} action=${action} state=${parsed.ante_state ?? "?"} conf=${confidence.toFixed(2)} (${lastReason})`);
+
+    if (action === "done") {
+      if (confidence >= 0.65) {
+        const meta = await readAnteMeta(slug);
+        await writeAnteMeta(slug, {
+          offBet: curBet ?? meta?.offBet ?? null,
+          ...(meta?.anteFactor != null ? { anteFactor: meta.anteFactor } : {}),
+          ...(meta?.popupSelect ? { popupSelect: meta.popupSelect } : {}),
+        });
+        return { ok: true, clickedCount };
+      }
+      continue;
+    }
+
+    if (action === "close_popup") {
+      const closed = await closeSpecialBetPopup(page, registry);
+      if (closed) {
+        clickedCount++;
+        await page.waitForTimeout(500);
+        continue;
+      }
+      if (typeof parsed.x === "number" && typeof parsed.y === "number") {
+        await page.mouse.click(parsed.x, parsed.y);
+        clickedCount++;
+        await page.waitForTimeout(700);
+        continue;
+      }
+      continue;
+    }
+
+    if (action === "click" && typeof parsed.x === "number" && typeof parsed.y === "number" && confidence >= 0.45) {
+      await page.mouse.click(parsed.x, parsed.y);
+      clickedCount++;
+      await page.waitForTimeout(900);
+      const popup = await detectSpecialBetPopup(page);
+      if (popup.open) {
+        // If AI clicked the opener while already OFF, do not leave the chooser
+        // blocking the case. Closing it keeps ante OFF for popup-select games.
+        const closed = await closeSpecialBetPopup(page, registry);
+        if (closed) console.log(`[ensure-ante-off/ai] ${slug}: closed special-bet chooser after AI click`);
+      }
+      continue;
+    }
+
+    if (action === "error") break;
+  }
+
+  // Final chance: if the AI got the UI into a state our deterministic verifier
+  // can recognize, accept it. Otherwise report the AI's last explanation.
+  const final = await verifyAnteOff(page, slug, registry).catch(() => null);
+  if (final?.isOff) return { ok: true, clickedCount };
+  return { ok: false, clickedCount, reason: lastReason || final?.reason || "AI fallback did not confirm ante OFF" };
 }
 
 /**
