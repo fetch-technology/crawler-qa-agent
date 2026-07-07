@@ -159,6 +159,9 @@
           return {
             slug: g.gameSlug,
             url: g.gameUrl,
+            baseGameSlug: g.baseGameSlug,
+            currency: g.currency,
+            language: g.language,
             createdAt: g.createdAt,
             live,
             registryCount: live ? Object.keys(live.registry || {}).length : null,
@@ -214,6 +217,9 @@
         ? `<div class="stat"><div class="stat-label">Verified</div><div class="stat-val" style="color: ${g.verifiedCount === g.registryCount && g.registryCount > 0 ? 'var(--ok)' : 'var(--text)'};">${g.verifiedCount}</div></div>`
         : `<div class="stat"><div class="stat-label">Verified</div><div class="stat-val" style="color: var(--muted);">—</div></div>`;
       const created = `<div class="stat"><div class="stat-label">Created</div><div class="stat-val" style="font-size: 12px;">${escapeHtml(fmtRel(g.createdAt))}</div></div>`;
+      const identity = (g.baseGameSlug || g.currency || g.language)
+        ? `<div style="font-size:11px;color:var(--muted);margin-top:4px;">base=<code>${escapeHtml(g.baseGameSlug || g.slug)}</code>${g.currency ? ` · ${escapeHtml(g.currency)}` : ""}${g.language ? ` · ${escapeHtml(g.language)}` : ""}</div>`
+        : "";
 
       return `
         <div class="card" data-slug="${escapeHtml(g.slug)}">
@@ -221,6 +227,7 @@
             <div class="card-slug">${escapeHtml(g.slug)}</div>
             ${badge}
           </div>
+          ${identity}
           <div class="stats">${reg}${verified}${created}</div>
           <div class="card-url">${escapeHtml(g.url || "")}</div>
           <div class="card-actions">

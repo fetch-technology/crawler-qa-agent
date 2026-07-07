@@ -102,6 +102,11 @@ export const META_SCHEMA: Schema = {
     createdAt: { type: "string" },
     gameUrl: { type: "string" },
     lastValidatedAt: { type: "string", nullable: true },
+    baseGameSlug: { type: "string", nullable: true },
+    currency: { type: "string", nullable: true },
+    language: { type: "string", nullable: true },
+    recordSlug: { type: "string", nullable: true },
+    clonedFromSlug: { type: "string", nullable: true },
   },
 };
 

@@ -6,10 +6,10 @@
 // shared registry file; restrict to single-QA for MVP.
 
 import path from "node:path";
-import { mkdir, readdir, rm } from "node:fs/promises";
+import { cp, mkdir, readdir, rm } from "node:fs/promises";
 import { openBrowser, closeBrowser, type BrowserSession } from "../orchestrator/browser.js";
 import { requestContext } from "../../server/request-context.js";
-import { crawl } from "../step1-crawl/crawler.js";
+import { crawl, deriveGameRecordIdentity } from "../step1-crawl/crawler.js";
 import { discoverUi } from "../step2-detect-ui/resolver.js";
 import { resolveExpectedUiElements } from "../registry/expected-ui-elements.js";
 import { aiRecoverLocator } from "../step2-detect-ui/ai-recover-locator.js";
@@ -75,6 +75,101 @@ const LEVEL1_EXPECTED_KEYS = [
   "autoButton",
   "buyBonusButton",
 ] as const;
+
+function baseSlugFromRecordSlug(slug: string): string {
+  return slug
+    .replace(/_[A-Z]{3}(?:_[a-z]{2}(?:-[a-z]{2})?)?$/i, "")
+    .replace(/_[a-z]{2}(?:-[a-z]{2})?$/i, "");
+}
+
+function hasUsableRegistryCoord(el: UiElement | undefined): boolean {
+  return !!el
+    && Number.isFinite(el.x)
+    && Number.isFinite(el.y)
+    && el.status === "verified";
+}
+
+async function findCloneSourceSlug(args: {
+  targetSlug: string;
+  baseGameSlug: string;
+  language: string | null;
+}): Promise<string | null> {
+  const root = path.dirname(dirForGame(args.targetSlug));
+  let dirs: string[] = [];
+  try { dirs = await readdir(root); } catch { return null; }
+  const candidates: Array<{ slug: string; score: number; ts: string }> = [];
+  for (const slug of dirs) {
+    if (slug === args.targetSlug || slug.startsWith("_")) continue;
+    const reg = await uiRegistry.load(slug).catch(() => null);
+    if (!reg || Object.keys(reg).length === 0) continue;
+    const m = await meta.load(slug).catch(() => null);
+    const sourceBase = m?.baseGameSlug ?? baseSlugFromRecordSlug(slug);
+    if (sourceBase !== args.baseGameSlug && slug !== args.baseGameSlug) continue;
+    let score = 10;
+    if (slug === args.baseGameSlug) score += 20; // legacy exact base is a strong seed.
+    if (m?.language && args.language && m.language === args.language) score += 10;
+    if (m?.currency) score += 2;
+    candidates.push({ slug, score, ts: m?.lastValidatedAt ?? m?.createdAt ?? "" });
+  }
+  candidates.sort((a, b) => b.score - a.score || b.ts.localeCompare(a.ts));
+  return candidates[0]?.slug ?? null;
+}
+
+async function cloneRegistrySeedIfNeeded(args: {
+  targetSlug: string;
+  baseGameSlug: string;
+  currency: string | null;
+  language: string | null;
+  gameUrl: string;
+}): Promise<string | null> {
+  const existing = await uiRegistry.load(args.targetSlug).catch(() => null);
+  const sourceSlug = await findCloneSourceSlug({
+    targetSlug: args.targetSlug,
+    baseGameSlug: args.baseGameSlug,
+    language: args.language,
+  });
+  if (!sourceSlug) return null;
+
+  const targetHasRegistry = !!existing && Object.keys(existing).length > 0;
+  if (targetHasRegistry) {
+    await cp(dirForGame(sourceSlug), dirForGame(args.targetSlug), {
+      recursive: true,
+      force: false,
+      errorOnExist: false,
+    });
+    const sourceRegistry = await uiRegistry.load(sourceSlug).catch(() => null);
+    if (sourceRegistry) {
+      const merged: UiRegistry = { ...(existing ?? {}) };
+      let added = 0;
+      for (const [key, el] of Object.entries(sourceRegistry)) {
+        if (!merged[key] && el) {
+          merged[key] = el;
+          added++;
+        }
+      }
+      if (added > 0) {
+        await uiRegistry.save(args.targetSlug, merged);
+        console.log(`[manual/start] backfilled ${added} missing registry element(s) from ${sourceSlug} → ${args.targetSlug}`);
+      }
+    }
+  } else {
+    await cp(dirForGame(sourceSlug), dirForGame(args.targetSlug), {
+      recursive: true,
+      force: true,
+    });
+  }
+  const sourceMeta = await meta.load(sourceSlug).catch(() => null);
+  await initMeta(args.targetSlug, args.gameUrl, {
+    baseGameSlug: args.baseGameSlug,
+    currency: args.currency,
+    language: args.language,
+    recordSlug: args.targetSlug,
+    clonedFromSlug: sourceSlug,
+    gameVersionHash: sourceMeta?.gameVersionHash,
+  });
+  console.log(`[manual/start] ${targetHasRegistry ? "merged" : "cloned"} reusable registry seed ${sourceSlug} → ${args.targetSlug} (${args.currency ?? "no-currency"}/${args.language ?? "no-language"})`);
+  return sourceSlug;
+}
 
 export type SessionStatus = {
   active: boolean;
@@ -635,11 +730,25 @@ export class ManualSessionManager {
     this.attachExternalTabTracker();
     this.attachWsCapture();
 
-    const crawled = await crawl(this.session.page, { gameUrl: url });
+    const identity = deriveGameRecordIdentity(url);
+    const clonedFromSlug = await cloneRegistrySeedIfNeeded({
+      targetSlug: identity.recordSlug,
+      baseGameSlug: identity.baseGameSlug,
+      currency: identity.currency,
+      language: identity.language,
+      gameUrl: url,
+    });
+    const crawled = await crawl(this.session.page, { gameUrl: url, gameSlug: identity.recordSlug });
     this.gameSlug = crawled.gameSlug;
     this.expectedElementKeys = (await resolveExpectedUiElements(this.gameSlug)).map((e) => e.key);
     this.skippedMainKeys = await this.loadSkippedMainKeys(this.gameSlug);
-    await initMeta(this.gameSlug, url);
+    await initMeta(this.gameSlug, url, {
+      baseGameSlug: identity.baseGameSlug,
+      currency: identity.currency,
+      language: identity.language,
+      recordSlug: identity.recordSlug,
+      ...(clonedFromSlug ? { clonedFromSlug } : {}),
+    });
     await providerCache.save(this.gameSlug, {
       provider: crawled.provider,
       gameName: crawled.gameName,
@@ -2620,7 +2729,7 @@ export class ManualSessionManager {
       if (this.skippedMainKeys.has(key)) return false;
       const el = this.registry?.[key];
       if (!el) return true;
-      return el.verifiedBy !== "QA";
+      return el.verifiedBy !== "QA" && !hasUsableRegistryCoord(el);
     });
     if (missingLevel1Qa.length > 0) {
       return {
@@ -6712,6 +6821,10 @@ export const manualSession = new ManualSessionManager();
 export type RegisteredGame = {
   gameSlug: string;
   gameUrl: string;
+  baseGameSlug?: string;
+  currency?: string | null;
+  language?: string | null;
+  clonedFromSlug?: string;
   /** Friendly game name from provider-cache (e.g. "Mahjong Wins 2"). Matches
    *  the name shown in RUN SUMMARY. Undefined when provider-cache missing. */
   gameName?: string;
@@ -6737,9 +6850,23 @@ export async function updateGameUrl(gameSlug: string, newUrl: string): Promise<{
   } catch {
     return { ok: false, reason: "invalid URL" };
   }
+  const identity = deriveGameRecordIdentity(newUrl);
+  if (identity.recordSlug !== gameSlug) {
+    return {
+      ok: false,
+      reason: `URL belongs to record "${identity.recordSlug}" (${identity.currency ?? "no currency"}/${identity.language ?? "no language"}), not "${gameSlug}". Start it as a new session/record instead of overwriting this one.`,
+    };
+  }
   const m = await meta.load(gameSlug);
   if (!m) return { ok: false, reason: `No registry for ${gameSlug}` };
-  await meta.save(gameSlug, { ...m, gameUrl: newUrl });
+  await meta.save(gameSlug, {
+    ...m,
+    gameUrl: newUrl,
+    baseGameSlug: identity.baseGameSlug,
+    currency: identity.currency,
+    language: identity.language,
+    recordSlug: identity.recordSlug,
+  });
 
   // If active session targets this slug, navigate page to new URL so QA can
   // verify the existing registry still maps correctly under the new token.
@@ -6846,6 +6973,10 @@ export async function listRegisteredGames(): Promise<RegisteredGame[]> {
       out.push({
         gameSlug: slug,
         gameUrl: m.gameUrl,
+        baseGameSlug: m.baseGameSlug,
+        currency: m.currency,
+        language: m.language,
+        clonedFromSlug: m.clonedFromSlug,
         gameName: pc?.gameName,
         provider: pc?.provider,
         createdAt: m.createdAt,

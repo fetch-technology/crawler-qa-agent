@@ -296,6 +296,11 @@ export type RegistryMeta = {
   createdAt: string;
   lastValidatedAt?: string;
   gameUrl: string;
+  baseGameSlug?: string;
+  currency?: string | null;
+  language?: string | null;
+  recordSlug?: string;
+  clonedFromSlug?: string;
   gameVersionHash?: string;
 };
 

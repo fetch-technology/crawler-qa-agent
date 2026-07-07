@@ -8,11 +8,16 @@ export const meta: RegistryStore<RegistryMeta> = {
   exists: (slug) => fileExists(slug, "meta"),
 };
 
-export async function initMeta(slug: GameSlug, gameUrl: string): Promise<RegistryMeta> {
+export async function initMeta(
+  slug: GameSlug,
+  gameUrl: string,
+  extra: Partial<Omit<RegistryMeta, "schemaVersion" | "createdAt" | "gameUrl">> = {},
+): Promise<RegistryMeta> {
   const m: RegistryMeta = {
     schemaVersion: SCHEMA_VERSION,
     createdAt: new Date().toISOString(),
     gameUrl,
+    ...extra,
   };
   await meta.save(slug, m);
   return m;

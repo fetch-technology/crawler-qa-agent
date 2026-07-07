@@ -109,3 +109,74 @@ export function deriveSlug(url: string): string {
     .toLowerCase();
   return slug || "unknown";
 }
+
+export type GameRecordIdentity = {
+  /** Provider/game code without session dimensions, e.g. vs20daydead. */
+  baseGameSlug: string;
+  /** ISO-ish currency code when discoverable from URL/token. */
+  currency: string | null;
+  /** UI language/locale when discoverable from URL. */
+  language: string | null;
+  /** Storage/session key. Includes currency + language when present. */
+  recordSlug: string;
+};
+
+function cleanSlugPart(value: string, fallback: string): string {
+  const cleaned = value
+    .trim()
+    .replace(/[^a-z0-9_-]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase();
+  return cleaned || fallback;
+}
+
+export function deriveGameRecordIdentity(url: string): GameRecordIdentity {
+  const baseGameSlug = deriveSlug(url);
+  let currency: string | null = null;
+  let language: string | null = null;
+
+  try {
+    const u = new URL(url);
+    const hashParams = new URLSearchParams(u.hash.replace(/^#/, ""));
+    const getParam = (...names: string[]): string | null => {
+      for (const name of names) {
+        const value = u.searchParams.get(name) ?? hashParams.get(name);
+        if (value) return value;
+      }
+      return null;
+    };
+    const explicitCurrency = getParam("currency", "cur", "ccy");
+    if (explicitCurrency && /^[a-z]{3}$/i.test(explicitCurrency)) {
+      currency = explicitCurrency.toUpperCase();
+    }
+    if (!currency) {
+      for (const name of ["token", "t", "session", "username", "pt"]) {
+        const tokenLike = getParam(name) ?? "";
+        const tokenCurrency = tokenLike.match(/[_-]([A-Z]{3})(?:[_-]|$)/);
+        if (tokenCurrency?.[1]) {
+          currency = tokenCurrency[1].toUpperCase();
+          break;
+        }
+      }
+    }
+
+    const explicitLanguage = getParam("language", "lang", "locale", "l");
+    if (explicitLanguage) {
+      const m = explicitLanguage.match(/[a-z]{2}(?:[-_][a-z]{2})?/i);
+      if (m) language = m[0]!.replace("_", "-").toLowerCase();
+    }
+  } catch {
+    // deriveSlug already handles malformed/fallback cases; keep identity basic.
+  }
+  if (currency && !language) language = "en";
+
+  const parts = [baseGameSlug];
+  if (currency) parts.push(currency);
+  if (language) parts.push(cleanSlugPart(language, "unknown"));
+  return {
+    baseGameSlug,
+    currency,
+    language,
+    recordSlug: parts.join("_"),
+  };
+}

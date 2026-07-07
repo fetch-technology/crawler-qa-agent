@@ -4,6 +4,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { listRegisteredGames, updateGameUrl, deleteGame, ManualSessionManager } from "./manual-session.js";
 import { getOrCreate, get as peekSession, set as setSession, remove as removeSession, getDefaultOrThrow, listSessions, admitOrQueueStart, promoteQueued, maxActiveSessions, occupiedSlugs, startReaper } from "./session-pool.js";
+import { deriveGameRecordIdentity } from "../step1-crawl/crawler.js";
 
 // Boot the idle-reaper once when the manual routes module loads (server boot).
 // It only acts when games are queued, so it's a no-op on an idle dashboard.
@@ -32,6 +33,7 @@ function slugFromRequestNoBody(req: IncomingMessage, urlStr: string): string | n
 const LEASE_EXEMPT_PATHS = new Set([
   "/api/qa/manual/start",
   "/api/qa/manual/resume",
+  "/api/qa/manual/identity",
   "/api/qa/manual/validate-token",
 ]);
 
@@ -296,7 +298,7 @@ export async function handleManualRoute(
           onResolved: (slug) => {
             if (slug && slug !== tempKey) {
               setSession(slug, sess);
-              if (tempKey.startsWith("__starting__:")) removeSession(tempKey);
+              removeSession(tempKey);
             }
           },
         });
@@ -319,6 +321,19 @@ export async function handleManualRoute(
     // pool. Used by the dashboard to render a multi-game tab strip.
     if (url === "/api/qa/manual/sessions" && method === "GET") {
       return sendJson(res, 200, { sessions: listSessions() }), true;
+    }
+
+    // POST /api/qa/manual/identity { url } — cheap URL → record slug preview.
+    // Used before Start so a currency/language-specific record can be keyed
+    // immediately, while the real browser start is still running.
+    if (url === "/api/qa/manual/identity" && method === "POST") {
+      const body = await asJsonBody<{ url?: string }>(req);
+      if (!body.url) return sendJson(res, 400, { ok: false, error: "url required" }), true;
+      try {
+        return sendJson(res, 200, { ok: true, ...deriveGameRecordIdentity(body.url) }), true;
+      } catch (err) {
+        return sendJson(res, 400, { ok: false, error: err instanceof Error ? err.message : String(err) }), true;
+      }
     }
 
     // GET /api/qa/manual/status[?gameSlug=…]

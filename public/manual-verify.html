@@ -690,6 +690,19 @@
       return `/api/qa/manual/screenshot?${slugQ}t=${Date.now()}`;
     }
 
+    function scopedUrlForSlug(slug) {
+      const u = new URL(location.href);
+      u.pathname = "/manual-verify.html";
+      u.search = "";
+      u.searchParams.set("gameSlug", slug);
+      return u.pathname + u.search;
+    }
+
+    async function deriveIdentityForUrl(url) {
+      const r = await api("/api/qa/manual/identity", { method: "POST", body: { url } });
+      return r && r.ok ? r : null;
+    }
+
     async function api(path, opts = {}) {
       const method = opts.method || "GET";
       const tag = `[api] ${method} ${path}`;
@@ -1831,10 +1844,13 @@
           const activeBadge = isActive
             ? `<span style="display:inline-block;margin-left:6px;font-size:10px;font-weight:700;color:#9bb8ff;background:#23365c;padding:1px 6px;border-radius:8px;vertical-align:middle;">● ACTIVE</span>`
             : "";
+          const identityLine = (g.baseGameSlug || g.currency || g.language)
+            ? `<div style="font-size:11px;color:#6f7a89;margin-top:2px;">base=<code>${escapeHtml(g.baseGameSlug || g.gameSlug)}</code>${g.currency ? ` · ${escapeHtml(g.currency)}` : ""}${g.language ? ` · ${escapeHtml(g.language)}` : ""}${g.clonedFromSlug ? ` · cloned from <code>${escapeHtml(g.clonedFromSlug)}</code>` : ""}</div>`
+            : "";
           const nameCell = (g.gameName && g.gameName !== g.gameSlug)
             ? `<div style="font-weight:600;color:#e6edf3;font-size:13px;">${escapeHtml(g.gameName)}${activeBadge}</div>
-               <div style="font-size:11px;color:#8b939c;margin-top:2px;"><code>${g.gameSlug}</code>${g.provider ? ` · ${escapeHtml(g.provider)}` : ""}</div>`
-            : `<div style="font-weight:600;color:#e6edf3;font-size:13px;"><code>${g.gameSlug}</code>${activeBadge}</div>${g.provider ? `<div style="font-size:11px;color:#8b939c;margin-top:2px;">${escapeHtml(g.provider)}</div>` : ""}`;
+               <div style="font-size:11px;color:#8b939c;margin-top:2px;"><code>${g.gameSlug}</code>${g.provider ? ` · ${escapeHtml(g.provider)}` : ""}</div>${identityLine}`
+            : `<div style="font-weight:600;color:#e6edf3;font-size:13px;"><code>${g.gameSlug}</code>${activeBadge}</div>${g.provider ? `<div style="font-size:11px;color:#8b939c;margin-top:2px;">${escapeHtml(g.provider)}</div>` : ""}${identityLine}`;
           // Open (when idle) OR Stop & Save (when this row's session is active).
           const openOrStop = isActive
             ? `<button class="red" onclick="doStopSession()" title="Stop & save the active session for this game">Stop &amp; Save</button>
@@ -4747,8 +4763,26 @@
     }
 
     window.doResume = async (gameSlug) => {
-      showLoading(`Resuming ${gameSlug}…`, "Launching Playwright Chrome and attaching to the saved registry. This usually takes 5–15s.");
+      const rowUrl = document.getElementById(`url-${gameSlug}`)?.value?.trim() || "";
+      showLoading(`Starting ${gameSlug}…`, "Checking whether this URL belongs to a currency/language-specific record.");
       try {
+        if (rowUrl) {
+          const identity = await deriveIdentityForUrl(rowUrl).catch((err) => {
+            appendLog(`[resume] identity preview failed: ${err.message}`);
+            return null;
+          });
+          if (identity?.recordSlug && identity.recordSlug !== gameSlug) {
+            showLoading(`Starting ${identity.recordSlug}…`, `URL maps to a different record than ${gameSlug}; creating/reusing the currency-language record.`);
+            await api("/api/qa/manual/start", {
+              method: "POST",
+              body: { url: rowUrl, gameSlug: identity.recordSlug, autoDiscover: $("#autoDiscover")?.checked ?? true },
+            });
+            toast(`Starting new record · ${identity.recordSlug}`);
+            location.href = scopedUrlForSlug(identity.recordSlug);
+            return;
+          }
+        }
+        showLoading(`Resuming ${gameSlug}…`, "Launching Playwright Chrome and attaching to the saved registry. This usually takes 5–15s.");
         const s = await api("/api/qa/manual/resume", { method: "POST", body: { gameSlug } });
         renderStatus(s);
         await refreshGames();
@@ -4794,10 +4828,17 @@
       return Array.from(new Set(merged));
     }
 
+    function hasUsableMainElement(el) {
+      return !!el
+        && Number.isFinite(el.x)
+        && Number.isFinite(el.y)
+        && (el.verifiedBy === "QA" || el.status === "verified");
+    }
+
     function getLevel1NeedsQaPick(status) {
       const registry = status?.registry || {};
       const skipped = new Set(Array.isArray(status?.skippedMainKeys) ? status.skippedMainKeys : []);
-      return getMainExpectedPickKeys(status).filter((key) => !skipped.has(key) && registry[key]?.verifiedBy !== "QA");
+      return getMainExpectedPickKeys(status).filter((key) => !skipped.has(key) && !hasUsableMainElement(registry[key]));
     }
 
     async function maybeRunLevel1QaPicker(status, opts = {}) {
@@ -5455,15 +5496,23 @@
       const startIso = new Date().toISOString();
       try {
         let s = null;
+        let identity = null;
+        try { identity = await deriveIdentityForUrl(url); } catch (err) { appendLog(`[start] identity preview failed: ${err.message}`); }
+        const startSlug = identity?.recordSlug;
         try {
           s = await api("/api/qa/manual/start", {
             method: "POST",
-            body: { url, autoDiscover: $("#autoDiscover").checked },
+            body: { url, autoDiscover: $("#autoDiscover").checked, ...(startSlug ? { gameSlug: startSlug } : {}) },
           });
         } catch (err) {
           // The 202 design means /start returns fast; a 504 here is now rare,
           // but if it happens the work still runs server-side — poll for it.
           appendLog(`[start] POST failed (likely proxy timeout): ${err.message}. Polling /status…`);
+        }
+        if (SCOPED_GAME_SLUG && startSlug && startSlug !== SCOPED_GAME_SLUG) {
+          toast(`Starting new record · ${startSlug}`);
+          location.href = scopedUrlForSlug(startSlug);
+          return;
         }
         // In flight: 202 with startInProgress, queued (capped out), or POST 504'd
         // → poll /status until the server finishes (or a slot frees + finishes).
