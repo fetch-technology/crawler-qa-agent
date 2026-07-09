@@ -115,11 +115,11 @@ Available actions:
 - {"kind":"reset"} — return to default state (reload page, internal helper)
 
 ADAPTIVE WAIT PREFERENCE (reduces flakiness — but with critical exceptions):
-- **AFTER A SPIN, USE wait_ms 2500 (NOT wait_until_network_idle).** The engine
+- **AFTER A SPIN, USE wait_ms 5000 (NOT wait_until_network_idle).** The engine
   has provider-aware round-end signal detection (PP: action=doCollect) that
   blocks the next spin click until the game ACTUALLY emits the round-end
   signal, even if cascade animation is still running. So a small wait_ms
-  buffer (2500ms) is enough — the round-end gate handles the cascade case.
+  buffer (5000ms) avoids clicking into tail animations — the round-end gate handles the cascade case.
   Don't use wait_until_network_idle: cascade games emit constant background
   traffic (telemetry, asset prefetch, heartbeat) so the predicate rarely
   resolves.
@@ -130,7 +130,7 @@ ADAPTIVE WAIT PREFERENCE (reduces flakiness — but with critical exceptions):
 - wait_until_network_idle is ONLY useful for non-spin actions: buy-feature confirm,
   autoplay-start button, page navigation. Not for between-spin pauses.
 - Use wait_ms for everything else: ≤500ms for short gaps (popup open/close),
-  2500ms between spins, 1500-2500ms after non-spin clicks.
+  5000ms between spins, 1500-2500ms after non-spin clicks.
 
 Critical rules about the uiMap_hierarchy:
 - Top-level keys (no "__") are MAIN-state buttons available in the default game screen.
@@ -184,7 +184,7 @@ Two paths to multi-spin — pick based on case intent + registered uiKeys:
 
 PATH 1 — Spin loop (preferred default, for data-only cases):
 - Use when case wants N spin records for assertion (RTP, conservation, length>=N).
-- Emit: \`{"kind":"spin"}, {"kind":"wait_ms","ms":2500}\` repeated N times. 2500ms
+- Emit: \`{"kind":"spin"}, {"kind":"wait_ms","ms":5000}\` repeated N times. 5000ms
   is a buffer; the engine's round-end signal detection actually gates the next
   click (so even big-cascade rounds are handled correctly without longer waits).
 - Skip autoplay UI entirely. Faster, simpler, no slider needed.
@@ -211,7 +211,7 @@ Other rules:
      turbo toggle, etc.). Cases inspecting menus, settings toggles,
      paytable popups, history popups, info screens → NO spin.
 3. Prefer high-level helpers in this order: set_bet_to_min/max for min/max targets, set_bet_to_value for arbitrary numeric targets, hardcoded click betMinus only for popup-selection UI testing.
-4. Use wait_ms 1500 after each navigation click (popup opening) and wait_ms 2500 after each spin.
+4. Use wait_ms 1500 after each navigation click (popup opening) and wait_ms 5000 after each spin.
 5. Output format: {"actions":[<list>],"reason":"<optional explanation if actions=[]>"}.`;
 
 /** Extract a pinned betAmount target from a case's custom_assertions, if
@@ -321,6 +321,7 @@ function buildPrompt(input: {
   setup: string;
   uiMap: UiRegistry;
   gameSpec?: GameSpec;
+  expectedBet?: number | null;
   spinCount?: number;
   customAssertions?: Array<{ id?: string; check_code?: string }>;
 }): string {
@@ -354,8 +355,11 @@ function buildPrompt(input: {
   const pinnedBetLine = pinnedBet != null
     ? `\nPINNED BET TARGET: an assertion expects spin.betAmount=${pinnedBet}. Anchor with set_bet_to_value(${pinnedBet}) before the first spin — do NOT use set_bet_to_min/max here.`
     : "";
+  const expectedBetLine = pinnedBet == null && typeof input.expectedBet === "number" && Number.isFinite(input.expectedBet)
+    ? `\nCATALOG EXPECTED BET: expected_bet=${input.expectedBet}. Anchor the first spin to this value; if it equals betMax, use set_bet_to_max and NEVER set_bet_to_min first.`
+    : "";
   const spinCountLine = input.spinCount && input.spinCount > 1
-    ? `\nSPIN COUNT REQUIREMENT: This case requires ${input.spinCount} spins. Emit ${input.spinCount} repeated {"kind":"spin"} actions (each followed by {"kind":"wait_ms","ms":2500} except the last), OR use autoplay UI to start a batch of ${input.spinCount} spins.`
+    ? `\nSPIN COUNT REQUIREMENT: This case requires ${input.spinCount} spins. Emit ${input.spinCount} repeated {"kind":"spin"} actions (each followed by {"kind":"wait_ms","ms":5000} except the last), OR use autoplay UI to start a batch of ${input.spinCount} spins.`
     : "";
   return [
     `Case: ${input.caseId}`,
@@ -374,6 +378,7 @@ function buildPrompt(input: {
     spinCountLine,
     assertionsBlock,
     pinnedBetLine,
+    expectedBetLine,
     "",
     "Output the actions JSON.",
   ].join("\n");
@@ -386,6 +391,67 @@ export type GameSpec = {
   betMax?: number;
 };
 
+function isMaxBoundaryCase(input: { caseId: string; caseName: string; setup: string; category: string }): boolean {
+  const text = `${input.caseId} ${input.caseName} ${input.category} ${input.setup}`;
+  return /above[-_\s]?max|maximum|max bet|bet[-_\s]?boundary/i.test(text)
+    && !/below[-_\s]?min|minimum|min bet/i.test(text);
+}
+
+function chooseBetAnchor(input: {
+  caseId: string;
+  caseName: string;
+  category: string;
+  setup: string;
+  customAssertions?: Array<{ id?: string; check_code?: string }>;
+  expectedBet?: number | null;
+  gameSpec?: GameSpec;
+}): CaseAction {
+  const pinnedBet = extractPinnedBetAmount(input.customAssertions);
+  if (pinnedBet != null) return { kind: "set_bet_to_value", value: pinnedBet, reason: `assertion pins betAmount=${pinnedBet}` };
+  if (typeof input.expectedBet === "number" && Number.isFinite(input.expectedBet) && input.expectedBet > 0) {
+    if (typeof input.gameSpec?.betMax === "number" && Math.abs(input.expectedBet - input.gameSpec.betMax) <= 0.01) {
+      return { kind: "set_bet_to_max" };
+    }
+    if (typeof input.gameSpec?.betMin === "number" && Math.abs(input.expectedBet - input.gameSpec.betMin) <= 0.01) {
+      return { kind: "set_bet_to_min" };
+    }
+    return { kind: "set_bet_to_value", value: input.expectedBet, reason: `catalog expected_bet=${input.expectedBet}` };
+  }
+  if (isMaxBoundaryCase(input)) return { kind: "set_bet_to_max" };
+  return { kind: "set_bet_to_min" };
+}
+
+function enforceMaxBoundaryAnchor(actions: CaseAction[], input: {
+  caseId: string;
+  caseName: string;
+  category: string;
+  setup: string;
+  expectedBet?: number | null;
+  gameSpec?: GameSpec;
+}): CaseAction[] {
+  const wantsMax = isMaxBoundaryCase(input)
+    || (
+      typeof input.expectedBet === "number"
+      && typeof input.gameSpec?.betMax === "number"
+      && Math.abs(input.expectedBet - input.gameSpec.betMax) <= 0.01
+    );
+  if (!wantsMax) return actions;
+  const firstSpinIdx = actions.findIndex((a) => a.kind === "spin");
+  if (firstSpinIdx < 0) return actions;
+  const out = [...actions];
+  for (let i = firstSpinIdx - 1; i >= 0; i--) {
+    if (out[i]?.kind === "set_bet_to_min") out.splice(i, 1);
+  }
+  const prelude = out.slice(0, out.findIndex((a) => a.kind === "spin"));
+  const hasMaxSetter = prelude.some((a) => a.kind === "set_bet_to_max"
+    || (a.kind === "set_bet_to_value" && typeof input.gameSpec?.betMax === "number" && Math.abs(a.value - input.gameSpec.betMax) <= 0.01));
+  if (!hasMaxSetter) {
+    const insertAt = out[0]?.kind === "ensure_ante_off" ? 1 : 0;
+    out.splice(insertAt, 0, { kind: "set_bet_to_max" });
+  }
+  return out;
+}
+
 export async function translateCase(input: {
   caseId: string;
   caseName: string;
@@ -393,6 +459,7 @@ export async function translateCase(input: {
   setup: string;
   uiMap: UiRegistry;
   gameSpec?: GameSpec;
+  expectedBet?: number | null;
   /** Total spins required by the test (catalog's spin_count). Used so the
    *  empty-setup short-circuit emits the right number of spin clicks; the
    *  AI prompt also receives this for non-empty setups. */
@@ -430,10 +497,7 @@ export async function translateCase(input: {
     // case asserts a specific betAmount, anchor to THAT value (set_bet_to_value)
     // so the assertion holds; otherwise default to set_bet_to_min (cheapest,
     // no OCR required).
-    const pinnedBet = extractPinnedBetAmount(input.customAssertions);
-    const betAnchor: CaseAction = pinnedBet != null
-      ? { kind: "set_bet_to_value", value: pinnedBet, reason: `assertion pins betAmount=${pinnedBet}` }
-      : { kind: "set_bet_to_min" };
+    const betAnchor: CaseAction = chooseBetAnchor(input);
     const actions: CaseAction[] = [
       ...maybeAntePreamble(input.uiMap),
       betAnchor,
@@ -441,17 +505,17 @@ export async function translateCase(input: {
     ];
     for (let i = 0; i < n; i++) {
       actions.push({ kind: "spin" });
-      // 2500ms is a small buffer between clicks. Engine round-end signal
+      // 5000ms is a buffer between clicks. Engine round-end signal
       // detection (PP doCollect, etc.) actually gates the next click, so
       // even big-cascade rounds work correctly without longer waits. See
       // case-executor.ts roundEndCount logic + provider spec roundEndSignals.
-      if (i < n - 1) actions.push({ kind: "wait_ms", ms: 2500 });
+      if (i < n - 1) actions.push({ kind: "wait_ms", ms: 5000 });
     }
     // Run the SAME native-autoplay conversion as the AI path below. Without
     // this, empty-setup FS-watch cases (e.g. free-spins-trigger-watch, 60
     // spins, no AI) stayed as 60 discrete clicks and never became autoplay-1000
     // — the short-circuit returned before the post-process safety net.
-    const finalActions = ensureAutoplayHygiene(maybeConvertToAutoplay(actions, {
+    const finalActions = ensureAutoplayHygiene(maybeConvertToAutoplay(enforceMaxBoundaryAnchor(actions, input), {
       category: input.category,
       spinCount: input.spinCount,
       uiMap: input.uiMap,
@@ -546,12 +610,10 @@ export async function translateCase(input: {
         || a.kind === "set_bet_to_value",
     );
     if (!hasBetSetter) {
-      const pinnedBet = extractPinnedBetAmount(input.customAssertions);
-      const injected: CaseAction = pinnedBet != null
-        ? { kind: "set_bet_to_value", value: pinnedBet, reason: `assertion pins betAmount=${pinnedBet}` }
-        : { kind: "set_bet_to_min" };
+      const injected: CaseAction = chooseBetAnchor(input);
+      const injectedLabel = injected.kind === "set_bet_to_value" ? `${injected.kind}(${injected.value})` : injected.kind;
       console.warn(
-        `[case-translator/${input.caseId}] BET BEFORE SPIN — AI omitted bet anchor; injecting ${injected.kind}${pinnedBet != null ? `(${pinnedBet})` : ""} before first spin`,
+        `[case-translator/${input.caseId}] BET BEFORE SPIN — AI omitted bet anchor; injecting ${injectedLabel} before first spin`,
       );
       parsed.actions.splice(
         firstSpinIdx,
@@ -561,6 +623,8 @@ export async function translateCase(input: {
       );
     }
   }
+
+  parsed.actions = enforceMaxBoundaryAnchor(parsed.actions, input);
 
   // Auto-prepend ensure_ante_off when game has ante. Idempotent — when
   // registry lacks anteButton this is a no-op step at runtime. Inserted
@@ -862,6 +926,7 @@ export async function translateAllCases(
     name: string;
     category: string;
     setup_instructions?: string;
+    expected_bet?: number | null;
     spin_count?: number;
     custom_assertions?: Array<{ id?: string; check_code?: string }>;
   }>,
@@ -884,6 +949,7 @@ export async function translateAllCases(
       setup: c.setup_instructions ?? "",
       uiMap,
       gameSpec,
+      expectedBet: c.expected_bet,
       spinCount: c.spin_count,
       customAssertions: c.custom_assertions,
     });

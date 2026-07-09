@@ -73,6 +73,23 @@ export function getCurrentBalance(
   return typeof ending === "number" ? ending : null;
 }
 
+function toFiniteNumber(v: unknown): number | null {
+  const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
+  return Number.isFinite(n) ? n : null;
+}
+
+function deriveBaseBetFromRaw(spin: LooseSpin): number | null {
+  const raw = spin.raw as Record<string, unknown> | undefined;
+  if (!raw) return null;
+  const c = toFiniteNumber(raw["c"]);
+  if (c == null || c <= 0) return null;
+  const bl = toFiniteNumber(raw["bl"]);
+  if (bl != null && bl > 0) return Math.round(c * bl * 100) / 100;
+  const l = toFiniteNumber(raw["l"]);
+  if (l != null && l > 0) return Math.round(c * l * 100) / 100;
+  return null;
+}
+
 /**
  * Detect a buy-feature deduction: returns the first round AFTER `startIndex`
  * whose effective bet (balance drop + win) is significantly larger than the
@@ -99,7 +116,7 @@ export function detectBuyFeatureDeduction(
   const ends = getRoundEndSpins(after);
   if (ends.length === 0) return null;
   const first = ends[0]!;
-  const baseBet = typeof first.betAmount === "number"
+  const parsedBaseBet = typeof first.betAmount === "number"
     ? (first.betAmount as number)
     : typeof first.bet === "number" ? (first.bet as number) : 0;
   const win = typeof first.winAmount === "number"
@@ -124,6 +141,20 @@ export function detectBuyFeatureDeduction(
   // own buy-feature detector, which uses the raw balance drop / bet.
   const winCredit = win > 0 ? win : 0;
   const deduction = before - afterBalance + winCredit;
+  const rawBaseBet = deriveBaseBetFromRaw(first);
+  // Some buy-feature parsers/adapters stamp the PURCHASE COST into betAmount
+  // for the first buy spin (e.g. betAmount=40 for a 100x buy at base 0.40).
+  // In that shape, deduction / betAmount ≈ 1 and buy-cost assertions false-
+  // fail. The raw PP fields still expose the base wager (`c × l` or `c × bl`),
+  // so prefer that smaller raw-derived bet when it yields a real buy ratio.
+  const parsedRatio = parsedBaseBet > 0 ? deduction / parsedBaseBet : 0;
+  const rawRatio = rawBaseBet != null && rawBaseBet > 0 ? deduction / rawBaseBet : 0;
+  const baseBet =
+    rawBaseBet != null
+    && rawBaseBet > 0
+    && (parsedBaseBet <= 0 || (rawBaseBet < parsedBaseBet && rawRatio >= 3 && rawRatio > parsedRatio))
+      ? rawBaseBet
+      : parsedBaseBet;
   return {
     deduction,
     baseBet,
@@ -142,7 +173,7 @@ export function detectBuyFeatureDeduction(
 export function sumWinBreakdown(spin: LooseSpin | null | undefined): number {
   if (!spin) return 0;
   const combos = spin.winBreakdown as WinCombo[] | undefined;
-  return sumWinCombos(combos);
+  return Math.round(sumWinCombos(combos) * 100) / 100;
 }
 
 /**

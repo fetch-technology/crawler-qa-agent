@@ -3483,12 +3483,24 @@
                   const isBuyRound = drop !== null && !s.isFreeSpin && s.bet > 0.01 && drop > s.bet * 1.5;
                   const mismatch = drop !== null && Math.abs(drop - expected) > 0.01 && !isDeferredFsFrame && !isBuyRound;
                   const fs = s.isFreeSpin ? ' <span style="color:#7da3d8;">FS</span>' : "";
+                  const combos = Array.isArray(s.winBreakdown) ? s.winBreakdown : [];
+                  const comboSum = combos.reduce((sum, c) => sum + (typeof c?.win === "number" ? c.win : 0), 0);
+                  const comboLine = combos.length > 0
+                    ? `<div style="margin-left:22px;color:#8b939c;">winBreakdown Σ=${fmt(comboSum)} serverTotal=${fmt(s.serverTotalWin)} · `
+                      + combos.slice(0, 8).map((c) => {
+                        const symbol = c?.symbol != null ? String(c.symbol) : "?";
+                        const count = c?.count != null ? `x${c.count}` : "";
+                        return `${escapeHtml(symbol)}${count}:${fmt(c?.win)}`;
+                      }).join(", ")
+                      + `${combos.length > 8 ? ` …+${combos.length - 8}` : ""}</div>`
+                    : "";
                   return `<div style="font-family:ui-monospace,monospace;font-size:10px;padding:1px 0;color:${mismatch ? '#d97706' : '#c8d0d8'};">`
                     + `<span style="opacity:0.55;">#${i + 1}</span> `
                     + `bet=${fmt(s.bet)} win=${fmt(s.win)} `
                     + `bb=${fmt(bb)} ba=${fmt(ba)} `
                     + `drop=${drop === null ? "—" : fmt(drop)} expected=${fmt(expected)}`
                     + `${mismatch ? " ⚠" : ""}${fs}`
+                    + comboLine
                     + `</div>`;
                 }).join("")
               : "";
@@ -4879,7 +4891,10 @@
           }
         } catch (_) { /* non-fatal — open the picker anyway */ }
       }
-      const mainPickKeys = getMainExpectedPickKeys(status);
+      const baseMainPickKeys = getMainExpectedPickKeys(status);
+      const mainPickKeys = (opts?.startKey && typeof opts.startKey === "string" && !opts.startKey.includes("__"))
+        ? Array.from(new Set([...baseMainPickKeys, opts.startKey]))
+        : baseMainPickKeys;
       const pendingElements = getLevel1NeedsQaPick(status);
       let missingOcr = [];
       let ocrRegions = {};

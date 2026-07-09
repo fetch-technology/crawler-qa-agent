@@ -2648,8 +2648,14 @@ export class ManualSessionManager {
     this.startPhase("ante-normalize");
     const norm = await normalizeAnteOff(this.session.page, this.gameSlug, this.registry);
     if (!norm.ok) {
-      this.endPhase("ante-normalize", "fail", norm.reason?.slice(0, 80));
-      return { ok: false, reason: `ante normalize failed (tier=${norm.detectionTier}): ${norm.reason ?? "unknown"}` };
+      console.warn(`[manual/auto-onboard] ${this.gameSlug}: deterministic ante normalize failed (tier=${norm.detectionTier}: ${norm.reason ?? "unknown"}) — trying ensureAnteOff AI fallback`);
+      const ai = await ensureAnteOff(this.session.page, this.gameSlug, this.registry);
+      if (!ai.ok) {
+        this.endPhase("ante-normalize", "fail", norm.reason?.slice(0, 80));
+        return { ok: false, reason: `ante normalize failed (tier=${norm.detectionTier}): ${norm.reason ?? "unknown"}; AI fallback failed: ${ai.reason ?? "unknown"}` };
+      }
+      this.endPhase("ante-normalize", "ok", `AI fallback forced OFF after deterministic tier=${norm.detectionTier}`);
+      return { ok: true };
     }
     if (norm.baselinePath && this.registry["anteButton"]) {
       this.registry["anteButton"]!.offBaseline = path.relative(dirForGame(this.gameSlug), norm.baselinePath);
@@ -5212,6 +5218,7 @@ CHECK_CODE RULES
         betMin: this.gameSpec.betMin,
         betMax: this.gameSpec.betMax,
       } : undefined,
+      expectedBet: tc.expected_bet,
       spinCount: tc.spin_count,
       customAssertions: tc.custom_assertions,
     });
@@ -5519,6 +5526,7 @@ CHECK_CODE RULES
           betMin: this.gameSpec.betMin,
           betMax: this.gameSpec.betMax,
         } : undefined,
+        expectedBet: c.expected_bet,
         spinCount: c.spin_count,
         customAssertions: c.custom_assertions,
       });

@@ -237,7 +237,7 @@ export function detectBuyFeatureDeduction(
   const ends = getRoundEndSpins(after);
   if (ends.length === 0) return null;
   const first = ends[0]!;
-  const baseBet = typeof first.betAmount === "number" ? first.betAmount : 0;
+  const parsedBaseBet = typeof first.betAmount === "number" ? first.betAmount : 0;
   const win = typeof first.winAmount === "number" ? first.winAmount : 0;
 
   // Resolve balance trước buy: ưu tiên caller; fallback dùng endingBalance
@@ -260,6 +260,29 @@ export function detectBuyFeatureDeduction(
   // assertion-helpers.ts detectBuyFeatureDeduction.
   const winCredit = win > 0 ? win : 0;
   const deduction = before - after1 + winCredit;
+  const raw = (first as any).raw as Record<string, unknown> | undefined;
+  const num = (v: unknown): number | null => {
+    const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
+    return Number.isFinite(n) ? n : null;
+  };
+  const c = num(raw?.["c"]);
+  const bl = num(raw?.["bl"]);
+  const l = num(raw?.["l"]);
+  const rawBaseBet = c != null && c > 0
+    ? bl != null && bl > 0
+      ? Math.round(c * bl * 100) / 100
+      : l != null && l > 0
+        ? Math.round(c * l * 100) / 100
+        : null
+    : null;
+  const parsedRatio = parsedBaseBet > 0 ? deduction / parsedBaseBet : 0;
+  const rawRatio = rawBaseBet != null && rawBaseBet > 0 ? deduction / rawBaseBet : 0;
+  const baseBet =
+    rawBaseBet != null
+    && rawBaseBet > 0
+    && (parsedBaseBet <= 0 || (rawBaseBet < parsedBaseBet && rawRatio >= 3 && rawRatio > parsedRatio))
+      ? rawBaseBet
+      : parsedBaseBet;
   return {
     deduction,
     baseBet,

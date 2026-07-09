@@ -27,7 +27,8 @@
 
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
-import { generateAiCatalog } from "../step7-testcase-gen/ai-catalog.js";
+import { generateAiCatalog, loadRawCatalog } from "../step7-testcase-gen/ai-catalog.js";
+import { applyTemplateSet } from "../step7-testcase-gen/case-templates.js";
 import { uiRegistry } from "../registry/ui-registry.js";
 import { providerCache } from "../registry/provider-cache.js";
 import { featureRegistry } from "../registry/feature-registry-store.js";
@@ -48,6 +49,10 @@ export type PhaseGenerateCatalogResult = PhaseResult & {
   roundsLoaded?: number;
   /** Whether auxiliary-sources/* was present. False = synthesized fallback. */
   hadAuxSources?: boolean;
+  /** Number of feature-gated standard templates eligible for this game. */
+  standardTemplatesApplied?: number;
+  /** Number of standard templates skipped by feature gates. */
+  standardTemplatesSkipped?: number;
 };
 
 /**
@@ -215,12 +220,36 @@ export async function phaseGenerateCatalog(args: {
         durationMs: Date.now() - t0,
       };
     }
+    let totalCases = result.catalog.total_cases;
+    let standardTemplatesApplied = 0;
+    let standardTemplatesSkipped = 0;
+    try {
+      const templated = await applyTemplateSet(slug, { mode: "merge" });
+      standardTemplatesApplied = templated.applied.length;
+      standardTemplatesSkipped = templated.skipped.length;
+      const merged = await loadRawCatalog(slug).catch(() => null);
+      totalCases = merged?.cases.length ?? totalCases;
+      console.log(
+        `[phase/generate-catalog] ${slug}: merged standard templates `
+        + `(eligible=${standardTemplatesApplied}, skipped=${standardTemplatesSkipped}, total=${totalCases})`,
+      );
+    } catch (err) {
+      return {
+        ok: false,
+        reason: `AI catalog generated but standard template merge failed: ${err instanceof Error ? err.message : String(err)}`,
+        roundsLoaded: rounds.length,
+        hadAuxSources,
+        durationMs: Date.now() - t0,
+      };
+    }
     return {
       ok: true,
-      totalCases: result.catalog.total_cases,
+      totalCases,
       catalogPath: result.catalogJsonPath ?? undefined,
       roundsLoaded: rounds.length,
       hadAuxSources,
+      standardTemplatesApplied,
+      standardTemplatesSkipped,
       durationMs: Date.now() - t0,
     };
   } catch (err) {

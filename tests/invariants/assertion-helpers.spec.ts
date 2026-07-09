@@ -9,6 +9,7 @@ import {
   getRoundEndSpins,
   getCurrentBalance,
   detectBuyFeatureDeduction,
+  sumWinBreakdown,
 } from "../../src/pipeline/step8-run-scenarios/assertion-helpers.ts";
 
 // === getRoundEndSpins ===
@@ -62,6 +63,15 @@ test("getCurrentBalance: empty collector → null", () => {
   expect(getCurrentBalance(undefined)).toBe(null);
 });
 
+// === sumWinBreakdown ===
+
+test("sumWinBreakdown rounds floating drift to cents", () => {
+  const sum = sumWinBreakdown({
+    winBreakdown: [{ win: 0.1 }, { win: 0.2 }, { win: 0.30000000000000004 }],
+  });
+  expect(sum).toBe(0.6);
+});
+
 // === detectBuyFeatureDeduction ===
 
 test("detectBuyFeatureDeduction: high-ratio buy detected", () => {
@@ -98,6 +108,24 @@ test("detectBuyFeatureDeduction: positive win on buy spin is added back to deduc
   const spins = [{ isEndRound: true, betAmount: 0.4, winAmount: 5, endingBalance: 965 }];
   const d = detectBuyFeatureDeduction(spins, 0, 1000);
   expect(d!.deduction).toBeCloseTo(40, 1);
+  expect(d!.ratio).toBeCloseTo(100, 1);
+});
+
+test("detectBuyFeatureDeduction: parser may stamp purchase cost as betAmount; raw c*l recovers base bet", () => {
+  // User case: buy-respin purchase cost is 40, but the adapted first spin has
+  // betAmount=40. Raw PP fields still show base wager c*l = 0.02*20 = 0.40.
+  // The buy ratio must be 40/0.40 = 100x, not 40/40 = 1x.
+  const spins = [{
+    isEndRound: true,
+    betAmount: 40,
+    winAmount: 0,
+    endingBalance: 999999925.2,
+    raw: { c: "0.02", l: "20", bl: "0" },
+  }];
+  const d = detectBuyFeatureDeduction(spins, 0, 999999965.2);
+  expect(d).not.toBeNull();
+  expect(d!.deduction).toBeCloseTo(40, 2);
+  expect(d!.baseBet).toBeCloseTo(0.4, 2);
   expect(d!.ratio).toBeCloseTo(100, 1);
 });
 

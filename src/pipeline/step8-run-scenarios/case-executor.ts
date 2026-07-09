@@ -1267,8 +1267,8 @@ export async function executeCase(
         // silence is plenty to declare "ready". Win/cascade spins still
         // have asset loads + cluster animations after the initial response;
         // wait 3s of silence OR a round-end signal, whichever first.
-        const NO_WIN_SILENCE_MS = 800;
-        const WIN_SILENCE_MS = 3_000;
+        const NO_WIN_SILENCE_MS = 1_200;
+        const WIN_SILENCE_MS = 7_000;
         const ABS_HARD_CAP_MS = SPIN_RESPONSE_TIMEOUT_MS * 4;
         const hasRoundEndSignals = roundEndSignalPatterns.length > 0;
         // Pure pre-capture check kept for "no response at all" failure mode.

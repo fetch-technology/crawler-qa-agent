@@ -6,7 +6,7 @@
 // Type contract + behavior contract (decision tree).
 
 import { test, expect } from "@playwright/test";
-import type { CaseAction } from "../../src/pipeline/step7-testcase-gen/case-action-translator.ts";
+import { translateCase, type CaseAction } from "../../src/pipeline/step7-testcase-gen/case-action-translator.ts";
 import {
   findBetChip,
   findBetChipExtreme,
@@ -32,6 +32,22 @@ test("set_bet_to_value supports optional maxAttempts (default 30)", () => {
 test("set_bet_to_value supports optional reason note", () => {
   const a: CaseAction = { kind: "set_bet_to_value", value: 0.2, reason: "min bet test" };
   expect(a.reason).toBe("min bet test");
+});
+
+test("translator anchors expected max-bet boundary cases to max, not min", async () => {
+  const translated = await translateCase({
+    caseId: "bet-boundary-above-max-clamp",
+    caseName: "Bet above max clamps",
+    category: "bet_boundary",
+    setup: "",
+    uiMap: { spinButton: el(), betPlus: el(), betMinus: el() } as unknown as UiRegistry,
+    gameSpec: { betMin: 1, betMax: 100, betLadder: [1, 10, 100] },
+    expectedBet: 100,
+    spinCount: 1,
+    customAssertions: [],
+  });
+  expect(translated.actions.some((a) => a.kind === "set_bet_to_min")).toBe(false);
+  expect(translated.actions.some((a) => a.kind === "set_bet_to_max")).toBe(true);
 });
 
 test("decision tree: when current bet matches target → 0 clicks needed", () => {
