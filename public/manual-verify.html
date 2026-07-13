@@ -457,6 +457,44 @@
     <div id="casesList"><p class="empty" style="margin: 0;">Click "Load Cases" after a qa:cold run.</p></div>
   </div>
 
+  <div id="caseTemplateModal" style="display:none;position:fixed;inset:0;z-index:12000;background:rgba(0,0,0,0.72);align-items:center;justify-content:center;padding:24px;">
+    <div style="width:min(1180px,96vw);height:min(820px,92vh);background:#11161f;border:1px solid #2a3140;border-radius:8px;box-shadow:0 18px 60px rgba(0,0,0,0.5);display:flex;flex-direction:column;overflow:hidden;">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid #232a35;background:#161a22;">
+        <div>
+          <strong style="font-size:14px;">Base Case Templates</strong>
+          <span id="caseTemplateMeta" style="margin-left:10px;color:#8b939c;font-size:11px;font-family:ui-monospace,monospace;"></span>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <button onclick="saveCaseTemplates()" style="background:#16a34a;font-size:11px;padding:4px 10px;">Save</button>
+          <button onclick="closeCaseTemplateEditor()" class="gray" style="font-size:11px;padding:4px 8px;">Close</button>
+        </div>
+      </div>
+      <div style="padding:10px 14px;color:#8b939c;font-size:12px;border-bottom:1px solid #232a35;">
+        This is the reusable template set merged by <code>Generate Cases</code> after AI catalog generation. Save writes <code>fixtures/case-templates/standard.json</code>; reset removes that override.
+      </div>
+      <div style="padding:10px 14px;background:#101722;border-bottom:1px solid #232a35;">
+        <div style="display:grid;grid-template-columns:1fr auto;gap:8px;align-items:start;">
+          <div>
+            <label style="display:block;color:#c8d0d8;font-size:11px;font-weight:600;margin-bottom:4px;">Add a full case template with AI</label>
+            <textarea id="caseTemplateCaseIntent" rows="3" placeholder="e.g. Create a reusable case that sets the bet to max, spins once, verifies balance arithmetic, no negative balance, and no engine warnings." style="width:100%;resize:vertical;background:#0b0e13;color:#d1d5db;border:1px solid #2a3140;border-radius:4px;padding:6px 8px;font-size:12px;line-height:1.4;"></textarea>
+            <div id="caseTemplateCaseResult" style="display:none;margin-top:8px;background:#0b0e13;border:1px solid #2a3140;border-radius:4px;padding:8px;font-size:11px;">
+              <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:6px;">
+                <strong id="caseTemplateCaseResultTitle" style="color:#a78bfa;"></strong>
+                <span style="color:#22c55e;font-size:10px;">Added to editor draft</span>
+              </div>
+              <pre id="caseTemplateCaseResultJson" style="background:#161a22;border:1px solid #232a35;border-radius:4px;padding:6px 8px;margin:0;font-size:11px;max-height:220px;overflow:auto;"></pre>
+            </div>
+          </div>
+          <div style="padding-top:22px;">
+            <button onclick="generateTemplateCase()" style="background:#7c5cff;color:#fff;font-size:11px;padding:6px 12px;white-space:nowrap;">AI Generate Case</button>
+            <div id="caseTemplateCaseStatus" style="color:#8b939c;font-size:10px;margin-top:6px;text-align:right;"></div>
+          </div>
+        </div>
+      </div>
+      <textarea id="caseTemplateEditor" spellcheck="false" style="flex:1;resize:none;background:#0b0e13;color:#d1d5db;border:0;padding:14px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.45;outline:none;tab-size:2;"></textarea>
+      <div id="caseTemplateError" style="display:none;padding:8px 14px;background:#3a1118;color:#fecaca;border-top:1px solid #7f1d1d;font-size:12px;font-family:ui-monospace,monospace;"></div>
+    </div>
+  </div>
 
   <!-- App log (frontend API call trace) -->
   <div class="panel">
@@ -1866,6 +1904,7 @@
           <td class="num"><span class="pill verified">${g.verifiedCount}</span></td>
           <td style="white-space: nowrap;">
             ${openOrStop}
+            <button class="gray" onclick="openCaseTemplateEditor()" title="Edit the reusable base case templates before Generate Cases">Manage Templates</button>
             <button class="purple" onclick="doGenerateCases('${g.gameSlug}')" title="Generate test cases (AI catalog + translations only — stops here)">Generate Cases</button>
             <button class="gray" onclick="doLoadCases('${g.gameSlug}')" title="Load cases from disk (no session needed)">Load Cases</button>
             <button style="background: #4f7cff;" onclick="doRunStats('${g.gameSlug}')" title="Massive spin + RTP/hit-rate/volatility stats only (no case execution)">Run Stats</button>
@@ -1952,6 +1991,150 @@
       if (window.__lastCasesSlug === gameSlug) {
         window.__caseResults = {};
         loadCasesForSlug(gameSlug, { scrollToTop: false });
+      }
+    };
+
+    function setCaseTemplateError(message) {
+      const el = document.getElementById("caseTemplateError");
+      if (!el) return;
+      if (!message) {
+        el.style.display = "none";
+        el.textContent = "";
+        return;
+      }
+      el.textContent = message;
+      el.style.display = "block";
+    }
+
+    async function loadCaseTemplatePayload() {
+      const body = await api("/api/qa/manual/case-templates");
+      const editor = document.getElementById("caseTemplateEditor");
+      const meta = document.getElementById("caseTemplateMeta");
+      if (editor) {
+        editor.value = JSON.stringify(body.templates || [], null, 2);
+      }
+      if (meta) {
+        meta.textContent = `${body.count ?? 0} templates · ${body.source || "unknown"} · ${body.path || ""}`;
+      }
+      setCaseTemplateError("");
+      return body;
+    }
+
+    function parseCaseTemplateEditor() {
+      const editor = document.getElementById("caseTemplateEditor");
+      if (!editor) throw new Error("template editor not found");
+      const parsed = JSON.parse(editor.value);
+      if (!Array.isArray(parsed)) throw new Error("template JSON must be an array");
+      return parsed;
+    }
+
+    let generatedTemplateCase = null;
+
+    function appendGeneratedTemplateCaseToEditor(caseObj, opts = {}) {
+      if (!caseObj?.id) {
+        setCaseTemplateError("Generated case is missing id.");
+        return false;
+      }
+      let templates;
+      try {
+        templates = parseCaseTemplateEditor();
+      } catch (err) {
+        setCaseTemplateError(`Invalid template JSON: ${err.message}`);
+        return false;
+      }
+      if (templates.some((tpl) => tpl?.id === caseObj.id)) {
+        if (!opts.silentDuplicate) {
+          setCaseTemplateError(`Template id "${caseObj.id}" already exists in the editor.`);
+        }
+        return false;
+      }
+      const next = [...templates, caseObj];
+      document.getElementById("caseTemplateEditor").value = JSON.stringify(next, null, 2);
+      setCaseTemplateError("");
+      return true;
+    }
+
+    window.generateTemplateCase = async () => {
+      const intent = document.getElementById("caseTemplateCaseIntent")?.value.trim() || "";
+      const status = document.getElementById("caseTemplateCaseStatus");
+      const result = document.getElementById("caseTemplateCaseResult");
+      if (result) result.style.display = "none";
+      generatedTemplateCase = null;
+      if (!intent) {
+        setCaseTemplateError("Describe the full case first.");
+        return;
+      }
+      let templates;
+      try {
+        templates = parseCaseTemplateEditor();
+      } catch (err) {
+        setCaseTemplateError(`Invalid template JSON: ${err.message}`);
+        return;
+      }
+      if (status) status.textContent = "Generating...";
+      setCaseTemplateError("");
+      try {
+        const body = await api("/api/qa/manual/case-templates/case/generate", {
+          method: "POST",
+          body: {
+            gameSlug: window.__lastCasesSlug || SCOPED_GAME_SLUG || undefined,
+            templates,
+            intent,
+          },
+        });
+        generatedTemplateCase = body.case;
+        const appended = appendGeneratedTemplateCaseToEditor(generatedTemplateCase);
+        document.getElementById("caseTemplateCaseResultTitle").textContent = `${body.case.id} - ${body.case.name || ""}`;
+        document.getElementById("caseTemplateCaseResultJson").textContent = JSON.stringify(body.case, null, 2);
+        if (result) result.style.display = "block";
+        if (status) status.textContent = appended ? "Added to editor draft; click Save" : "Generated, but not added";
+      } catch (err) {
+        if (status) status.textContent = "Failed";
+        setCaseTemplateError(err.message || String(err));
+      }
+    };
+
+    window.openCaseTemplateEditor = async () => {
+      const modal = document.getElementById("caseTemplateModal");
+      if (modal) modal.style.display = "flex";
+      try {
+        await loadCaseTemplatePayload();
+      } catch (err) {
+        setCaseTemplateError(err.message || String(err));
+      }
+    };
+
+    window.closeCaseTemplateEditor = () => {
+      const modal = document.getElementById("caseTemplateModal");
+      if (modal) modal.style.display = "none";
+    };
+
+    window.saveCaseTemplates = async () => {
+      const editor = document.getElementById("caseTemplateEditor");
+      if (!editor) return;
+      let templates;
+      try {
+        templates = JSON.parse(editor.value);
+      } catch (err) {
+        setCaseTemplateError(`Invalid JSON: ${err.message}`);
+        return;
+      }
+      if (generatedTemplateCase && Array.isArray(templates) && !templates.some((tpl) => tpl?.id === generatedTemplateCase.id)) {
+        templates = [...templates, generatedTemplateCase];
+        editor.value = JSON.stringify(templates, null, 2);
+      }
+      try {
+        const body = await api("/api/qa/manual/case-templates", {
+          method: "PUT",
+          body: { templates },
+        });
+        document.getElementById("caseTemplateEditor").value = JSON.stringify(body.templates || templates, null, 2);
+        const meta = document.getElementById("caseTemplateMeta");
+        if (meta) meta.textContent = `${body.count ?? templates.length} templates · ${body.source || "override-file"} · ${body.path || ""}`;
+        setCaseTemplateError("");
+        toast(`Saved ${body.count ?? templates.length} base templates. Next Generate Cases will use them.`);
+      } catch (err) {
+        setCaseTemplateError(err.message || String(err));
       }
     };
 

@@ -621,6 +621,305 @@ export async function handleManualRoute(
       return sendJson(res, r.ok ? 200 : 400, r), true;
     }
 
+    // GET/PUT/DELETE /api/qa/manual/case-templates
+    // QA-editable reusable base template set. When saved, the override file at
+    // fixtures/case-templates/standard.json is used by Generate Cases and
+    // Apply Templates instead of the built-in TypeScript template list.
+    if (url === "/api/qa/manual/case-templates" && method === "GET") {
+      const { loadCaseTemplates, TEMPLATE_OVERRIDE_PATH } = await import("../step7-testcase-gen/case-templates.js");
+      const loaded = await loadCaseTemplates();
+      return sendJson(res, 200, {
+        ok: true,
+        source: loaded.source,
+        path: TEMPLATE_OVERRIDE_PATH,
+        count: loaded.templates.length,
+        templates: loaded.templates,
+      }), true;
+    }
+
+    if (url === "/api/qa/manual/case-templates" && method === "PUT") {
+      const body = await asJsonBody<{ templates?: unknown }>(req);
+      const {
+        saveCaseTemplatesOverride,
+        validateCaseTemplates,
+      } = await import("../step7-testcase-gen/case-templates.js");
+      const valid = validateCaseTemplates(body.templates);
+      if (!valid.ok) return sendJson(res, 400, { ok: false, error: valid.reason }), true;
+      const savedPath = await saveCaseTemplatesOverride(valid.templates);
+      return sendJson(res, 200, {
+        ok: true,
+        source: "override-file",
+        path: savedPath,
+        count: valid.templates.length,
+        templates: valid.templates,
+      }), true;
+    }
+
+    if (url === "/api/qa/manual/case-templates" && method === "DELETE") {
+      const { loadCaseTemplates, resetCaseTemplatesOverride, TEMPLATE_OVERRIDE_PATH } = await import("../step7-testcase-gen/case-templates.js");
+      await resetCaseTemplatesOverride();
+      const loaded = await loadCaseTemplates();
+      return sendJson(res, 200, {
+        ok: true,
+        source: loaded.source,
+        path: TEMPLATE_OVERRIDE_PATH,
+        count: loaded.templates.length,
+        templates: loaded.templates,
+      }), true;
+    }
+
+    // POST /api/qa/manual/case-templates/case/generate
+    // QA describes a whole reusable case in plain language; AI returns a full
+    // CaseTemplate object. The UI previews it and appends it to the active JSON
+    // template list only after QA accepts.
+    if (url === "/api/qa/manual/case-templates/case/generate" && method === "POST") {
+      const body = await asJsonBody<{
+        intent?: string;
+        templates?: Array<Partial<import("../step7-testcase-gen/case-templates.js").CaseTemplate>>;
+        gameSlug?: string;
+      }>(req);
+      if (!body.intent?.trim()) return sendJson(res, 400, { ok: false, error: "intent required" }), true;
+      const existing = Array.isArray(body.templates) ? body.templates : [];
+      const existingIds = existing.map((t) => t?.id).filter(Boolean);
+
+      let gameContext = "(no game selected — generate a reusable game-agnostic template)";
+      const slug = body.gameSlug
+        || (typeof req.headers["x-game-slug"] === "string" ? req.headers["x-game-slug"] : "");
+      if (slug) {
+        try {
+          const { gameSpecOverride } = await import("../registry/game-spec-override.js");
+          const spec = await gameSpecOverride.load(slug).catch(() => null);
+          if (spec) {
+            gameContext = [
+              `gameSlug: ${slug}`,
+              `betMin: ${spec.betMin ?? "(unknown)"}`,
+              `betMax: ${spec.betMax ?? "(unknown)"}`,
+              `defaultBet: ${spec.defaultBet ?? "(unknown)"}`,
+              Array.isArray(spec.betLadder) ? `betLadder: [${spec.betLadder.join(", ")}]` : "",
+            ].filter(Boolean).join("\n");
+          } else {
+            gameContext = `gameSlug: ${slug} (no game-spec override loaded)`;
+          }
+        } catch {
+          gameContext = `gameSlug: ${slug} (game context unavailable)`;
+        }
+      }
+
+      const { askClaude, extractJsonFromText } = await import("../../ai/claude.js");
+      const prompt = `Generate ONE reusable slot-game QA case template from a human QA request.
+
+QA INTENT (plain language):
+"""
+${body.intent.trim()}
+"""
+
+EXISTING TEMPLATE IDS (avoid duplicates): [${existingIds.join(", ")}]
+
+GAME CONTEXT
+${gameContext}
+
+ALLOWED CATEGORIES:
+base_game | bet_variation | bet_level | bet_boundary | autoplay | buy_feature | special_bet | turbo_spin | free_spins | respin | history | options | max_win_cap | ui_consistency | rules_consistency | payout_correctness | wild_substitution | performance | meta | other
+
+ALLOWED SEVERITY: critical | major | minor
+
+OPTIONAL FEATURE GATES:
+autoSpin | buyBonus | extraBet | turbo | history | paytable | freeSpin | cascade
+
+AVAILABLE CHECK_CODE SCOPE
+- spin: last/current normalized spin, or null for UI-only cases.
+- collector.spins: all captured normalized spins.
+- screen: { balance, bet, last_win, total_win }, each may be null.
+- warnings: string[].
+- stateTimeline: Array<{ from?: string, to: string, via?: string }>.
+- interrupts: { count: number, handled: string[] }.
+- balanceBefore: number | null.
+- networkBalance: number | null.
+- expected_bet: number | null.
+- helpers: getRoundEndSpins, getCurrentBalance, detectBuyFeatureDeduction.
+
+NORMALIZED SPIN FIELDS
+id, betAmount, winAmount, startingBalance, endingBalance, isFreeSpin, freeSpinsRemaining, state, status, matrix.
+
+OUTPUT REQUIREMENTS (strict JSON only, no markdown fences):
+{
+  "id": "<kebab-case unique id>",
+  "name": "<short display name>",
+  "description": "<what this verifies and why>",
+  "category": "<allowed category>",
+  "severity": "<critical|major|minor>",
+  "requiresFeature": "<optional feature gate string OR array; omit if universal>",
+  "setup_instructions": "<plain-language setup/actions for the translator>",
+  "expected_bet": "<optional number, null, or token like {{betMin}}/{{betMax}}/{{defaultBet}}>",
+  "expected_feature": "<optional feature expectation>",
+  "spin_count": <integer, 0 allowed for UI/setup-only cases>,
+  "allowed_interruptions": ["optional interruption names"],
+  "custom_assertions": [
+    {
+      "id": "<kebab-case assertion id>",
+      "description": "<one-line human-readable assertion>",
+      "check_code": "<single JS expression truthy on PASS>"
+    }
+  ]
+}
+
+RULES
+- setup_instructions must be understandable by a QA and by the action translator.
+- Prefer game-agnostic assertions and tokens {{betMin}}, {{betMax}}, {{defaultBet}} where useful.
+- check_code must be a single JS expression. For multi-step logic use an IIFE: (() => { const x = ...; return ... })()
+- Use === instead of ==.
+- Always null-guard screen fields and optional balances.
+- Do not reference _raw or provider-specific fields.
+- Include 1-4 useful custom_assertions.`;
+
+      let raw: string;
+      try {
+        raw = await askClaude({
+          content: prompt,
+          system: "You generate reusable slot-game QA case templates. Output strict JSON only.",
+          label: "template-case-gen/qa-driven",
+          maxTurns: 1,
+        });
+      } catch (err) {
+        return sendJson(res, 500, { ok: false, error: `AI generation failed: ${err instanceof Error ? err.message : String(err)}` }), true;
+      }
+      const parsed = extractJsonFromText<Partial<import("../step7-testcase-gen/case-templates.js").CaseTemplate>>(raw);
+      if (!parsed?.id || !parsed.name || !parsed.category || !parsed.setup_instructions) {
+        return sendJson(res, 502, { ok: false, error: `AI returned incomplete output: ${raw.slice(0, 200)}` }), true;
+      }
+
+      const candidate = {
+        id: parsed.id.trim(),
+        name: parsed.name.trim(),
+        description: parsed.description?.trim() ?? "",
+        category: parsed.category,
+        severity: parsed.severity ?? "minor",
+        ...(parsed.requiresFeature !== undefined ? { requiresFeature: parsed.requiresFeature } : {}),
+        setup_instructions: parsed.setup_instructions.trim(),
+        ...(parsed.expected_bet !== undefined ? { expected_bet: parsed.expected_bet } : {}),
+        ...(parsed.expected_feature !== undefined ? { expected_feature: parsed.expected_feature } : {}),
+        spin_count: typeof parsed.spin_count === "number" ? parsed.spin_count : 1,
+        ...(parsed.allowed_interruptions !== undefined ? { allowed_interruptions: parsed.allowed_interruptions } : {}),
+        custom_assertions: Array.isArray(parsed.custom_assertions) ? parsed.custom_assertions : [],
+      };
+      const { validateCaseTemplates } = await import("../step7-testcase-gen/case-templates.js");
+      const valid = validateCaseTemplates([...existing, candidate]);
+      if (!valid.ok) return sendJson(res, 422, { ok: false, error: valid.reason, case: candidate }), true;
+      return sendJson(res, 200, { ok: true, case: candidate }), true;
+    }
+
+    // POST /api/qa/manual/case-templates/assertion/generate
+    // AI helper for the template editor: QA describes the assertion in plain
+    // language, AI returns a proposed { id, description, check_code }. The UI
+    // previews it and inserts into the selected template only after QA accepts.
+    if (url === "/api/qa/manual/case-templates/assertion/generate" && method === "POST") {
+      const body = await asJsonBody<{
+        intent?: string;
+        template?: Partial<import("../step7-testcase-gen/case-templates.js").CaseTemplate>;
+        gameSlug?: string;
+      }>(req);
+      if (!body.intent?.trim()) return sendJson(res, 400, { ok: false, error: "intent required" }), true;
+      if (!body.template?.id) return sendJson(res, 400, { ok: false, error: "template.id required" }), true;
+
+      const existingIds = (body.template.custom_assertions ?? []).map((a) => a.id).filter(Boolean);
+      let gameContext = "(no game selected — generate game-agnostic template assertion)";
+      const slug = body.gameSlug
+        || (typeof req.headers["x-game-slug"] === "string" ? req.headers["x-game-slug"] : "");
+      if (slug) {
+        try {
+          const { gameSpecOverride } = await import("../registry/game-spec-override.js");
+          const spec = await gameSpecOverride.load(slug).catch(() => null);
+          if (spec) {
+            gameContext = [
+              `gameSlug: ${slug}`,
+              `betMin: ${spec.betMin ?? "(unknown)"}`,
+              `betMax: ${spec.betMax ?? "(unknown)"}`,
+              `defaultBet: ${spec.defaultBet ?? "(unknown)"}`,
+              Array.isArray(spec.betLadder) ? `betLadder: [${spec.betLadder.join(", ")}]` : "",
+            ].filter(Boolean).join("\n");
+          } else {
+            gameContext = `gameSlug: ${slug} (no game-spec override loaded)`;
+          }
+        } catch {
+          gameContext = `gameSlug: ${slug} (game context unavailable)`;
+        }
+      }
+
+      const { askClaude, extractJsonFromText } = await import("../../ai/claude.js");
+      const prompt = `Generate ONE custom assertion for a reusable slot-game QA case template.
+
+TEMPLATE CONTEXT
+- id: ${body.template.id}
+- name: ${body.template.name ?? "(none)"}
+- category: ${body.template.category ?? "(none)"}
+- description: ${body.template.description ?? "(none)"}
+- setup_instructions: ${body.template.setup_instructions ?? "(none)"}
+- spin_count: ${body.template.spin_count ?? "(not set)"}
+- existing assertion ids (avoid duplicates): [${existingIds.join(", ")}]
+
+GAME CONTEXT
+${gameContext}
+
+QA INTENT (plain language):
+"""
+${body.intent.trim()}
+"""
+
+AVAILABLE CHECK_CODE SCOPE
+- spin: last/current normalized spin, or null for UI-only cases.
+- collector.spins: all captured normalized spins.
+- screen: { balance, bet, last_win, total_win }, each may be null.
+- warnings: string[].
+- stateTimeline: Array<{ from?: string, to: string, via?: string }>.
+- interrupts: { count: number, handled: string[] }.
+- balanceBefore: number | null.
+- networkBalance: number | null.
+- expected_bet: number | null.
+- helpers: getRoundEndSpins, getCurrentBalance, detectBuyFeatureDeduction.
+
+NORMALIZED SPIN FIELDS
+id, betAmount, winAmount, startingBalance, endingBalance, isFreeSpin, freeSpinsRemaining, state, status, matrix.
+
+OUTPUT REQUIREMENTS (strict JSON only, no markdown fences):
+{
+  "id": "<kebab-case unique assertion id>",
+  "description": "<one-line human-readable description>",
+  "check_code": "<single JS expression that evaluates truthy when assertion PASSES>"
+}
+
+CHECK_CODE RULES
+- Single JS expression. For multi-step logic use an IIFE: (() => { const x = ...; return ... })()
+- Use === instead of ==.
+- Always null-guard screen fields and optional balances.
+- For free-spin checks, filter first: collector.spins.filter(s => s.isFreeSpin === true).
+- Do not reference _raw or provider-specific fields.
+- Prefer game-agnostic logic suitable for a reusable template. Use {{betMin}}, {{betMax}}, or {{defaultBet}} ONLY when the assertion genuinely needs template tokens.`;
+
+      let raw: string;
+      try {
+        raw = await askClaude({
+          content: prompt,
+          system: "You generate custom assertions for reusable slot-game QA case templates. Output strict JSON only.",
+          label: `template-assertion-gen/${String(body.template.id).slice(0, 30)}`,
+          maxTurns: 1,
+        });
+      } catch (err) {
+        return sendJson(res, 500, { ok: false, error: `AI generation failed: ${err instanceof Error ? err.message : String(err)}` }), true;
+      }
+      const parsed = extractJsonFromText<{ id?: string; description?: string; check_code?: string }>(raw);
+      if (!parsed?.id || !parsed.check_code) {
+        return sendJson(res, 502, { ok: false, error: `AI returned unparseable output: ${raw.slice(0, 200)}` }), true;
+      }
+      return sendJson(res, 200, {
+        ok: true,
+        assertion: {
+          id: parsed.id.trim(),
+          description: (parsed.description ?? "").trim(),
+          check_code: parsed.check_code.trim(),
+        },
+      }), true;
+    }
+
     // GET /api/qa/manual/case-actions?caseId=...&game=... — fetch cached
     // actions + available uiKeys for the dashboard QA editor.
     if (url?.startsWith("/api/qa/manual/case-actions") && method === "GET") {

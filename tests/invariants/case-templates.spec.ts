@@ -2,6 +2,7 @@ import { test, expect } from "@playwright/test";
 import {
   STANDARD_CASE_TEMPLATES,
   instantiateTemplate,
+  validateCaseTemplates,
 } from "../../src/pipeline/step7-testcase-gen/case-templates.ts";
 
 test("standard templates include QA-required slot coverage cases", () => {
@@ -49,4 +50,16 @@ test("template assertion code uses null for unresolved numeric tokens", () => {
   const code = instantiated.custom_assertions?.[0]?.check_code ?? "";
   expect(code).toContain("const expected = null");
   expect(code).not.toContain("{{betMax}}");
+});
+
+test("editable template validator rejects empty or duplicate template sets", () => {
+  expect(validateCaseTemplates([]).ok).toBe(false);
+  const one = STANDARD_CASE_TEMPLATES[0]!;
+  const dup = validateCaseTemplates([one, { ...one }]);
+  expect(dup.ok).toBe(false);
+  if (!dup.ok) expect(dup.reason).toContain("duplicate");
+});
+
+test("editable template validator accepts the built-in template set", () => {
+  expect(validateCaseTemplates(STANDARD_CASE_TEMPLATES).ok).toBe(true);
 });

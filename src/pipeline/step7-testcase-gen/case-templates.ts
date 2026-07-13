@@ -25,7 +25,7 @@
 // cases into the game's test-cases.json, and clears the stale actions cache so
 // the next translate pass rebinds setup→actions against THIS game's registry.
 
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { TestCase, TestCaseCatalog, TestCaseCategory } from "../../ai/test-catalog.js";
 import type { FeatureName } from "../step4-feature-discovery/types.js";
@@ -761,6 +761,48 @@ export async function loadCaseTemplates(): Promise<{ templates: CaseTemplate[]; 
     // no override file — fall through to built-in
   }
   return { templates: STANDARD_CASE_TEMPLATES, source: "built-in" };
+}
+
+export function validateCaseTemplates(value: unknown): { ok: true; templates: CaseTemplate[] } | { ok: false; reason: string } {
+  if (!Array.isArray(value)) return { ok: false, reason: "template payload must be a JSON array" };
+  if (value.length === 0) return { ok: false, reason: "template array must not be empty" };
+
+  const ids = new Set<string>();
+  for (const [idx, item] of value.entries()) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      return { ok: false, reason: `template[${idx}] must be an object` };
+    }
+    const tpl = item as Partial<CaseTemplate>;
+    if (!tpl.id || typeof tpl.id !== "string") return { ok: false, reason: `template[${idx}].id is required` };
+    if (ids.has(tpl.id)) return { ok: false, reason: `duplicate template id "${tpl.id}"` };
+    ids.add(tpl.id);
+    if (!tpl.name || typeof tpl.name !== "string") return { ok: false, reason: `template "${tpl.id}" name is required` };
+    if (!tpl.description || typeof tpl.description !== "string") return { ok: false, reason: `template "${tpl.id}" description is required` };
+    if (!tpl.category || typeof tpl.category !== "string") return { ok: false, reason: `template "${tpl.id}" category is required` };
+    if (!tpl.severity || typeof tpl.severity !== "string") return { ok: false, reason: `template "${tpl.id}" severity is required` };
+    if (!tpl.setup_instructions || typeof tpl.setup_instructions !== "string") return { ok: false, reason: `template "${tpl.id}" setup_instructions is required` };
+    if (tpl.spin_count != null && (typeof tpl.spin_count !== "number" || !Number.isFinite(tpl.spin_count) || tpl.spin_count < 0)) {
+      return { ok: false, reason: `template "${tpl.id}" spin_count must be a non-negative number` };
+    }
+    if (tpl.custom_assertions != null && !Array.isArray(tpl.custom_assertions)) {
+      return { ok: false, reason: `template "${tpl.id}" custom_assertions must be an array when present` };
+    }
+  }
+
+  return { ok: true, templates: value as CaseTemplate[] };
+}
+
+export async function saveCaseTemplatesOverride(templates: CaseTemplate[]): Promise<string> {
+  const valid = validateCaseTemplates(templates);
+  if (!valid.ok) throw new Error(valid.reason);
+  await mkdir(path.dirname(TEMPLATE_OVERRIDE_PATH), { recursive: true });
+  await writeFile(TEMPLATE_OVERRIDE_PATH, JSON.stringify(valid.templates, null, 2) + "\n", "utf8");
+  return TEMPLATE_OVERRIDE_PATH;
+}
+
+export async function resetCaseTemplatesOverride(): Promise<string> {
+  await rm(TEMPLATE_OVERRIDE_PATH, { force: true });
+  return TEMPLATE_OVERRIDE_PATH;
 }
 
 function substituteTokens(value: string, tokens: TemplateTokens): string {
