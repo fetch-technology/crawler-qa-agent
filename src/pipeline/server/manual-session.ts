@@ -5187,7 +5187,67 @@ CHECK_CODE RULES
     return { ok: true, updated: r.updated, ambiguous: r.ambiguous };
   }
 
-  async retranslateCase(caseId: string, slugOverride?: string): Promise<{ ok: boolean; actions?: unknown[]; skipReason?: string; reason?: string; aiCalled?: boolean; resynced?: number }> {
+  /**
+   * Revise ONE case's custom_assertions per the admin OC-level assertion note
+   * (AI). No-op (no AI cost) when the OC has no assertion note for this case.
+   * Persists to test-cases.json via the RAW catalog (never writes built-ins).
+   * Returns whether the list changed so callers can log/refresh.
+   */
+  async reviseCaseAssertions(caseId: string, slug: string, ocOverride?: string): Promise<{
+    ok: boolean;
+    changed?: boolean;
+    aiCalled?: boolean;
+    error?: string;
+    reason?: string;
+    /** The resulting assertion list (revised or unchanged) — callers with a
+     *  stale in-memory catalog use this to keep the translate context in sync. */
+    assertions?: Array<{ id: string; description: string; check_code: string }>;
+  }> {
+    const { deriveOcKey, resolveAssertionNote } = await import("../registry/oc-prompt-notes.js");
+    let oc = ocOverride;
+    if (oc === undefined) {
+      const m = await meta.load(slug).catch(() => null);
+      oc = deriveOcKey(m?.gameUrl);
+    }
+    const { loadRawCatalog, saveCatalog } = await import("../step7-testcase-gen/ai-catalog.js");
+    const catalog = await loadRawCatalog(slug);
+    if (!catalog) return { ok: false, reason: "test-cases.json not found" };
+    const tc = catalog.cases.find((c) => c.id === caseId);
+    if (!tc) return { ok: false, reason: `case ${caseId} not in catalog` };
+
+    const currentAssertions = (tc.custom_assertions ?? []).map((a) => ({ id: a.id, description: a.description, check_code: a.check_code }));
+    const note = await resolveAssertionNote(oc, tc.category, tc.id);
+    if (!note) return { ok: true, changed: false, aiCalled: false, assertions: currentAssertions };
+
+    const gs = this.gameSpec;
+    const gameSpecBlock = gs
+      ? `betLadder: [${gs.betLadder.join(", ")}]\ndefaultBet: ${gs.defaultBet}  betMin: ${gs.betMin}  betMax: ${gs.betMax}`
+      : undefined;
+
+    const { reviseAssertionsWithNote } = await import("../step7-testcase-gen/assertion-note-reviser.js");
+    const res = await reviseAssertionsWithNote({
+      caseId: tc.id,
+      caseName: tc.name,
+      category: tc.category,
+      note,
+      currentAssertions,
+      gameSpecBlock,
+    });
+    if (res.error) {
+      console.warn(`[manual/case] ${slug}/${caseId}: assertion revise skipped — ${res.error}`);
+      return { ok: true, changed: false, aiCalled: res.aiCalled, error: res.error, assertions: currentAssertions };
+    }
+    // Only persist when the list actually differs.
+    const before = JSON.stringify(currentAssertions);
+    const after = JSON.stringify(res.assertions);
+    if (before === after) return { ok: true, changed: false, aiCalled: res.aiCalled, assertions: res.assertions };
+    tc.custom_assertions = res.assertions;
+    await saveCatalog(slug, catalog);
+    console.log(`[manual/case] ${slug}/${caseId}: revised ${res.assertions.length} assertion(s) from admin note`);
+    return { ok: true, changed: true, aiCalled: res.aiCalled, assertions: res.assertions };
+  }
+
+  async retranslateCase(caseId: string, slugOverride?: string): Promise<{ ok: boolean; actions?: unknown[]; skipReason?: string; reason?: string; aiCalled?: boolean; resynced?: number; assertionsRevised?: boolean }> {
     const slug = slugOverride ?? this.gameSlug;
     if (!slug) return { ok: false, reason: "gameSlug required (no active session or override)" };
     // Re-translate = bring the WHOLE case up to current system knowledge:
@@ -5197,6 +5257,18 @@ CHECK_CODE RULES
     //    UPDATED assertions as context.
     const sync = await this.resyncCaseAssertions(caseId, slug);
     const resynced = sync.ok ? (sync.updated?.length ?? 0) : 0;
+
+    // Resolve admin OC-level notes for this case (empty when none).
+    const { deriveOcKey, resolveTranslateNote } = await import("../registry/oc-prompt-notes.js");
+    const m = await meta.load(slug).catch(() => null);
+    const oc = deriveOcKey(m?.gameUrl);
+
+    // Revise assertions per the admin assertion-note (AI, persisted) BEFORE we
+    // load the catalog case for translation, so the translator sees the updated
+    // assertions and actions/assertions stay consistent.
+    const revise = await this.reviseCaseAssertions(caseId, slug, oc);
+    const assertionsRevised = revise.ok ? !!revise.changed : false;
+
     const catalog = await loadAiCatalog(slug);
     if (!catalog) return { ok: false, reason: "test-cases.json not found" };
     const tc = catalog.cases.find((c) => c.id === caseId);
@@ -5205,6 +5277,8 @@ CHECK_CODE RULES
     // Use current in-memory registry if active session for THIS slug, else load from disk.
     const reg = (this.gameSlug === slug && this.registry) ? this.registry : await uiRegistry.load(slug);
     if (!reg) return { ok: false, reason: "no registry available" };
+
+    const promptNote = await resolveTranslateNote(oc, tc.category, tc.id);
 
     const translated = await translateCase({
       caseId: tc.id,
@@ -5221,6 +5295,7 @@ CHECK_CODE RULES
       expectedBet: tc.expected_bet,
       spinCount: tc.spin_count,
       customAssertions: tc.custom_assertions,
+      promptNote,
     });
 
     // Persist updated cache — strip aiCalled (in-call signal, not part of cache schema)
@@ -5234,7 +5309,7 @@ CHECK_CODE RULES
     cache.generatedAt = new Date().toISOString();
     await saveActionsCache(slug, cache);
 
-    return { ok: true, actions: translated.actions, skipReason: translated.skipReason, aiCalled, resynced };
+    return { ok: true, actions: translated.actions, skipReason: translated.skipReason, aiCalled, resynced, assertionsRevised };
   }
 
   /**
@@ -5510,10 +5585,20 @@ CHECK_CODE RULES
           return !t || t.actions.length === 0 || t.skipReason;
         });
 
+    // Resolve OC once; admin override notes are looked up per-case below.
+    const { deriveOcKey, resolveTranslateNote } = await import("../registry/oc-prompt-notes.js");
+    const m = await meta.load(slug).catch(() => null);
+    const oc = deriveOcKey(m?.gameUrl);
+
     let succeeded = 0;
     let stillSkipped = 0;
     console.log(`[manual/retranslate-all] ${candidates.length} candidates`);
     for (const c of candidates) {
+      // Revise assertions per the admin note first (persisted); keep the local
+      // copy in sync so the translator sees the updated assertions.
+      const revise = await this.reviseCaseAssertions(c.id, slug, oc);
+      if (revise.assertions) c.custom_assertions = revise.assertions;
+      const promptNote = await resolveTranslateNote(oc, c.category, c.id);
       const translated = await translateCase({
         caseId: c.id,
         caseName: c.name,
@@ -5529,6 +5614,7 @@ CHECK_CODE RULES
         expectedBet: c.expected_bet,
         spinCount: c.spin_count,
         customAssertions: c.custom_assertions,
+        promptNote,
       });
       const { aiCalled: _ac, ...persistable } = translated;
       cache.cases[c.id] = persistable;
@@ -6838,6 +6924,8 @@ export type RegisteredGame = {
   gameName?: string;
   /** Provider label from provider-cache (e.g. "Pragmatic" / "Generic"). */
   provider?: string;
+  /** Operator code (OC) derived from the launch URL. Groups admin prompt notes. */
+  operator?: string;
   createdAt: string;
   lastValidatedAt?: string;
   elementCount: number;
@@ -6978,6 +7066,7 @@ export async function listRegisteredGames(): Promise<RegisteredGame[]> {
       // Friendly name + provider from provider-cache (same source as RUN
       // SUMMARY). Missing cache → leave undefined; dashboard falls back to slug.
       const pc = await providerCache.load(slug).catch(() => null);
+      const { deriveOcKey } = await import("../registry/oc-prompt-notes.js");
       out.push({
         gameSlug: slug,
         gameUrl: m.gameUrl,
@@ -6987,6 +7076,7 @@ export async function listRegisteredGames(): Promise<RegisteredGame[]> {
         clonedFromSlug: m.clonedFromSlug,
         gameName: pc?.gameName,
         provider: pc?.provider,
+        operator: deriveOcKey(m.gameUrl),
         createdAt: m.createdAt,
         lastValidatedAt: m.lastValidatedAt,
         elementCount: Object.keys(reg).length,

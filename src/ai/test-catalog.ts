@@ -290,7 +290,7 @@ function annotateSpecialBetSetupHints(cases: TestCase[], optionsJson: string | n
   });
 }
 
-const ASSERTION_VARS_DOC = `Variables available in check_code expressions:
+export const ASSERTION_VARS_DOC = `Variables available in check_code expressions:
 
 DATA (always bound):
 - spin: current SpinResponse (or null for UI-only cases). Normalized fields ONLY: betAmount, winAmount, endingBalance, startingBalance, status, id, round, currency, isFreeSpin, isEndRound, matrix, state, freeSpinsRemaining.

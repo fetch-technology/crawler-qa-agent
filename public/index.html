@@ -55,6 +55,40 @@
   </div>
   <style>@keyframes la-spin { to { transform: rotate(360deg); } }</style>
 
+  <!-- OC Notes modal: admin translate-prompt overrides shared by all games with this operator code -->
+  <div id="ocModal" style="display:none;position:fixed;inset:0;z-index:10000;background:rgba(8,10,14,0.72);backdrop-filter:blur(3px);align-items:flex-start;justify-content:center;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;overflow:auto;padding:40px 16px;">
+    <div style="background:#12151c;border:1px solid #2a2f3a;border-radius:10px;max-width:820px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,0.5);">
+      <div style="display:flex;align-items:center;gap:10px;padding:16px 20px;border-bottom:1px solid #2a2f3a;">
+        <div style="font-size:15px;font-weight:700;color:#e5e7eb;">OC Notes — <code id="ocModalOc" style="color:#93c5fd;"></code></div>
+        <button id="ocModalClose" style="margin-left:auto;font-size:12px;padding:4px 10px;background:#232833;color:#cbd5e1;border:1px solid #3a4150;border-radius:5px;cursor:pointer;">Close</button>
+      </div>
+      <div style="padding:16px 20px;font-size:12px;color:#9ca3af;line-height:1.5;">
+        Two note channels, both <strong>shared by every game with operator code <code id="ocModalOcInline" style="color:#93c5fd;"></code></strong> and
+        applied the next time a case is <strong>Re-translated</strong>:
+        <span style="color:#93c5fd;">Action</span> notes reshape the generated actions; <span style="color:#f0abfc;">Assertion</span> notes let AI regenerate the custom assertions.
+        Leave blank for default behavior.
+      </div>
+      <div style="padding:0 20px 8px;">
+        <label style="font-size:12px;font-weight:600;color:#cbd5e1;">OC-wide notes (apply to every case)</label>
+        <div style="display:flex;gap:10px;margin-top:6px;">
+          <div style="flex:1;">
+            <div style="font-size:11px;color:#93c5fd;margin-bottom:3px;">Action note</div>
+            <textarea data-oc-all="action" rows="2" style="width:100%;background:#0d1016;color:#e5e7eb;border:1px solid #2a2f3a;border-radius:6px;padding:8px;font-family:ui-monospace,SFMono-Regular,monospace;font-size:12px;resize:vertical;" placeholder="e.g. Never click closeButton; dismiss popups instead."></textarea>
+          </div>
+          <div style="flex:1;">
+            <div style="font-size:11px;color:#f0abfc;margin-bottom:3px;">Assertion note</div>
+            <textarea data-oc-all="assertion" rows="2" style="width:100%;background:#0d1016;color:#e5e7eb;border:1px solid #2a2f3a;border-radius:6px;padding:8px;font-family:ui-monospace,SFMono-Regular,monospace;font-size:12px;resize:vertical;" placeholder="e.g. Always add a UI-bet-matches-API assertion."></textarea>
+          </div>
+        </div>
+      </div>
+      <div id="ocCaseList" style="padding:8px 20px 4px;"></div>
+      <div style="display:flex;gap:10px;padding:16px 20px;border-top:1px solid #2a2f3a;">
+        <button id="ocModalSave" class="primary" style="font-size:13px;padding:7px 16px;">Save notes</button>
+        <span id="ocModalStatus" style="align-self:center;font-size:12px;color:#9ca3af;"></span>
+      </div>
+    </div>
+  </div>
+
   <div class="topbar">
     <h1>QA · Games Overview</h1>
     <span class="topbar-status" id="poolStatus">— sessions</span>
@@ -162,6 +196,7 @@
             baseGameSlug: g.baseGameSlug,
             currency: g.currency,
             language: g.language,
+            operator: g.operator,
             createdAt: g.createdAt,
             live,
             registryCount: live ? Object.keys(live.registry || {}).length : null,
@@ -192,6 +227,7 @@
             if (action === "open") location.href = `/game/${encodeURIComponent(slug)}`;
             else if (action === "resume") resumeGame(slug);
             else if (action === "delete") deleteGame(slug);
+            else if (action === "ocnotes") openOcNotes(slug, el.dataset.oc);
           });
         });
         // Card click = open
@@ -235,6 +271,7 @@
             ${g.live
               ? ``
               : `<button data-action="resume" data-slug="${escapeHtml(g.slug)}">Resume</button>`}
+            <button data-action="ocnotes" data-slug="${escapeHtml(g.slug)}" data-oc="${escapeHtml(g.operator || "")}" title="Edit admin translate-prompt notes shared by all games with this operator code">OC Notes${g.operator ? ` (${escapeHtml(g.operator)})` : ""}</button>
             <button class="danger" data-action="delete" data-slug="${escapeHtml(g.slug)}">Delete</button>
           </div>
         </div>
@@ -353,6 +390,101 @@
     refresh();
     // Auto-refresh every 5s so live sessions tick.
     setInterval(refresh, 5000);
+
+    // ===== OC Notes modal =====
+    // Admin per-operator override notes injected into the AI translate prompt.
+    // Keyed by OC (operator code) + optional category + caseId. Shared by every
+    // game with the same OC. Case list is loaded from the clicked game's catalog.
+    let ocModalOc = "";
+    function closeOcModal() { $("#ocModal").style.display = "none"; }
+    $("#ocModalClose").addEventListener("click", closeOcModal);
+    $("#ocModal").addEventListener("click", (ev) => { if (ev.target === $("#ocModal")) closeOcModal(); });
+
+    async function openOcNotes(slug, oc) {
+      if (!oc) { alert("Could not derive an operator code (OC) for this game — its launch URL has no oc/operator/casino param."); return; }
+      ocModalOc = oc;
+      $("#ocModalOc").textContent = oc;
+      $("#ocModalOcInline").textContent = oc;
+      document.querySelectorAll("[data-oc-all]").forEach((el) => { el.value = ""; });
+      $("#ocCaseList").innerHTML = `<div style="font-size:12px;color:#9ca3af;padding:8px 0;">Loading cases…</div>`;
+      $("#ocModalStatus").textContent = "";
+      $("#ocModal").style.display = "flex";
+      try {
+        const [notesRes, casesRes] = await Promise.all([
+          fetchJson(`/api/qa/manual/oc-notes?oc=${encodeURIComponent(oc)}`),
+          fetchJson(`/api/qa/manual/cases?game=${encodeURIComponent(slug)}`).catch(() => ({ cases: [] })),
+        ]);
+        const notes = notesRes.notes || {};
+        const action = notes.action || {};
+        const assertion = notes.assertion || {};
+        document.querySelector('[data-oc-all="action"]').value = action.all || "";
+        document.querySelector('[data-oc-all="assertion"]').value = assertion.all || "";
+        const cases = casesRes.cases || [];
+        // Group cases by category.
+        const groups = {};
+        for (const c of cases) {
+          const cat = c.category || "other";
+          (groups[cat] = groups[cat] || []).push(c);
+        }
+        const cats = Object.keys(groups).sort();
+        if (cats.length === 0) {
+          $("#ocCaseList").innerHTML = `<div style="font-size:12px;color:#9ca3af;padding:8px 0;">No cases found for this game (generate/translate its catalog first). You can still set the OC-wide notes above.</div>`;
+          return;
+        }
+        // Render an Action + Assertion textarea pair, tagged with the channel.
+        const pair = (channelAttr, key, aVal, sVal, phA, phS) => `
+          <div style="display:flex;gap:8px;margin-top:3px;">
+            <textarea ${channelAttr}="action" data-key="${escapeHtml(key)}" rows="1" style="flex:1;background:#0d1016;color:#e5e7eb;border:1px solid #22303f;border-radius:6px;padding:6px;font-family:ui-monospace,monospace;font-size:11px;resize:vertical;" placeholder="${phA}">${escapeHtml(aVal)}</textarea>
+            <textarea ${channelAttr}="assertion" data-key="${escapeHtml(key)}" rows="1" style="flex:1;background:#0d1016;color:#e5e7eb;border:1px solid #3a2540;border-radius:6px;padding:6px;font-family:ui-monospace,monospace;font-size:11px;resize:vertical;" placeholder="${phS}">${escapeHtml(sVal)}</textarea>
+          </div>`;
+        $("#ocCaseList").innerHTML = cats.map((cat) => {
+          const rows = groups[cat].map((c) => `
+              <div style="margin:8px 0 0 10px;">
+                <label style="font-size:11px;color:#cbd5e1;font-family:ui-monospace,monospace;">${escapeHtml(c.id)}</label>
+                ${pair("data-oc-case", c.id, (action.byCase || {})[c.id] || "", (assertion.byCase || {})[c.id] || "", "action note…", "assertion note…")}
+              </div>`).join("");
+          return `
+            <div style="margin-top:14px;border-top:1px solid #20242e;padding-top:10px;">
+              <div style="font-size:13px;font-weight:700;color:#e5e7eb;">${escapeHtml(cat)}</div>
+              <label style="font-size:11px;color:#9ca3af;">category-wide notes (<span style="color:#93c5fd;">action</span> / <span style="color:#f0abfc;">assertion</span>)</label>
+              ${pair("data-oc-category", cat, (action.byCategory || {})[cat] || "", (assertion.byCategory || {})[cat] || "", `all ${escapeHtml(cat)} actions…`, `all ${escapeHtml(cat)} assertions…`)}
+              ${rows}
+            </div>`;
+        }).join("");
+      } catch (err) {
+        $("#ocCaseList").innerHTML = `<div style="font-size:12px;color:var(--err);padding:8px 0;">Failed to load: ${escapeHtml(err.message)}</div>`;
+      }
+    }
+
+    $("#ocModalSave").addEventListener("click", async () => {
+      // Build one {all,byCategory,byCase} object per channel from tagged fields.
+      const mk = () => ({ byCategory: {}, byCase: {} });
+      const action = mk(), assertion = mk();
+      const chan = (name) => (name === "assertion" ? assertion : action);
+      document.querySelectorAll('[data-oc-all]').forEach((el) => {
+        const v = el.value.trim();
+        if (v) chan(el.dataset.ocAll).all = v;
+      });
+      document.querySelectorAll('[data-oc-category]').forEach((el) => {
+        const v = el.value.trim();
+        if (v) chan(el.dataset.ocCategory).byCategory[el.dataset.key] = v;
+      });
+      document.querySelectorAll('[data-oc-case]').forEach((el) => {
+        const v = el.value.trim();
+        if (v) chan(el.dataset.ocCase).byCase[el.dataset.key] = v;
+      });
+      $("#ocModalStatus").textContent = "Saving…";
+      try {
+        await fetchJson("/api/qa/manual/oc-notes", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ oc: ocModalOc, action, assertion }),
+        });
+        $("#ocModalStatus").textContent = "Saved ✓ — Re-translate affected cases to apply (actions + assertions).";
+      } catch (err) {
+        $("#ocModalStatus").textContent = "Save failed: " + err.message;
+      }
+    });
   </script>
   <script src="/auth-widget.js"></script>
 </body>

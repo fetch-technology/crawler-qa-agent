@@ -103,9 +103,16 @@ export async function phaseTranslateCases(args: {
     betMax: ladder.length > 0 ? ladder[ladder.length - 1] : undefined,
   };
 
+  // Operator code drives admin per-OC override notes injected into the
+  // translate prompt. Derived from the game's launch URL (persisted in _meta).
+  const { meta } = await import("../registry/meta.js");
+  const { deriveOcKey } = await import("../registry/oc-prompt-notes.js");
+  const gameMeta = await meta.load(slug).catch(() => null);
+  const oc = deriveOcKey(gameMeta?.gameUrl);
+
   try {
     const before = (await loadAiCatalog(slug))?.cases.length ?? 0;
-    const result = await translateAllCases(slug, catalog.cases, uiMap, specForTranslate);
+    const result = await translateAllCases(slug, catalog.cases, uiMap, specForTranslate, oc);
     const total = Object.keys(result.cases).length;
     // newCount derived approximately — translateAllCases skips already-cached
     // cases. The function itself logs new vs cached; here we just report total.

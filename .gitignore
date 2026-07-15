@@ -68,6 +68,12 @@ fixtures/debug/
 # onboards its own games.
 fixtures/registry/
 
+# ===== Admin OC-level prompt notes (LOCAL-ONLY — not versioned) =====
+# Per-operator translate/assertion override notes authored via the dashboard.
+# Machine-local admin state — committing would leak local experiments into
+# dev/staging and cause inconsistent re-translations across environments.
+fixtures/oc-notes/
+
 # Pregame stats (append-only log, regenerates)
 fixtures/pre-game/_stats.jsonl
 

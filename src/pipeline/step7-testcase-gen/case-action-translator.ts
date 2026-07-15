@@ -324,6 +324,9 @@ function buildPrompt(input: {
   expectedBet?: number | null;
   spinCount?: number;
   customAssertions?: Array<{ id?: string; check_code?: string }>;
+  /** Admin-authored override guidance resolved per-OC (see oc-prompt-notes.ts).
+   *  Appended verbatim so the translator can drop/reorder/add specific actions. */
+  promptNote?: string;
 }): string {
   const hierarchy = formatRegistryHierarchy(input.uiMap, { includeRejected: false });
   const specLines: string[] = [];
@@ -361,6 +364,10 @@ function buildPrompt(input: {
   const spinCountLine = input.spinCount && input.spinCount > 1
     ? `\nSPIN COUNT REQUIREMENT: This case requires ${input.spinCount} spins. Emit ${input.spinCount} repeated {"kind":"spin"} actions (each followed by {"kind":"wait_ms","ms":5000} except the last), OR use autoplay UI to start a batch of ${input.spinCount} spins.`
     : "";
+  const promptNoteBlock = input.promptNote && input.promptNote.trim().length > 0
+    ? "\nADMIN OVERRIDE NOTES (MUST follow exactly — these take priority over your default reasoning; e.g. remove/reorder/add specific actions as instructed):\n"
+      + input.promptNote.trim()
+    : "";
   return [
     `Case: ${input.caseId}`,
     `Name: ${input.caseName}`,
@@ -379,6 +386,7 @@ function buildPrompt(input: {
     assertionsBlock,
     pinnedBetLine,
     expectedBetLine,
+    promptNoteBlock,
     "",
     "Output the actions JSON.",
   ].join("\n");
@@ -469,6 +477,9 @@ export async function translateCase(input: {
    *  doesn't emit a contaminating final spin. Passed both to the AI prompt
    *  (via SPIN POLICY) AND to the post-process safety net below. */
   customAssertions?: Array<{ id?: string; check_code?: string }>;
+  /** Admin OC-level override note, appended to the translate prompt. Only
+   *  affects the AI path (empty-setup short-circuit does not call AI). */
+  promptNote?: string;
 }): Promise<TranslatedCase & { aiCalled: boolean }> {
   // Resolve spin policy ONCE for use by both empty-setup short-circuit AND
   // the post-process safety net after AI returns.
@@ -932,6 +943,8 @@ export async function translateAllCases(
   }>,
   uiMap: UiRegistry,
   gameSpec?: GameSpec,
+  /** Operator code for this game — resolves admin override notes per case. */
+  oc?: string | null,
 ): Promise<CaseActionsCache> {
   const existing = (await loadCache(slug)) ?? {
     schemaVersion: 1 as const,
@@ -939,9 +952,12 @@ export async function translateAllCases(
     cases: {},
   };
 
+  const { resolveTranslateNote } = await import("../registry/oc-prompt-notes.js");
+
   let newCount = 0;
   for (const c of cases) {
     if (existing.cases[c.id]) continue;
+    const promptNote = await resolveTranslateNote(oc, c.category, c.id);
     const translated = await translateCase({
       caseId: c.id,
       caseName: c.name,
@@ -952,6 +968,7 @@ export async function translateAllCases(
       expectedBet: c.expected_bet,
       spinCount: c.spin_count,
       customAssertions: c.custom_assertions,
+      promptNote,
     });
     existing.cases[c.id] = translated;
     newCount++;

@@ -178,6 +178,27 @@ export async function handleManualRoute(
       return sendJson(res, 200, { games }), true;
     }
 
+    // GET /api/qa/manual/oc-notes?oc=<oc> — admin prompt-note overrides for an OC
+    if (url.startsWith("/api/qa/manual/oc-notes") && method === "GET") {
+      const ocMatch = url.match(/[?&]oc=([^&]+)/);
+      const oc = ocMatch ? decodeURIComponent(ocMatch[1]!) : "";
+      if (!oc) return sendJson(res, 400, { ok: false, error: "oc query param required" }), true;
+      const { loadOcNotes } = await import("../registry/oc-prompt-notes.js");
+      const notes = (await loadOcNotes(oc)) ?? { schemaVersion: 1, oc };
+      return sendJson(res, 200, { ok: true, notes }), true;
+    }
+
+    // POST /api/qa/manual/oc-notes { oc, action?: {all?,byCategory?,byCase?}, assertion?: {...} }
+    if (url === "/api/qa/manual/oc-notes" && method === "POST") {
+      type Levels = { all?: string; byCategory?: Record<string, string>; byCase?: Record<string, string> };
+      const body = await asJsonBody<{ oc?: string; action?: Levels; assertion?: Levels }>(req);
+      if (!body.oc) return sendJson(res, 400, { ok: false, error: "oc required" }), true;
+      const { saveOcNotes, loadOcNotes } = await import("../registry/oc-prompt-notes.js");
+      await saveOcNotes(body.oc, { action: body.action, assertion: body.assertion });
+      const notes = await loadOcNotes(body.oc);
+      return sendJson(res, 200, { ok: true, notes }), true;
+    }
+
     // POST /api/qa/manual/learn-provider { gameSlug } — AI-derive + arithmetic-
     // verify a ProviderSpec from the unknown-provider samples a failed case
     // captured. On success, pins the game to a LearnedSpecParser so subsequent
