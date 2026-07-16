@@ -115,6 +115,71 @@ async function findCloneSourceSlug(args: {
   return candidates[0]?.slug ?? null;
 }
 
+/**
+ * Top-level entries in a game-registry dir that are SAFE to clone into a new
+ * record of the SAME base game but a DIFFERENT currency. These hold structural
+ * / UI / provider knowledge that does NOT depend on the currency: button
+ * coordinates, OCR regions, provider parser, feature flags, paytable
+ * multipliers, discovery screenshots.
+ *
+ * Anything NOT listed here is a session/currency-dependent artifact and is
+ * deliberately left out — most importantly `test-cases.json` (catalog whose
+ * assertion descriptions bake the SOURCE currency's default bet + symbol, e.g.
+ * "betAmount equals default R$120.00") and `test-cases.actions.json`
+ * (translated actions baking `set_bet_to_value: 120`). Cloning those across
+ * currencies leaked BRL values into COP records (and made generate-catalog skip
+ * with "existing cases reused", so the wrong catalog stuck). Omitted files fail
+ * SAFE: the target regenerates them from ITS OWN captured game-spec.
+ *
+ * Explicit literal (not derived from REGISTRY_FILES) so a newly added registry
+ * file is NOT seeded until someone consciously vets it as currency-independent.
+ */
+const CURRENCY_INDEPENDENT_SEED_ENTRIES = new Set<string>([
+  // UI / interaction structure (button coords, regions, timings)
+  "ui-registry.json",
+  "ocr-regions.json",
+  "bet-controls.json",
+  "popup-keywords.json",
+  "popup-regions.json",
+  "sub-state-hints.json",
+  "expected-ui-elements.json",
+  "state-signatures.json",
+  "ui-graph.json",
+  "timing-config.json",
+  "qa-main-skip.json",
+  "field-mapping.json",
+  "game-mechanics.json",
+  // Provider / parsing knowledge
+  "provider-cache.json",
+  "api-mapping.json",
+  "parser.json",
+  "parser-overlay.json",
+  "learned-provider-spec.json",
+  "feature-registry.json",
+  // Payout knowledge (symbols / multipliers — currency-independent ratios)
+  "paytable.json",
+  "payout-model.json",
+  // Discovery docs + screenshots
+  "auxiliary-sources",
+  "baselines",
+  "sub-screens",
+  "graph",
+]);
+
+/**
+ * cp() filter: allow the source dir root plus any entry whose TOP-LEVEL name is
+ * currency-independent (see set above). Rejecting a directory skips its whole
+ * subtree, so listing a dir name once covers everything under it.
+ */
+function seedCloneFilter(sourceDir: string): (src: string) => boolean {
+  return (src: string): boolean => {
+    const rel = path.relative(sourceDir, src);
+    if (rel === "" || rel === ".") return true; // the source dir itself
+    const top = rel.split(path.sep)[0]!;
+    return CURRENCY_INDEPENDENT_SEED_ENTRIES.has(top);
+  };
+}
+
 async function cloneRegistrySeedIfNeeded(args: {
   targetSlug: string;
   baseGameSlug: string;
@@ -130,12 +195,14 @@ async function cloneRegistrySeedIfNeeded(args: {
   });
   if (!sourceSlug) return null;
 
+  const seedFilter = seedCloneFilter(dirForGame(sourceSlug));
   const targetHasRegistry = !!existing && Object.keys(existing).length > 0;
   if (targetHasRegistry) {
     await cp(dirForGame(sourceSlug), dirForGame(args.targetSlug), {
       recursive: true,
       force: false,
       errorOnExist: false,
+      filter: seedFilter,
     });
     const sourceRegistry = await uiRegistry.load(sourceSlug).catch(() => null);
     if (sourceRegistry) {
@@ -156,6 +223,7 @@ async function cloneRegistrySeedIfNeeded(args: {
     await cp(dirForGame(sourceSlug), dirForGame(args.targetSlug), {
       recursive: true,
       force: true,
+      filter: seedFilter,
     });
   }
   const sourceMeta = await meta.load(sourceSlug).catch(() => null);
