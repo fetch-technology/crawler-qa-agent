@@ -500,13 +500,18 @@ export async function handleManualRoute(
     }
 
     // POST /api/qa/manual/retranslate-all { gameSlug?, mode?: "skipped" | "all" }
+    // Kicks the batch off in the BACKGROUND and returns 202 immediately — the
+    // job does N sequential AI calls (minutes for mode=all on a big catalog),
+    // far past the proxy's ~60s cut. The client polls /status
+    // (retranslateAllInProgress → retranslateAllLastFinishedAt + LastResult) for
+    // completion. 409 when a batch is already running on this session.
     if (url === "/api/qa/manual/retranslate-all" && method === "POST") {
       const body = await asJsonBody<{ gameSlug?: string; mode?: "skipped" | "all" }>(req);
-      const r = await resolveSession(req, body as any, url).retranslateAllSkipped({
+      const r = resolveSession(req, body as any, url).startRetranslateAll({
         slugOverride: body.gameSlug,
         mode: body.mode,
       });
-      return sendJson(res, r.ok ? 200 : 400, r), true;
+      return sendJson(res, r.ok ? 202 : 409, r), true;
     }
 
     // POST /api/qa/manual/case { case, gameSlug? }

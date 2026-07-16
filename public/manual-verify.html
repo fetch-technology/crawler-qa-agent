@@ -3063,6 +3063,11 @@
 
     window.doLoadCases = (gameSlug) => loadCasesForSlug(gameSlug);
 
+    // Batch re-translate — the server runs it in the BACKGROUND (N sequential AI
+    // calls, minutes for mode=all), returning 202 immediately. Poll /status for
+    // completion (retranslateAllInProgress → retranslateAllLastFinishedAt +
+    // LastResult), mirroring doGenerateCases. This is what stopped the endpoint
+    // from hanging until the proxy 504'd.
     async function doBatchRetranslate(mode) {
       const slug = window.__lastCasesSlug;
       if (!slug) return toast("Load cases first", true);
@@ -3070,18 +3075,46 @@
       const candidates = mode === "all" ? cases.length : cases.filter((c) => c.actionCount === 0).length;
       if (candidates === 0) return toast(`No ${mode} cases to retry`);
       const cost = (candidates * 0.02).toFixed(2);
-      toast(`Re-translating ${candidates} cases (${mode}) via AI (~${(candidates * 5).toFixed(0)}s, ~$${cost})…`);
+      const startIso = new Date().toISOString();
+      const startMs = Date.now();
+      toast(`Re-translating ${candidates} cases (${mode}) via AI in the background (~${(candidates * 5).toFixed(0)}s, ~$${cost})…`);
+
+      // Kick off. 202 = started; a 409 (batch already running) throws but we
+      // just fall through to polling the run that's already in progress.
       try {
-        const r = await api("/api/qa/manual/retranslate-all", {
-          method: "POST", body: { gameSlug: slug, mode },
-        });
-        if (r.ok) {
-          toast(`Batch done: ${r.succeeded}/${r.total} succeeded, ${r.stillSkipped} still skipped`);
-          await loadCasesForSlug(slug);
-        } else {
-          toast(`Batch failed: ${r.reason}`, true);
+        await api("/api/qa/manual/retranslate-all", { method: "POST", body: { gameSlug: slug, mode } });
+      } catch (err) {
+        appendLog(`[retranslate-all] start returned "${err.message}" — polling /status anyway`);
+      }
+
+      // Poll until the background batch finishes on the server.
+      const POLL_MS = 3000;
+      const MAX_POLL_MS = 30 * 60 * 1000; // 30 min cap
+      const pollDeadline = Date.now() + MAX_POLL_MS;
+      let lastLogMs = 0;
+      let result = null;
+      while (Date.now() < pollDeadline) {
+        await new Promise((r) => setTimeout(r, POLL_MS));
+        let status = null;
+        try { status = await api("/api/qa/manual/status"); } catch { continue; }
+        if (!status) continue;
+        const finished = !status.retranslateAllInProgress
+          && status.retranslateAllLastFinishedAt
+          && status.retranslateAllLastFinishedAt > startIso;
+        if (finished) { result = status.retranslateAllLastResult; break; }
+        if (Date.now() - lastLogMs > 30000) {
+          const elapsedS = ((Date.now() - startMs) / 1000).toFixed(0);
+          appendLog(`[retranslate-all] ${slug} polling… ${elapsedS}s elapsed${status.retranslateAllInProgress ? " (server still running)" : ""}`);
+          lastLogMs = Date.now();
         }
-      } catch (err) { toast(err.message, true); }
+      }
+      if (!result) { toast(`Batch re-translate: polling timed out after 30 min`, true); return; }
+      if (result.ok) {
+        toast(`Batch done: ${result.succeeded}/${result.total} succeeded, ${result.stillSkipped} still skipped`);
+        await loadCasesForSlug(slug);
+      } else {
+        toast(`Batch failed: ${result.reason ?? "unknown error"}`, true);
+      }
     }
     $("#btnRetranslateAll").onclick = () => doBatchRetranslate("skipped");
     $("#btnRetranslateAllForce").onclick = () => doBatchRetranslate("all");

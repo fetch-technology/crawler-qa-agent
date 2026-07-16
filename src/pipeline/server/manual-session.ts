@@ -332,6 +332,16 @@ export type SessionStatus = {
   generateCatalogInProgress: boolean;
   generateCatalogStartedAt: string | null;
   generateCatalogLastFinishedAt: string | null;
+  /** Batch re-translate endpoint state — retranslate-all does N sequential AI
+   *  calls (one per case), routinely minutes long → far past the proxy timeout.
+   *  It now runs in the BACKGROUND; the client polls these to detect completion
+   *  and read the summary (mirrors the generate-catalog pattern). */
+  retranslateAllInProgress: boolean;
+  retranslateAllStartedAt: string | null;
+  retranslateAllLastFinishedAt: string | null;
+  /** Summary of the last finished background retranslate-all run (null until
+   *  one completes). Client reads this once retranslateAllInProgress clears. */
+  retranslateAllLastResult: { ok: boolean; total?: number; succeeded?: number; stillSkipped?: number; reason?: string } | null;
   /** Shared Run-All progress (server-side), visible across devices polling
    *  /status for the same game session. */
   runAllInProgress: boolean;
@@ -694,6 +704,11 @@ export class ManualSessionManager {
   private generateCatalogInProgress = false;
   private generateCatalogStartedAt: string | null = null;
   private generateCatalogLastFinishedAt: string | null = null;
+  /** Background batch-retranslate state (see SessionStatus docs). */
+  private retranslateAllInProgress = false;
+  private retranslateAllStartedAt: string | null = null;
+  private retranslateAllLastFinishedAt: string | null = null;
+  private retranslateAllLastResult: SessionStatus["retranslateAllLastResult"] = null;
   /** Shared server-side progress for /run-all-testcases. */
   private runAllInProgress = false;
   private runAllProgress: SessionStatus["runAllProgress"] = {
@@ -891,12 +906,14 @@ export class ManualSessionManager {
   }
 
   /** True when this session is running an automated batch (onboard / run-all /
-   *  preview / generate-catalog / start). Such a session is NEVER reaped. */
+   *  preview / generate-catalog / retranslate-all / start). Such a session is
+   *  NEVER reaped. */
   hasActiveBatch(): boolean {
     return this.autoOnboardInProgress
       || this.runAllInProgress
       || this.previewCaseInProgress
       || this.generateCatalogInProgress
+      || this.retranslateAllInProgress
       || this.startInProgress;
   }
 
@@ -990,6 +1007,10 @@ export class ManualSessionManager {
       generateCatalogInProgress: this.generateCatalogInProgress,
       generateCatalogStartedAt: this.generateCatalogStartedAt,
       generateCatalogLastFinishedAt: this.generateCatalogLastFinishedAt,
+      retranslateAllInProgress: this.retranslateAllInProgress,
+      retranslateAllStartedAt: this.retranslateAllStartedAt,
+      retranslateAllLastFinishedAt: this.retranslateAllLastFinishedAt,
+      retranslateAllLastResult: this.retranslateAllLastResult ? { ...this.retranslateAllLastResult } : null,
       runAllInProgress: this.runAllInProgress,
       runAllProgress: { ...this.runAllProgress },
       gameSpec: this.gameSpec ? { ...this.gameSpec } : null,
@@ -5661,11 +5682,25 @@ CHECK_CODE RULES
     let succeeded = 0;
     let stillSkipped = 0;
     console.log(`[manual/retranslate-all] ${candidates.length} candidates`);
+
+    // Phase 1 — revise assertions per the admin note. MUST stay sequential:
+    // reviseCaseAssertions loads + saves the WHOLE catalog per case, so running
+    // these concurrently would let the writes clobber each other (lost
+    // revisions). This is a no-op / instant when the OC has no assertion note
+    // (the common case), so it rarely costs an AI call here. Keep each case's
+    // in-memory copy in sync so the translator below sees the updated assertions.
     for (const c of candidates) {
-      // Revise assertions per the admin note first (persisted); keep the local
-      // copy in sync so the translator sees the updated assertions.
       const revise = await this.reviseCaseAssertions(c.id, slug, oc);
       if (revise.assertions) c.custom_assertions = revise.assertions;
+    }
+
+    // Phase 2 — translate setup→actions CONCURRENTLY (bounded pool). translateCase
+    // is a pure AI call (no disk writes); each result lands in cache.cases[c.id]
+    // under a distinct key and is persisted once after the pool drains, so this is
+    // race-free. This is the dominant per-case cost and where the ~5× speedup lives.
+    const CONCURRENCY = 5;
+    let nextIdx = 0;
+    const translateOne = async (c: (typeof candidates)[number]): Promise<void> => {
       const promptNote = await resolveTranslateNote(oc, c.category, c.id);
       const translated = await translateCase({
         caseId: c.id,
@@ -5693,10 +5728,59 @@ CHECK_CODE RULES
         succeeded++;
         console.log(`[manual/retranslate-all] ${c.id}${translated.aiCalled ? "" : " (no AI, empty setup)"} → ${translated.actions.length} actions`);
       }
-    }
+    };
+    const worker = async (): Promise<void> => {
+      for (;;) {
+        const i = nextIdx++;
+        if (i >= candidates.length) return;
+        const c = candidates[i]!;
+        try {
+          await translateOne(c);
+        } catch (err) {
+          stillSkipped++;
+          console.warn(`[manual/retranslate-all] ${c.id} translate error (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(CONCURRENCY, candidates.length) }, () => worker()),
+    );
+
     cache.generatedAt = new Date().toISOString();
     await saveActionsCache(slug, cache);
     return { ok: true, total: candidates.length, succeeded, stillSkipped };
+  }
+
+  /**
+   * Background wrapper around retranslateAllSkipped (see SessionStatus docs).
+   * The batch does N AI calls and routinely runs for minutes — far past the
+   * proxy's ~60s cut — so the route must NOT await it. Kick it off, track state
+   * on the session, and return immediately; the client polls /status
+   * (retranslateAllInProgress → retranslateAllLastFinishedAt + LastResult) to
+   * learn the outcome. A mutex (retranslateAllInProgress) blocks stacked runs
+   * that would otherwise pile AI batches on top of each other.
+   */
+  startRetranslateAll(opts: { mode?: "skipped" | "all"; slugOverride?: string } = {}): { ok: boolean; started?: boolean; reason?: string } {
+    if (this.retranslateAllInProgress) {
+      return { ok: false, reason: "another retranslate-all is already running on this session (HTTP 409)" };
+    }
+    const slug = opts.slugOverride ?? this.gameSlug;
+    if (!slug) return { ok: false, reason: "gameSlug required" };
+    this.retranslateAllInProgress = true;
+    this.retranslateAllStartedAt = new Date().toISOString();
+    this.retranslateAllLastResult = null;
+    // Fire-and-forget — Node keeps running this after the HTTP socket closes.
+    void this.retranslateAllSkipped(opts)
+      .then((r) => { this.retranslateAllLastResult = r; })
+      .catch((err) => {
+        this.retranslateAllLastResult = { ok: false, reason: err instanceof Error ? err.message : String(err) };
+        console.warn(`[manual/retranslate-all] background run failed: ${err instanceof Error ? err.message : String(err)}`);
+      })
+      .finally(() => {
+        this.retranslateAllInProgress = false;
+        this.retranslateAllLastFinishedAt = new Date().toISOString();
+      });
+    return { ok: true, started: true };
   }
 
   /**
