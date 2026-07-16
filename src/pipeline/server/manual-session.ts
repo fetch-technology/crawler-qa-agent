@@ -5694,15 +5694,23 @@ CHECK_CODE RULES
       if (revise.assertions) c.custom_assertions = revise.assertions;
     }
 
-    // Phase 2 — translate setup→actions CONCURRENTLY (bounded pool). translateCase
-    // is a pure AI call (no disk writes); each result lands in cache.cases[c.id]
-    // under a distinct key and is persisted once after the pool drains, so this is
-    // race-free. This is the dominant per-case cost and where the ~5× speedup lives.
-    const CONCURRENCY = 5;
+    // Phase 2 — translate setup→actions through a bounded pool. translateCase is
+    // a pure AI call (no disk writes); each result lands in cache.cases[c.id]
+    // under a distinct key and is persisted once after the pool drains, so this
+    // is race-free.
+    //
+    // Concurrency is deliberately LOW: each askClaude spawns a full Claude Code
+    // subprocess and Opus rate limits are tight — running 5 at once produced
+    // intermittent "AI translator failed" (429 / overloaded). Default 2
+    // (override via QA_RETRANSLATE_CONCURRENCY), plus a bounded retry+backoff on
+    // the transient AI-failure class so an occasional 429 doesn't strand a case
+    // at 0 actions.
+    const CONCURRENCY = Math.max(1, Number(process.env.QA_RETRANSLATE_CONCURRENCY ?? "2") || 2);
+    const MAX_ATTEMPTS = 3;
     let nextIdx = 0;
     const translateOne = async (c: (typeof candidates)[number]): Promise<void> => {
       const promptNote = await resolveTranslateNote(oc, c.category, c.id);
-      const translated = await translateCase({
+      const call = () => translateCase({
         caseId: c.id,
         caseName: c.name,
         category: c.category,
@@ -5719,6 +5727,17 @@ CHECK_CODE RULES
         customAssertions: c.custom_assertions,
         promptNote,
       });
+      // translateCase does NOT throw on an AI failure — it returns a skipReason
+      // of "AI translator failed: …". Retry ONLY that transient class
+      // (rate_limit / overloaded / subprocess died) with exponential backoff;
+      // legit skips (empty setup, parse issues) are kept as-is.
+      let translated = await call();
+      for (let attempt = 1; attempt < MAX_ATTEMPTS && translated.skipReason?.startsWith("AI translator failed"); attempt++) {
+        const backoffMs = 1500 * attempt * attempt; // 1.5s, then 6s
+        console.warn(`[manual/retranslate-all] ${c.id} AI failed (attempt ${attempt}/${MAX_ATTEMPTS}) — retrying in ${backoffMs}ms: ${translated.skipReason}`);
+        await new Promise((r) => setTimeout(r, backoffMs));
+        translated = await call();
+      }
       const { aiCalled: _ac, ...persistable } = translated;
       cache.cases[c.id] = persistable;
       if (translated.skipReason || translated.actions.length === 0) {
