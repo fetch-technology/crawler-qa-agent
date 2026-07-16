@@ -561,6 +561,74 @@ export function normalizeVolatileRowKeys<T extends { key: string; x: number; y: 
   return els;
 }
 
+/** Bet spec shape shared by `reconcileBetScale` and the session's in-memory
+ *  `gameSpec` — the fields captured from a Pragmatic do_init response. */
+export type BetScaleSpec = {
+  coinValues: number[];
+  lines: number;
+  defaultCoin: number;
+  betLevels: number[];
+  betMin: number;
+  betMax: number;
+  defaultBet: number;
+  betLadder: number[];
+};
+
+/** Real (currency) bet values must exceed the do_init-derived ladder max by at
+ *  least this factor before we treat the ladder as wrong-unit. Below it the
+ *  do_init ladder is trusted verbatim — protects normal-denomination games
+ *  where the on-screen chips ≈ the ladder (e.g. BRL [4, 8], factor ≈ 1). Ante /
+ *  Double-Chance rungs only inflate by ~1.25–2×, safely under this bar. */
+export const BET_SCALE_MISMATCH_FACTOR = 4;
+
+/** Reconcile a do_init-derived bet spec against the REAL currency bet values
+ *  read off the on-screen bet selector (registry `…__bet-<n>` / `__betAmount-<n>`
+ *  chips).
+ *
+ *  Pragmatic's do_init reports coin values (`sc`) in a BASE unit; for
+ *  high-denomination currencies (e.g. Colombian Peso) the game DISPLAYS and
+ *  BILLS a far larger unit, so `sc × lines` yields a ladder 100s–1000s× smaller
+ *  than the bet the player actually places (captured betMax 250 vs a real
+ *  on-screen 450 000). That wrong ladder then flows verbatim into assertion
+ *  generation ("the largest step is 250, so betMax=250"), contradicting the UI.
+ *
+ *  When the chips prove a large upward scale gap we adopt the chips as the
+ *  ladder — they ARE the real per-currency bet values — and re-anchor
+ *  betMin/betMax/defaultBet to them. Returned unchanged (`rescaled: false`) when
+ *  there is no chip evidence or the scales already agree. Callers apply the QA
+ *  override AFTER this, so a manual betMax always wins. */
+export function reconcileBetScale<T extends BetScaleSpec>(
+  raw: T,
+  chipValues: number[],
+): { spec: T; rescaled: boolean; factor: number } {
+  const ladder = (raw.betLadder ?? []).filter((n) => Number.isFinite(n) && n > 0);
+  const chips = [...new Set(chipValues.filter((n) => Number.isFinite(n) && n > 0))].sort((a, b) => a - b);
+  if (chips.length === 0 || ladder.length === 0) return { spec: raw, rescaled: false, factor: 1 };
+  const ladderMax = Math.max(...ladder);
+  const chipMax = chips[chips.length - 1]!;
+  const factor = chipMax / ladderMax;
+  // Act ONLY on a clear, large UPWARD gap (real bets ≫ do_init ladder). Within
+  // [1, F) the do_init ladder is trusted. We deliberately ignore the downward
+  // direction: a partial OCR read of only the low chips must never shrink an
+  // otherwise-correct ladder.
+  if (!Number.isFinite(factor) || factor < BET_SCALE_MISMATCH_FACTOR) {
+    return { spec: raw, rescaled: false, factor };
+  }
+  const chipMin = chips[0]!;
+  // defaultBet: preserve the "default is the Nth rung" intent by snapping the
+  // scaled do_init default to the nearest real chip.
+  const scaledDefault = raw.defaultBet * factor;
+  const nearestDefault = chips.reduce(
+    (best, v) => (Math.abs(v - scaledDefault) < Math.abs(best - scaledDefault) ? v : best),
+    chips[0]!,
+  );
+  return {
+    spec: { ...raw, betLadder: chips, betMin: chipMin, betMax: chipMax, defaultBet: nearestDefault },
+    rescaled: true,
+    factor,
+  };
+}
+
 function computeSuggestions(registry: UiRegistry | null): SubStateSuggestion[] {
   if (!registry) return [];
   const keys = Object.keys(registry);
@@ -2486,6 +2554,10 @@ export class ManualSessionManager {
       addedKeys.push(key);
     }
     await uiRegistry.save(this.gameSlug, this.registry);
+    // Bet chips just landed in the registry → re-reconcile the effective spec so
+    // its ladder/min/max reflect the real display currency (not the do_init base
+    // unit) before it feeds calibration, the translator, and assertion gen.
+    this.recomputeGameSpec();
     console.log(`[manual/deep-discover] explored ${result.graph.exploration.statesDiscovered} states, ${result.graph.exploration.transitionsRecorded} transitions, ${result.graph.exploration.aiCallsUsed} AI calls, +${addedKeys.length} new elements`);
 
     // Slider-stop synthesis: per-row Discover already does this in
@@ -4965,6 +5037,9 @@ export class ManualSessionManager {
       : (await uiRegistry.load(slug)) ?? {};
     const uiKeys = Object.keys(reg);
     const existingIds = catalog.cases.map((c) => c.id);
+    // Fold any chips discovered since do_init into the effective spec so the
+    // prompt sees real currency bet values, not the do_init base unit.
+    this.recomputeGameSpec();
     const gs = this.gameSpec;
     const specBlock = gs
       ? `betLadder: [${gs.betLadder.join(", ")}]\ndefaultBet: ${gs.defaultBet}\nbetMin: ${gs.betMin}  betMax: ${gs.betMax}`
@@ -5308,6 +5383,9 @@ CHECK_CODE RULES
     const note = await resolveAssertionNote(oc, tc.category, tc.id);
     if (!note) return { ok: true, changed: false, aiCalled: false, assertions: currentAssertions };
 
+    // Fold any chips discovered since do_init into the effective spec so the
+    // re-translated assertions cite real currency bet values, not the base unit.
+    this.recomputeGameSpec();
     const gs = this.gameSpec;
     const gameSpecBlock = gs
       ? `betLadder: [${gs.betLadder.join(", ")}]\ndefaultBet: ${gs.defaultBet}  betMin: ${gs.betMin}  betMax: ${gs.betMax}`
@@ -6870,6 +6948,39 @@ CHECK_CODE RULES
     console.log(`[manual/game-mechanics] derived for ${this.gameSlug}: mechanic=${derived.mechanic} betMultiplier=${derived.betMultiplier} (l=${derived.waysOrLines}, c=${derived.evidence?.coin}, deducted=${derived.evidence?.deductedFromBalance})`);
   }
 
+  /** Real per-currency bet values read off the bet selector during discovery
+   *  (`<trigger>__bet-<n>` / `__betAmount-<n>` registry keys). These are the
+   *  values the player actually sees and bets, so they anchor the true currency
+   *  scale for `reconcileBetScale`. Mirrors the chip regex used by payout
+   *  calibration (see calibratePayoutModel). */
+  private chipBetValues(reg: UiRegistry | null): number[] {
+    if (!reg) return [];
+    return Object.keys(reg)
+      .map((k) => /__bet(?:Amount)?-(\d+(?:\.\d+)?)$/.exec(k)?.[1])
+      .filter((v): v is string => v != null)
+      .map(Number)
+      .filter((n) => Number.isFinite(n) && n > 0);
+  }
+
+  /** Recompute the effective `this.gameSpec` from the last raw do_init capture:
+   *  (1) reconcile the do_init bet ladder against the real currency chips (fixes
+   *  the base-unit-vs-display-currency scale bug that made assertions read
+   *  betMax=250 for a game whose real max bet is 450 000), then (2) layer the QA
+   *  override on top so manual edits still win. Pure + idempotent — safe to call
+   *  whenever raw or the registry chips change. */
+  private recomputeGameSpec(): void {
+    if (!this.gameSpecRaw) return;
+    const { spec, rescaled, factor } = reconcileBetScale(this.gameSpecRaw, this.chipBetValues(this.registry));
+    if (rescaled) {
+      console.warn(
+        `[manual/spec] ${this.gameSlug}: bet-scale mismatch — do_init ladder max=${this.gameSpecRaw.betMax} but on-screen bet chips reach ${spec.betMax} (×${factor.toFixed(0)}). ` +
+          `Using real currency chips for ladder/min/max/default (betMin=${spec.betMin} betMax=${spec.betMax} default=${spec.defaultBet}); base coin/line params kept for structure. ` +
+          `Override via game-spec-override.json if the chip read is wrong.`,
+      );
+    }
+    this.gameSpec = applyOverride(spec, this.gameSpecOverrideCached);
+  }
+
   private tryCaptureGameSpec(body: string): void {
     const scMatch = body.match(/(?:^|&)sc=([\d.,]+)/);
     const lMatch = body.match(/(?:^|&)l=(\d+)/);
@@ -6953,13 +7064,15 @@ CHECK_CODE RULES
       betLadder,
     };
     this.gameSpecRaw = raw;
-    // Apply QA override on top — override fields win, others fall through.
-    this.gameSpec = applyOverride(raw, this.gameSpecOverrideCached);
+    // Reconcile the do_init ladder against real currency chips, then apply the
+    // QA override on top — override fields win, others fall through.
+    this.recomputeGameSpec();
+    const gs = this.gameSpec;
     if (this.gameSpecOverrideCached) {
       const overrideKeys = Object.keys(this.gameSpecOverrideCached).filter((k) => k !== "note" && k !== "updatedAt");
       console.log(`[manual/spec] captured + override applied — overridden fields: [${overrideKeys.join(", ")}]`);
     }
-    console.log(`[manual/spec] captured: ladder=${this.gameSpec.betLadder.slice(0, 5).join(",")}…(${this.gameSpec.betLadder.length}) default=${this.gameSpec.defaultBet} (coin=${defaultCoin}×lines=${lines}×bl=${defaultBetLevel}) min=${this.gameSpec.betMin} max=${this.gameSpec.betMax}`);
+    console.log(`[manual/spec] captured: ladder=${gs?.betLadder.slice(0, 5).join(",")}…(${gs?.betLadder.length}) default=${gs?.defaultBet} (coin=${defaultCoin}×lines=${lines}×bl=${defaultBetLevel}) min=${gs?.betMin} max=${gs?.betMax}`);
   }
 
   /** Update the QA override file + recompute `this.gameSpec` so subsequent
@@ -6986,10 +7099,8 @@ CHECK_CODE RULES
         this.gameSpecOverrideCached = merged;
         await gameSpecOverride.save(this.gameSlug, merged);
       }
-      // Recompute effective spec if raw is available.
-      if (this.gameSpecRaw) {
-        this.gameSpec = applyOverride(this.gameSpecRaw, this.gameSpecOverrideCached);
-      }
+      // Recompute effective spec if raw is available (reconcile + override).
+      this.recomputeGameSpec();
       console.log(`[manual/spec] override updated → effective: min=${this.gameSpec?.betMin} max=${this.gameSpec?.betMax} default=${this.gameSpec?.defaultBet}`);
       return { ok: true, effective: this.gameSpec };
     } catch (err) {
