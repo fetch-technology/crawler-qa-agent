@@ -2732,6 +2732,36 @@ export async function executeCase(
     }
   }
 
+  // Fold the history reconciliation INTO the verdict for history-category cases.
+  // verifyHistory runs AFTER the assertion/signal verdict and was previously
+  // attached as evidence only — so a history case could show PASS even when the
+  // popup never rendered (0 rows → "indeterminate") or the OCR'd rows didn't
+  // reconcile against the captured spins. The AI drill-down assertions can't see
+  // this (their sandbox has no history vocab), so nothing caught it. Gate here:
+  //   - popup rendered + real (non-extra) mismatch      → FAIL (data disagrees)
+  //   - popup didn't open / 0 rows transcribed          → INCONCLUSIVE (unverified)
+  // Only DOWNGRADE a pass — never turn an existing fail green.
+  let historyOutcomeOverride: import("./evidence/index.js").Outcome | null = null;
+  if (/history/i.test(input.category) && historyVerification && caseStatus === "pass") {
+    const hv = historyVerification;
+    const indeterminate = !hv.opened || hv.rowsCount === 0;
+    const realMismatch = !indeterminate && !hv.ok; // ok=false ⇔ ≥1 non-extra mismatch
+    if (realMismatch) {
+      caseStatus = "fail";
+      caseStatusReason = caseStatusReason
+        ?? `history reconciliation failed: ${hv.mismatches.filter((m) => m.kind !== "extra").length} mismatch(es) between the in-game history popup and captured spins (matched ${hv.matchedCount}/${hv.spinsCount})`;
+      historyOutcomeOverride = "FAIL_LOW"; // OCR-based → low confidence, retryable
+      console.log(`[case-exec/history] verdict → FAIL: ${caseStatusReason}`);
+    } else if (indeterminate) {
+      caseStatus = "inconclusive";
+      caseStatusReason = caseStatusReason
+        ?? `history popup could not be reconciled (${hv.reason ?? "0 rows transcribed"}) — captured spins were NOT verified against the in-game history; re-run`;
+      warnings.push(`INCONCLUSIVE: history popup indeterminate — ${hv.reason ?? "0 rows transcribed"}`);
+      historyOutcomeOverride = "INCONCLUSIVE";
+      console.log(`[case-exec/history] verdict → INCONCLUSIVE: ${caseStatusReason}`);
+    }
+  }
+
   if (ctx.gameSlug) {
     try {
       const { appendHistory, loadHistory, maybePromoteToFlaky } = await import("./history/index.js");
@@ -2754,6 +2784,11 @@ export async function executeCase(
       console.warn(`[case-history] append failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
     }
   }
+
+  // History gate (see above) wins over the per-assertion / FLAKY outcome the
+  // block just recomputed — the displayed caseStatus was already downgraded;
+  // keep the rich `outcome` consistent with it.
+  if (historyOutcomeOverride) finalOutcome = historyOutcomeOverride;
 
   // Stop video recording before assembling the final result so `videoPath`
   // is set when ffmpeg compose succeeded.

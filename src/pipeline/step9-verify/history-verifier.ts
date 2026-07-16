@@ -13,7 +13,7 @@ import {
   transcribeHistoryRowDetail,
   type TranscribedHistoryRow,
 } from "../../ai/vision.js";
-import { snapshot, waitUntilStable, decodePng, pixelDiff } from "../utils/pixel-diff/index.js";
+import { waitUntilStable, decodePng, pixelDiff } from "../utils/pixel-diff/index.js";
 import type { NormalizedSpinResult } from "../step6-build-model/normalized.js";
 import type { UiElement, UiRegistry } from "../registry/types.js";
 import { dirForGame } from "../registry/paths.js";
@@ -251,62 +251,44 @@ export async function verifyHistory(
     return p;
   };
 
-  const firstScreenshot = await pageScreenshot(0);
-  screenshotPaths.push(firstScreenshot);
-  const screenshotPath = firstScreenshot;
+  // History rows often render ASYNC — most acutely when History opened in a
+  // NEW TAB (Pragmatic & co. window.open a fresh client that fetches rows over
+  // the gameService API AFTER the page load). The tab paints a blank/background
+  // frame first, and waitUntilStable() happily treats that still-blank frame as
+  // "stable" → we'd screenshot it, OCR 0 rows, and report a false
+  // "indeterminate". Poll instead: re-settle + re-screenshot + re-OCR page 1
+  // until rows actually appear or a deadline passes. Readiness is tied to REAL
+  // transcribed rows, not to pixel-stability of a not-yet-drawn page. The extra
+  // latency is paid only on the slow path (blank tab); a popup that rendered on
+  // first paint returns on attempt 1.
+  const contentDeadlineMs = Date.now() + (openedInNewTab ? 12000 : 6000);
+  let screenshotPath = await pageScreenshot(0);
+  screenshotPaths.push(screenshotPath);
+  let rows: TranscribedHistoryRow[] = [];
+  let pagesScanned = 1;
+  let ocrThrew: unknown = null;
+  for (;;) {
+    try {
+      rows = await transcribeHistoryRows({ screenshotPath });
+      ocrThrew = null;
+    } catch (err) {
+      ocrThrew = err;
+      rows = [];
+    }
+    if (rows.length > 0 || Date.now() >= contentDeadlineMs) break;
+    // Still blank — give the tab more time to fetch + paint, then re-capture.
+    await inspectPage.waitForTimeout(1000);
+    await waitUntilStable(inspectPage, {
+      maxIterations: 4,
+      changeThreshold: 0.005,
+      consecutiveStable: 2,
+    }).catch(() => false);
+    screenshotPath = await pageScreenshot(0); // overwrite page-1 evidence (same path) with the freshest frame
+  }
   const screenshotRel = path.relative(process.cwd(), screenshotPath);
 
-  // Verify popup actually opened (sanity).
-  const after = await snapshot(inspectPage);
-  void after;
-
-  // OCR rows (aggregating across pages when pagination enabled).
-  let rows: TranscribedHistoryRow[];
-  let pagesScanned = 1;
-  try {
-    rows = await transcribeHistoryRows({ screenshotPath });
-    if (maxPages > 1) {
-      const viewport = inspectPage.viewportSize();
-      // Scroll the popup region (approx center of viewport) and OCR each
-      // additional page. Dedupe rows by round_id when present; otherwise by
-      // raw_text exact match. Stop early if a page returns no new rows.
-      const seenRoundIds = new Set<string>(
-        rows.map((r) => r.round_id).filter((id): id is string => id != null),
-      );
-      const seenRawText = new Set<string>(rows.map((r) => r.raw_text));
-      for (let p = 1; p < maxPages; p++) {
-        try {
-          const cx = (viewport?.width ?? 1280) / 2;
-          const cy = (viewport?.height ?? 720) / 2;
-          await inspectPage.mouse.move(cx, cy);
-          await inspectPage.mouse.wheel(0, (viewport?.height ?? 720) * 0.6);
-          await waitUntilStable(inspectPage, {
-            maxIterations: 6,
-            changeThreshold: 0.005,
-            consecutiveStable: 2,
-          });
-          const pPath = await pageScreenshot(p);
-          screenshotPaths.push(pPath);
-          const pageRows = await transcribeHistoryRows({ screenshotPath: pPath });
-          let added = 0;
-          for (const r of pageRows) {
-            const id = r.round_id;
-            if (id != null && seenRoundIds.has(id)) continue;
-            if (id == null && seenRawText.has(r.raw_text)) continue;
-            if (id != null) seenRoundIds.add(id);
-            seenRawText.add(r.raw_text);
-            rows.push(r);
-            added++;
-          }
-          pagesScanned = p + 1;
-          if (added === 0) break; // pagination reached end / no scroll movement
-        } catch (err) {
-          console.warn(`[history] pagination page ${p + 1} failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
-          break;
-        }
-      }
-    }
-  } catch (err) {
+  // OCR threw on the final attempt (and never produced rows) → surface honestly.
+  if (ocrThrew && rows.length === 0) {
     await cleanupPopup();
     return {
       ok: false,
@@ -315,10 +297,53 @@ export async function verifyHistory(
       spinsCount: spins.length,
       matchedCount: 0,
       mismatches: [],
-      reason: `OCR failed: ${err instanceof Error ? err.message : String(err)}`,
+      reason: `OCR failed: ${ocrThrew instanceof Error ? ocrThrew.message : String(ocrThrew)}`,
       screenshotPath: screenshotRel,
       pagesScanned,
     };
+  }
+
+  // Additional pages (pagination) — only worth scanning once page 1 has rows.
+  if (maxPages > 1 && rows.length > 0) {
+    const viewport = inspectPage.viewportSize();
+    // Scroll the popup region (approx center of viewport) and OCR each
+    // additional page. Dedupe rows by round_id when present; otherwise by
+    // raw_text exact match. Stop early if a page returns no new rows.
+    const seenRoundIds = new Set<string>(
+      rows.map((r) => r.round_id).filter((id): id is string => id != null),
+    );
+    const seenRawText = new Set<string>(rows.map((r) => r.raw_text));
+    for (let p = 1; p < maxPages; p++) {
+      try {
+        const cx = (viewport?.width ?? 1280) / 2;
+        const cy = (viewport?.height ?? 720) / 2;
+        await inspectPage.mouse.move(cx, cy);
+        await inspectPage.mouse.wheel(0, (viewport?.height ?? 720) * 0.6);
+        await waitUntilStable(inspectPage, {
+          maxIterations: 6,
+          changeThreshold: 0.005,
+          consecutiveStable: 2,
+        });
+        const pPath = await pageScreenshot(p);
+        screenshotPaths.push(pPath);
+        const pageRows = await transcribeHistoryRows({ screenshotPath: pPath });
+        let added = 0;
+        for (const r of pageRows) {
+          const id = r.round_id;
+          if (id != null && seenRoundIds.has(id)) continue;
+          if (id == null && seenRawText.has(r.raw_text)) continue;
+          if (id != null) seenRoundIds.add(id);
+          seenRawText.add(r.raw_text);
+          rows.push(r);
+          added++;
+        }
+        pagesScanned = p + 1;
+        if (added === 0) break; // pagination reached end / no scroll movement
+      } catch (err) {
+        console.warn(`[history] pagination page ${p + 1} failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+        break;
+      }
+    }
   }
 
   // Zero rows transcribed almost always means a capture problem (popup didn't

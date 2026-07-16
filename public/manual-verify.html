@@ -3811,7 +3811,9 @@
                     <ul style="margin:0;padding-left:18px;font-size:11px;list-style:none;">${items}</ul>
                   </div>`;
                 })()
-              : `<div style="color:#9be0bc;font-size:11px;margin-top:8px;">✓ No mismatches — all captured spins matched cleanly to history rows.</div>`;
+              : (h.opened && (h.rowsCount ?? 0) > 0 && (h.matchedCount ?? 0) > 0)
+                ? `<div style="color:#9be0bc;font-size:11px;margin-top:8px;">✓ No mismatches — all ${h.matchedCount}/${h.spinsCount ?? "?"} captured spins matched cleanly to history rows.</div>`
+                : `<div style="color:#e0b84a;font-size:11px;margin-top:8px;">⚠ Indeterminate — no history rows were read (popup didn't render / OCR empty), so captured spins were NOT reconciled. This is not a pass.</div>`;
             // Expanded-row detail (advisory, AI-vision): Spin/Respin breakdown
             // arithmetic on 1-2 representative rows. consistent: true/false/null.
             const rowDetailHtml = (h.rowDetailChecks || []).length > 0
