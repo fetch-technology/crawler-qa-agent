@@ -2751,6 +2751,10 @@ export class ManualSessionManager {
       "deep-extract",
       "calibrate-payout",
       "generate-catalog",
+      // Apply admin OC assertion-notes to the freshly generated assertions so
+      // the persisted catalog already reflects them (covers AI + template cases).
+      // Runs BEFORE translate so the translator sees the revised assertions.
+      "revise-assertions",
       "translate-cases",
       "run-cases",
     ];
@@ -3157,6 +3161,57 @@ export class ManualSessionManager {
               ? `generated ${catalog.totalCases} cases (rounds=${catalog.roundsLoaded} aux=${catalog.hadAuxSources}, ${catalog.durationMs}ms)`
               : `failed: ${catalog.reason}`),
           );
+        }
+      }
+
+      // Apply admin OC assertion-notes to the generated assertions BEFORE
+      // translate, so the persisted catalog is note-correct right after
+      // Auto-Onboard (not only after a later re-translate / Run All). Reuses
+      // reviseCaseAssertions — the same path retranslate uses: derives OC,
+      // resolves the assertion note, revises via AI against the currency-correct
+      // gameSpec, and persists. No-op (no AI) for cases with no note; the whole
+      // phase is skipped when the OC has no assertion notes at all. MUST stay
+      // sequential — reviseCaseAssertions load+saves the whole catalog per case,
+      // so concurrency would clobber writes (same reason retranslate-all Phase 1
+      // is sequential).
+      checkPause();
+      if (isPhaseDone("revise-assertions")) {
+        console.log(`[manual/auto-onboard] ${this.gameSlug}: revise-assertions SKIPPED (resumed — already done)`);
+      } else {
+        this.startPhase("revise-assertions");
+        const { deriveOcKey, loadOcNotes } = await import("../registry/oc-prompt-notes.js");
+        const ocMeta = await meta.load(this.gameSlug).catch(() => null);
+        const oc = deriveOcKey(ocMeta?.gameUrl);
+        const ocNotes = await loadOcNotes(oc).catch(() => null);
+        const an = ocNotes?.assertion;
+        const hasAssertionNote = !!(an && (an.all?.trim()
+          || Object.keys(an.byCategory ?? {}).length > 0
+          || Object.keys(an.byCase ?? {}).length > 0));
+        const noteCatalog = hasAssertionNote ? await loadAiCatalog(this.gameSlug).catch(() => null) : null;
+        if (!hasAssertionNote) {
+          this.endPhase("revise-assertions", "skip", `no assertion notes for oc "${oc}"`);
+          console.log(`[manual/auto-onboard] ${this.gameSlug}: revise-assertions SKIPPED — no admin assertion notes for oc "${oc}"`);
+        } else if (!noteCatalog || noteCatalog.cases.length === 0) {
+          this.endPhase("revise-assertions", "skip", "no catalog to revise");
+        } else {
+          let revised = 0;
+          let failed = 0;
+          for (const c of noteCatalog.cases) {
+            checkPause();
+            try {
+              const r = await this.reviseCaseAssertions(c.id, this.gameSlug, oc);
+              if (r.ok && r.changed) revised++;
+            } catch (err) {
+              failed++;
+              console.warn(`[manual/auto-onboard] ${this.gameSlug}: revise-assertions ${c.id} error (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+            }
+          }
+          this.endPhase(
+            "revise-assertions",
+            "ok",
+            `revised ${revised}/${noteCatalog.cases.length}${failed ? `, ${failed} err` : ""} from admin assertion-notes`,
+          );
+          console.log(`[manual/auto-onboard] ${this.gameSlug}: revise-assertions done — revised ${revised}/${noteCatalog.cases.length} case(s) from admin assertion-notes${failed ? ` (${failed} errored)` : ""}`);
         }
       }
 
