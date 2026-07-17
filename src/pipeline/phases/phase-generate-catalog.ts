@@ -27,7 +27,7 @@
 
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
-import { generateAiCatalog, loadRawCatalog } from "../step7-testcase-gen/ai-catalog.js";
+import { generateAiCatalog, loadRawCatalog, saveCatalog } from "../step7-testcase-gen/ai-catalog.js";
 import { applyTemplateSet } from "../step7-testcase-gen/case-templates.js";
 import { uiRegistry } from "../registry/ui-registry.js";
 import { providerCache } from "../registry/provider-cache.js";
@@ -53,6 +53,9 @@ export type PhaseGenerateCatalogResult = PhaseResult & {
   standardTemplatesApplied?: number;
   /** Number of standard templates skipped by feature gates. */
   standardTemplatesSkipped?: number;
+  /** Assertions stripped from the generated catalog (Generate Cases emits
+   *  cases with an empty custom_assertions list — see the strip step below). */
+  assertionsStripped?: number;
 };
 
 /**
@@ -223,16 +226,37 @@ export async function phaseGenerateCatalog(args: {
     let totalCases = result.catalog.total_cases;
     let standardTemplatesApplied = 0;
     let standardTemplatesSkipped = 0;
+    let assertionsStripped = 0;
     try {
       const templated = await applyTemplateSet(slug, { mode: "merge" });
       standardTemplatesApplied = templated.applied.length;
       standardTemplatesSkipped = templated.skipped.length;
       const merged = await loadRawCatalog(slug).catch(() => null);
-      totalCases = merged?.cases.length ?? totalCases;
-      console.log(
-        `[phase/generate-catalog] ${slug}: merged standard templates `
-        + `(eligible=${standardTemplatesApplied}, skipped=${standardTemplatesSkipped}, total=${totalCases})`,
-      );
+      // Generate Cases must NOT emit assertions. Both the AI catalog generator
+      // and the standard template set attach custom_assertions; strip them here
+      // (AFTER the merge, so it catches every source) and persist the cleaned
+      // catalog. Cases start with an empty assertion list — assertions are added
+      // later via admin oc-notes (assertion-note-reviser) or manual QA edits.
+      if (merged) {
+        let strippedCases = 0;
+        for (const c of merged.cases) {
+          const n = c.custom_assertions?.length ?? 0;
+          if (n > 0) { assertionsStripped += n; strippedCases++; }
+          c.custom_assertions = [];
+        }
+        if (assertionsStripped > 0) await saveCatalog(slug, merged);
+        totalCases = merged.cases.length;
+        console.log(
+          `[phase/generate-catalog] ${slug}: merged standard templates `
+          + `(eligible=${standardTemplatesApplied}, skipped=${standardTemplatesSkipped}, total=${totalCases}); `
+          + `stripped ${assertionsStripped} assertion(s) from ${strippedCases} case(s) — cases start with no assertions`,
+        );
+      } else {
+        console.log(
+          `[phase/generate-catalog] ${slug}: merged standard templates `
+          + `(eligible=${standardTemplatesApplied}, skipped=${standardTemplatesSkipped}, total=${totalCases})`,
+        );
+      }
     } catch (err) {
       return {
         ok: false,
@@ -250,6 +274,7 @@ export async function phaseGenerateCatalog(args: {
       hadAuxSources,
       standardTemplatesApplied,
       standardTemplatesSkipped,
+      assertionsStripped,
       durationMs: Date.now() - t0,
     };
   } catch (err) {

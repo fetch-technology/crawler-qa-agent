@@ -430,7 +430,7 @@
       <button id="btnLoadCases" class="gray" style="float: right; font-size: 11px; padding: 4px 8px; margin-left: 6px;">Load Cases</button>
       <button id="btnRunFailed" style="background: #d9534f; float: right; font-size: 11px; padding: 4px 8px; margin-left: 6px;" title="Run only cases whose last verdict is FAIL — uses the active session">Run Failed</button>
       <button id="btnRunUnrun" style="background: #1f9d57; float: right; font-size: 11px; padding: 4px 8px; margin-left: 6px;" title="Run only cases with NO pass/fail verdict yet (unrun or skipped) — uses the active session">Run Unrun</button>
-      <button id="btnRunAllCases" style="background: #29b673; float: right; font-size: 11px; padding: 4px 8px;" title="Run ALL runnable cases one by one — uses the active session">Run All cases</button>
+      <button id="btnRunAllCases" style="background: #29b673; float: right; font-size: 11px; padding: 4px 8px;" title="Re-translate ALL cases with admin oc-notes (actions + assertions, uses AI), then run every case one by one — uses the active session">Run All cases</button>
       <button id="btnViewPayoutModel" style="background: #5b4bb5; float: right; font-size: 11px; padding: 4px 8px; margin-left: 6px;" title="Show the stored payout-model.json — human-readable per-symbol table + raw JSON.">View Model</button>
       <button id="btnCalibratePayout" style="background: #7c5cff; float: right; font-size: 11px; padding: 4px 8px; margin-left: 6px;" title="Spin at >=2 bet levels to derive + self-validate the payout model (used by the payout-integrity case). One-time per game.">Calibrate Payout</button>
       <button id="btnRtpPanel" style="background: #0d9488; float: right; font-size: 11px; padding: 4px 8px; margin-left: 6px;" title="Statistical RTP validation: trigger RG's logic-level e2e (1M spins, ~30 min). Results arrive via webhook and are shown raw.">📈 RTP</button>
@@ -2856,10 +2856,20 @@
 
     // Run All / Run Unrun now live in the Test Cases panel header (not per-row).
     // They operate on the active session's game (doRunCases verifies session).
-    $("#btnRunAllCases").onclick = () => {
+    $("#btnRunAllCases").onclick = async () => {
       const slug = currentStatus?.gameSlug ?? window.__lastCasesSlug;
       if (!slug) return toast("Open a game session first (Open on a game row)", true);
-      doRunCases(slug, "all");
+      // Load cases so re-translate can compute candidates + so the run picks up
+      // the fresh list.
+      if (!window.__cases || window.__lastCasesSlug !== slug) await loadCasesForSlug(slug);
+      // Apply admin oc-notes to ALL cases first (full re-translate: action +
+      // assertion notes, mode=all), then run everything against the freshly
+      // written cache. Skipping the run if re-translate didn't complete avoids
+      // running against stale actions/assertions.
+      appendLog("[run-all] applying oc-notes via re-translate ALL before run…");
+      const applied = await doBatchRetranslate("all", slug);
+      if (applied === false) return toast("Re-translate (oc-notes) did not complete — aborting Run All", true);
+      await doRunCases(slug, "all");
     };
     $("#btnRunUnrun").onclick = () => {
       const slug = currentStatus?.gameSlug ?? window.__lastCasesSlug;
@@ -3068,12 +3078,16 @@
     // completion (retranslateAllInProgress → retranslateAllLastFinishedAt +
     // LastResult), mirroring doGenerateCases. This is what stopped the endpoint
     // from hanging until the proxy 504'd.
-    async function doBatchRetranslate(mode) {
-      const slug = window.__lastCasesSlug;
-      if (!slug) return toast("Load cases first", true);
+    // Returns true when the batch finished OK, false on any abort (no slug /
+    // nothing to do / timeout / server failure) so callers that chain off it
+    // (e.g. Run All cases → re-translate-then-run) can gate. The two button
+    // bindings below ignore the return value, so their behavior is unchanged.
+    async function doBatchRetranslate(mode, slugOverride) {
+      const slug = slugOverride ?? window.__lastCasesSlug;
+      if (!slug) { toast("Load cases first", true); return false; }
       const cases = window.__cases || [];
       const candidates = mode === "all" ? cases.length : cases.filter((c) => c.actionCount === 0).length;
-      if (candidates === 0) return toast(`No ${mode} cases to retry`);
+      if (candidates === 0) { toast(`No ${mode} cases to retry`); return false; }
       const cost = (candidates * 0.02).toFixed(2);
       const startIso = new Date().toISOString();
       const startMs = Date.now();
@@ -3108,12 +3122,14 @@
           lastLogMs = Date.now();
         }
       }
-      if (!result) { toast(`Batch re-translate: polling timed out after 30 min`, true); return; }
+      if (!result) { toast(`Batch re-translate: polling timed out after 30 min`, true); return false; }
       if (result.ok) {
         toast(`Batch done: ${result.succeeded}/${result.total} succeeded, ${result.stillSkipped} still skipped`);
         await loadCasesForSlug(slug);
+        return true;
       } else {
         toast(`Batch failed: ${result.reason ?? "unknown error"}`, true);
+        return false;
       }
     }
     $("#btnRetranslateAll").onclick = () => doBatchRetranslate("skipped");
