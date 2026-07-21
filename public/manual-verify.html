@@ -430,7 +430,7 @@
       <button id="btnLoadCases" class="gray" style="float: right; font-size: 11px; padding: 4px 8px; margin-left: 6px;">Load Cases</button>
       <button id="btnRunFailed" style="background: #d9534f; float: right; font-size: 11px; padding: 4px 8px; margin-left: 6px;" title="Run only cases whose last verdict is FAIL — uses the active session">Run Failed</button>
       <button id="btnRunUnrun" style="background: #1f9d57; float: right; font-size: 11px; padding: 4px 8px; margin-left: 6px;" title="Run only cases with NO pass/fail verdict yet (unrun or skipped) — uses the active session">Run Unrun</button>
-      <button id="btnRunAllCases" style="background: #29b673; float: right; font-size: 11px; padding: 4px 8px;" title="Re-translate ALL cases with admin oc-notes (actions + assertions, uses AI), then run every case one by one — uses the active session">Run All cases</button>
+      <button id="btnRunAllCases" style="background: #29b673; float: right; font-size: 11px; padding: 4px 8px;" title="Re-translate only SKIPPED cases (0 actions) to fill in missing actions, then run every case one by one — uses the active session. Does NOT re-apply oc-notes to already-translated cases; use 'Re-translate ALL' for that.">Run All cases</button>
       <button id="btnViewPayoutModel" style="background: #5b4bb5; float: right; font-size: 11px; padding: 4px 8px; margin-left: 6px;" title="Show the stored payout-model.json — human-readable per-symbol table + raw JSON.">View Model</button>
       <button id="btnCalibratePayout" style="background: #7c5cff; float: right; font-size: 11px; padding: 4px 8px; margin-left: 6px;" title="Spin at >=2 bet levels to derive + self-validate the payout model (used by the payout-integrity case). One-time per game.">Calibrate Payout</button>
       <button id="btnRtpPanel" style="background: #0d9488; float: right; font-size: 11px; padding: 4px 8px; margin-left: 6px;" title="Statistical RTP validation: trigger RG's logic-level e2e (1M spins, ~30 min). Results arrive via webhook and are shown raw.">📈 RTP</button>
@@ -2859,16 +2859,24 @@
     $("#btnRunAllCases").onclick = async () => {
       const slug = currentStatus?.gameSlug ?? window.__lastCasesSlug;
       if (!slug) return toast("Open a game session first (Open on a game row)", true);
-      // Load cases so re-translate can compute candidates + so the run picks up
-      // the fresh list.
+      // Load cases so we can count skipped candidates + so the run picks up the
+      // fresh list.
       if (!window.__cases || window.__lastCasesSlug !== slug) await loadCasesForSlug(slug);
-      // Apply admin oc-notes to ALL cases first (full re-translate: action +
-      // assertion notes, mode=all), then run everything against the freshly
-      // written cache. Skipping the run if re-translate didn't complete avoids
-      // running against stale actions/assertions.
-      appendLog("[run-all] applying oc-notes via re-translate ALL before run…");
-      const applied = await doBatchRetranslate("all", slug);
-      if (applied === false) return toast("Re-translate (oc-notes) did not complete — aborting Run All", true);
+      // Only re-translate cases that are still skipped (0 actions) — fill in
+      // missing actions without re-running AI on already-translated cases, then
+      // run everything. doBatchRetranslate returns false both for "nothing to do"
+      // and for a real failure, so we pre-check the count here: with skipped > 0 a
+      // false return means the attempt actually failed → abort; with none, run
+      // directly. NOTE: this no longer re-applies admin oc-notes to already-
+      // translated cases — use "Re-translate ALL" for that.
+      const skippedCount = (window.__cases || []).filter((c) => c.actionCount === 0).length;
+      if (skippedCount > 0) {
+        appendLog(`[run-all] re-translating ${skippedCount} skipped case(s) before run…`);
+        const applied = await doBatchRetranslate("skipped", slug);
+        if (applied === false) return toast("Re-translate (skipped) did not complete — aborting Run All", true);
+      } else {
+        appendLog("[run-all] no skipped cases — running all directly");
+      }
       await doRunCases(slug, "all");
     };
     $("#btnRunUnrun").onclick = () => {
