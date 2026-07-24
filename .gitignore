@@ -86,3 +86,5 @@ fixtures/usage/
 # Code now passes --output-dir → fixtures/registry/<slug>/debug-agent/, but
 # guard the root anyway in case a callsite is missed or run from CWD again.
 /*.png
+_bmad
+.claude
