@@ -1668,18 +1668,20 @@
       const manifest = (listResp.snapshots || []).find((s) => s.stateId === parentKey);
       if (!manifest) {
         // No snapshot yet — common when children were COPIED between games
-        // (structure copied, but Discover never ran here). Offer a one-click
-        // full Discover instead of a dead-end error, then re-open the view.
+        // (structure copied, but no snapshot captured here). Offer a one-click
+        // snapshot-ONLY capture (no AI re-detect, copied children untouched),
+        // then re-open the view.
         const run = confirm(
           `No discovery snapshot found for "${parentKey}".\n\n` +
-          `This happens when children were copied from another game but Discover ` +
-          `has not run here yet.\n\n` +
-          `Run Discover now? AI will open "${parentKey}", detect its children, and ` +
-          `capture the snapshot. This may overwrite copied child coords with fresh ones.`,
+          `This happens when children were copied from another game but no ` +
+          `snapshot was captured here yet.\n\n` +
+          `Capture a snapshot now? The tool will open "${parentKey}" and take a ` +
+          `screenshot of the current children. It will NOT re-detect or change ` +
+          `any child.`,
         );
         if (!run) return;
-        const r = await window.doDiscoverFromButton(parentKey);
-        if (!r || !r.ok) return; // doDiscoverFromButton already toasted the reason
+        const r = await window.doSnapshotFromButton(parentKey);
+        if (!r || !r.ok) return; // doSnapshotFromButton already toasted the reason
         return window.viewChildrenSnapshot(parentKey); // re-enter — snapshot now exists
       }
 
@@ -6191,6 +6193,27 @@
           toast(`Discover failed: ${r.reason}`, true);
         }
         return r; // let callers (e.g. View's no-snapshot recovery) chain on success
+      } catch (err) { toast(err.message, true); return { ok: false, reason: err.message }; }
+    };
+
+    // Snapshot-only: open the state + screenshot it WITHOUT re-detecting. Used
+    // when children were copied between games — we just need the discovery
+    // snapshot image so "View" works, keeping the copied children untouched.
+    window.doSnapshotFromButton = async (triggerKey, gesture = "click") => {
+      const stateLabel = triggerKey;
+      const holdMs = gesture === "hold" ? 5000 : undefined;
+      toast(`Capturing snapshot for "${triggerKey}" (no re-detect)…`);
+      try {
+        const r = await api("/api/qa/manual/snapshot-via", {
+          method: "POST", body: { triggerKey, stateLabel, gesture, holdMs },
+        });
+        if (r.ok) {
+          if (r.status) renderStatus(r.status);
+          toast(`Snapshot captured for ${triggerKey} · ${r.elementCount ?? 0} children marked`);
+        } else {
+          toast(`Snapshot failed: ${r.reason}`, true);
+        }
+        return r;
       } catch (err) { toast(err.message, true); return { ok: false, reason: err.message }; }
     };
 
