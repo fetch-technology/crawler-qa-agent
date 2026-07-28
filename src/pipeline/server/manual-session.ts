@@ -1320,6 +1320,69 @@ export class ManualSessionManager {
   }
 
   /**
+   * Copy the button STRUCTURE (names + `__`-hierarchy/levels) of another game's
+   * registry into this game. Slot games from the same provider share nearly
+   * identical UI, so seeding the tree from a known-good sibling and re-Picking
+   * positions is far faster than letting AI re-discover from scratch.
+   *
+   * Each copied element carries the source's `x,y` as an INITIAL SUGGESTION but
+   * is forced to `status: "pending"` / `verifiedBy: null` — nothing is trusted
+   * until the QA re-Picks/verifies it on THIS game's screenshot (the existing
+   * per-row Pick → /update flow). Source-specific artifacts (baseline crops,
+   * probe signals, verifiedAt, DOM selector) are deliberately dropped.
+   *
+   * Add-only merge: keys already present in this registry (any status) are
+   * skipped so an accidental re-copy never clobbers QA work.
+   */
+  async copyStructureFrom(
+    sourceSlug: string,
+  ): Promise<{ ok: boolean; added?: number; skipped?: number; addedKeys?: string[]; sourceSlug?: string; reason?: string }> {
+    if (!this.session || !this.gameSlug || !this.registry) return { ok: false, reason: "no active session" };
+    if (!sourceSlug) return { ok: false, reason: "sourceSlug required" };
+    if (sourceSlug === this.gameSlug) return { ok: false, reason: "source and target are the same game" };
+
+    const source = await uiRegistry.load(sourceSlug).catch(() => null);
+    if (!source || Object.keys(source).length === 0) {
+      return { ok: false, reason: `source game '${sourceSlug}' has no UI registry to copy` };
+    }
+
+    const now = new Date().toISOString();
+    const addedKeys: string[] = [];
+    let skipped = 0;
+    for (const [key, el] of Object.entries(source)) {
+      if (!el) continue;
+      // Add-only: never overwrite an existing (possibly QA-verified) entry.
+      if (this.registry[key]) {
+        skipped++;
+        continue;
+      }
+      const copied: UiElement = {
+        x: el.x,
+        y: el.y,
+        strategy: "manual",
+        // Low confidence flags "unverified suggestion" in the tree until QA Picks.
+        confidence: 0,
+        detectedAt: now,
+        status: "pending",
+        verifiedBy: null,
+        // Carry over structural interaction hints (currency/game-independent).
+        preferredGesture: el.preferredGesture,
+        preferredHoldMs: el.preferredHoldMs,
+        externalPage: el.externalPage,
+        // Dropped on purpose: baselineScreenshot, offBaseline, verifiedAt,
+        // probeSignal, selector — all source-specific and must be re-captured.
+      };
+      this.registry[key] = copied;
+      this.verifyState[key] = "pending";
+      addedKeys.push(key);
+    }
+
+    if (addedKeys.length > 0) await uiRegistry.save(this.gameSlug, this.registry);
+    console.log(`[manual] copy-structure ${sourceSlug} → ${this.gameSlug}: added ${addedKeys.length}, skipped ${skipped}`);
+    return { ok: true, added: addedKeys.length, skipped, addedKeys, sourceSlug };
+  }
+
+  /**
    * Multi-level discovery with ANCESTOR PATH WALK + AUTO-RESET to main state.
    *
    * For nested triggers like "buyBonusButton__freeSpinsOption":
@@ -7428,4 +7491,54 @@ export async function listRegisteredGames(): Promise<RegisteredGame[]> {
   // Most recent first
   out.sort((a, b) => (b.lastValidatedAt ?? b.createdAt).localeCompare(a.lastValidatedAt ?? a.createdAt));
   return out;
+}
+
+export type CopySource = {
+  gameSlug: string;
+  gameName?: string;
+  baseGameSlug?: string;
+  provider?: string;
+  elementCount: number;
+  verifiedCount: number;
+  /** True when this source shares the target game's provider — same-provider
+   *  games have near-identical UI, so they're the best copy candidates. */
+  sameProvider: boolean;
+  /** All registry keys (button names + `__`-hierarchy) — powers the modal's
+   *  preview tree without shipping full element coords. */
+  keys: string[];
+};
+
+/**
+ * Candidate SOURCE games for the "Copy Structure from Game" feature. Returns
+ * every OTHER registered game that has at least one verified element, annotated
+ * with whether it shares the target's provider (same-provider first). The
+ * frontend renders a picker + preview tree from `keys`.
+ */
+export async function listCopySources(
+  targetSlug: string,
+): Promise<{ targetProvider?: string; sources: CopySource[] }> {
+  const targetPc = await providerCache.load(targetSlug).catch(() => null);
+  const targetProvider = targetPc?.provider;
+  const games = await listRegisteredGames();
+  const sources: CopySource[] = [];
+  for (const g of games) {
+    if (g.gameSlug === targetSlug) continue;
+    if (g.verifiedCount <= 0) continue; // only offer games with real structure
+    const reg = await uiRegistry.load(g.gameSlug).catch(() => null);
+    if (!reg) continue;
+    sources.push({
+      gameSlug: g.gameSlug,
+      gameName: g.gameName,
+      baseGameSlug: g.baseGameSlug,
+      provider: g.provider,
+      elementCount: g.elementCount,
+      verifiedCount: g.verifiedCount,
+      sameProvider: !!targetProvider && g.provider === targetProvider,
+      keys: Object.keys(reg),
+    });
+  }
+  // Same-provider first, then most verified structure.
+  sources.sort((a, b) =>
+    Number(b.sameProvider) - Number(a.sameProvider) || b.verifiedCount - a.verifiedCount);
+  return { targetProvider, sources };
 }

@@ -2,7 +2,7 @@
 // src/server/index.ts. Routes prefixed with /api/qa/manual.
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { listRegisteredGames, updateGameUrl, deleteGame, ManualSessionManager } from "./manual-session.js";
+import { listRegisteredGames, listCopySources, updateGameUrl, deleteGame, ManualSessionManager } from "./manual-session.js";
 import { getOrCreate, get as peekSession, set as setSession, remove as removeSession, getDefaultOrThrow, listSessions, admitOrQueueStart, promoteQueued, maxActiveSessions, occupiedSlugs, startReaper } from "./session-pool.js";
 import { deriveGameRecordIdentity } from "../step1-crawl/crawler.js";
 
@@ -176,6 +176,16 @@ export async function handleManualRoute(
     if (url === "/api/qa/manual/games" && method === "GET") {
       const games = await listRegisteredGames();
       return sendJson(res, 200, { games }), true;
+    }
+
+    // GET /api/qa/manual/copy-sources?gameSlug=<target> — candidate source games
+    // for "Copy Structure from Game". Read-only (file-based); no active session
+    // required. Same-provider games are surfaced first.
+    if (url.startsWith("/api/qa/manual/copy-sources") && method === "GET") {
+      const target = slugFromRequestNoBody(req, url);
+      if (!target) return sendJson(res, 400, { ok: false, error: "gameSlug required" }), true;
+      const { targetProvider, sources } = await listCopySources(target);
+      return sendJson(res, 200, { ok: true, targetProvider, sources }), true;
     }
 
     // GET /api/qa/manual/oc-notes?oc=<oc> — admin prompt-note overrides for an OC
@@ -448,6 +458,17 @@ export async function handleManualRoute(
       }
       await resolveSession(req, body as any, url).addElement(body.uiKey, body.x, body.y);
       return sendJson(res, 200, resolveSession(req, body as any, url).status()), true;
+    }
+
+    // POST /api/qa/manual/copy-structure { sourceSlug } — seed THIS game's
+    // registry from another game's button structure (names + hierarchy +
+    // suggested coords, all as pending). QA re-Picks each on this game after.
+    if (url === "/api/qa/manual/copy-structure" && method === "POST") {
+      const body = await asJsonBody<{ sourceSlug?: string }>(req);
+      if (!body.sourceSlug) return sendJson(res, 400, { ok: false, error: "sourceSlug required" }), true;
+      const sess = resolveSession(req, body as any, url);
+      const r = await sess.copyStructureFrom(body.sourceSlug);
+      return sendJson(res, r.ok ? 200 : 400, { ...r, status: sess.status() }), true;
     }
 
     // DELETE /api/qa/manual/element/:uiKey

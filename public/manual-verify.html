@@ -333,6 +333,7 @@
       <button id="btnProbePending" disabled style="background: #7c5cff; font-size: 11px;" title="Auto-verify pending elements by clicking each + observing the expected signal (network/popup). Replaces most QA Pick work.">Probe Pending</button>
       <button id="btnAutoOnboard" disabled style="background: #16a34a; font-size: 11px;" title="One-click: VERIFY pending elements (behavioral probe at every level — NO deep discovery; QA discovers levels manually) + OCR regions + extract paytable + calibrate payout + generate/run catalog. For UI-graph exploration use Deep Discover (AI).">Auto-Onboard</button>
       <button id="btnPauseOnboard" disabled style="background: #f59e0b; font-size: 11px; display: none;" title="Pause Auto-Onboard after the current phase finishes. Mid-phase pause not supported — phases (e.g. Deep Discover) are atomic. Resume via the Auto-Onboard button.">⏸ Pause</button>
+      <button id="btnCopyStructure" disabled style="background: #0e7490; font-size: 11px;" title="Copy button names + hierarchy + suggested positions from another game (same provider), then Pick/verify each here. Faster than re-discovering from scratch.">⧉ Copy Structure from Game</button>
     </div>
     <!-- Game Spec panel — shows captured + overridden bet ladder / min /
          max / default. Editable fields write to game-spec-override.json
@@ -1173,6 +1174,7 @@
       $("#btnPickNew").disabled = !active;
       $("#btnProbePending").disabled = !active;
       $("#btnDeepDiscover").disabled = !active;
+      $("#btnCopyStructure").disabled = !active;
       const onboarding = !!status.autoOnboardInProgress;
       const resumeAvail = !!status.autoOnboardResumeAvailable && !onboarding;
       const pauseRequested = !!status.autoOnboardPauseRequested;
@@ -5928,6 +5930,126 @@
       } catch (err) { toast(err.message, true); }
       finally { btn.disabled = false; btn.textContent = prev; }
     };
+
+    // Build a name-only indented tree string from a flat list of registry keys
+    // (hierarchy encoded via "__"). Used by the copy-structure preview pane.
+    function buildKeyTree(keys) {
+      const childrenMap = new Map();
+      for (const k of keys) {
+        const i = k.lastIndexOf("__");
+        const parent = i === -1 ? "" : k.slice(0, i);
+        if (!childrenMap.has(parent)) childrenMap.set(parent, []);
+        childrenMap.get(parent).push(k);
+      }
+      for (const arr of childrenMap.values()) arr.sort();
+      const lines = [];
+      const render = (key, depth) => {
+        const lastDelim = key.lastIndexOf("__");
+        const display = lastDelim === -1 ? key : key.slice(lastDelim + 2);
+        lines.push(`${"  ".repeat(depth)}- ${escapeHtml(display)}`);
+        for (const c of (childrenMap.get(key) || [])) render(c, depth + 1);
+      };
+      for (const root of (childrenMap.get("") || []).sort()) render(root, 0);
+      return lines.join("\n");
+    }
+
+    async function openCopyStructureModal() {
+      const existing = document.getElementById("copyStructureModal");
+      if (existing) existing.remove();
+      let data;
+      try {
+        data = await api("/api/qa/manual/copy-sources");
+      } catch (err) { return toast(`Copy sources failed: ${err.message}`, true); }
+      const allSources = Array.isArray(data.sources) ? data.sources : [];
+      if (allSources.length === 0) {
+        return toast("No other game has a verified registry to copy from yet.", true);
+      }
+      const targetProvider = data.targetProvider || "unknown";
+
+      const modal = document.createElement("div");
+      modal.id = "copyStructureModal";
+      modal.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:11050;display:flex;align-items:center;justify-content:center;padding:16px;";
+      modal.innerHTML = `
+        <div style="background:#161a22;border:1px solid #2a3140;padding:16px;border-radius:6px;width:min(720px,96vw);max-height:92vh;display:flex;flex-direction:column;gap:10px;box-sizing:border-box;">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:16px;color:#cdd5dd;">
+            <strong style="font-size:14px;">⧉ Copy button structure from another game</strong>
+            <button id="csCancel" class="gray" style="font-size:11px;">Cancel</button>
+          </div>
+          <div style="color:#8b939c;font-size:12px;line-height:1.5;">
+            Copies button names + hierarchy + the source game's positions as <strong>suggestions</strong>.
+            Each button lands as <span class="pill pending">pending</span> — Pick/verify it on this game's
+            screenshot afterward. Buttons that already exist here are skipped.
+          </div>
+          <label style="color:#c8d0d8;font-size:12px;display:flex;align-items:center;gap:6px;">
+            <input id="csSameProvider" type="checkbox" checked>
+            Only same provider (<code>${escapeHtml(targetProvider)}</code>)
+          </label>
+          <div class="row" style="align-items:center;gap:8px;">
+            <label style="flex:0 0 auto;color:#c8d0d8;font-size:12px;">Source game:</label>
+            <select id="csSelect" style="flex:1;font-size:12px;padding:4px;"></select>
+          </div>
+          <div style="color:#8b939c;font-size:11px;">Preview (button names & levels):</div>
+          <pre id="csPreview" style="flex:1 1 auto;min-height:120px;max-height:40vh;overflow:auto;background:#0b0e13;border:1px solid #232a35;border-radius:4px;padding:8px;margin:0;color:#9bc6e0;font-size:11px;line-height:1.5;"></pre>
+          <div style="display:flex;justify-content:flex-end;gap:8px;">
+            <button id="csCopy" class="green" style="font-size:12px;">Copy Structure</button>
+          </div>
+        </div>`;
+      document.body.appendChild(modal);
+
+      const close = () => { modal.remove(); document.removeEventListener("keydown", escHandler); };
+      const escHandler = (e) => { if (e.key === "Escape") close(); };
+      document.addEventListener("keydown", escHandler);
+      modal.querySelector("#csCancel").onclick = close;
+      modal.addEventListener("click", (e) => { if (e.target === modal) close(); });
+
+      const sel = modal.querySelector("#csSelect");
+      const preview = modal.querySelector("#csPreview");
+      const sameOnly = modal.querySelector("#csSameProvider");
+
+      const populate = () => {
+        const list = sameOnly.checked ? allSources.filter((s) => s.sameProvider) : allSources;
+        if (list.length === 0) {
+          sel.innerHTML = `<option value="">— no ${sameOnly.checked ? "same-provider " : ""}games —</option>`;
+          preview.textContent = sameOnly.checked
+            ? "No same-provider game found. Uncheck the box to copy from any game."
+            : "";
+          modal.querySelector("#csCopy").disabled = true;
+          return;
+        }
+        sel.innerHTML = list.map((s) => {
+          const name = s.gameName || s.baseGameSlug || s.gameSlug;
+          const prov = s.provider || "unknown";
+          return `<option value="${escapeHtml(s.gameSlug)}">${escapeHtml(name)} — ${escapeHtml(prov)} · ${s.verifiedCount}/${s.elementCount} verified</option>`;
+        }).join("");
+        modal.querySelector("#csCopy").disabled = false;
+        renderPreview();
+      };
+      const renderPreview = () => {
+        const src = allSources.find((s) => s.gameSlug === sel.value);
+        preview.textContent = src ? buildKeyTree(src.keys || []) : "";
+      };
+      sameOnly.onchange = populate;
+      sel.onchange = renderPreview;
+      populate();
+
+      modal.querySelector("#csCopy").onclick = async () => {
+        const sourceSlug = sel.value;
+        if (!sourceSlug) return;
+        const btn = modal.querySelector("#csCopy");
+        btn.disabled = true; btn.textContent = "Copying…";
+        try {
+          const res = await api("/api/qa/manual/copy-structure", { method: "POST", body: { sourceSlug } });
+          if (res.status) renderStatus(res.status);
+          close();
+          await refresh();
+          toast(`Copied ${res.added ?? 0} button(s) from ${sourceSlug} (skipped ${res.skipped ?? 0}). Pick/verify each pending element.`);
+        } catch (err) {
+          toast(`Copy failed: ${err.message}`, true);
+          btn.disabled = false; btn.textContent = "Copy Structure";
+        }
+      };
+    }
+    $("#btnCopyStructure").onclick = openCopyStructureModal;
 
     $("#btnPauseOnboard").onclick = async () => {
       try {
