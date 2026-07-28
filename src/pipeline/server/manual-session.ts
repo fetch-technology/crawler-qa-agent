@@ -1521,6 +1521,107 @@ export class ManualSessionManager {
     }
   }
 
+  /** Capture a discovery snapshot for a state WITHOUT re-running AI detection.
+   *  Opens the state by walking + clicking its ancestor trigger chain (like
+   *  discoverVia, but with plain clicks — no verify-click agent), screenshots
+   *  the resulting screen, and saves it as the state's discovery snapshot using
+   *  the CURRENT registry children as markers. Used when a state's children were
+   *  COPIED between games: the structure already exists, we only need the visual
+   *  snapshot so the dashboard's "View" panel works. Does NOT add, overwrite, or
+   *  delete any registry element. */
+  async snapshotVia(
+    triggerKey: string,
+    stateLabel: string,
+    opts: { gesture?: "click" | "hold"; holdMs?: number } = {},
+  ): Promise<{ ok: boolean; reason?: string; elementCount?: number; clickedPath?: Array<{ key: string; x: number; y: number; gesture?: "click" | "hold"; holdMs?: number }> }> {
+    if (!this.session || !this.gameSlug || !this.registry) return { ok: false, reason: "no active session" };
+    const holdMs = Math.max(300, Math.min(15_000, Math.round(opts.holdMs ?? Number(process.env.QA_DISCOVER_HOLD_MS ?? 5000))));
+
+    // 1. Reset to main state (mirror discoverVia) so the walk starts clean.
+    try {
+      await this.session.page.keyboard.press("Escape");
+      await this.session.page.waitForTimeout(300);
+      await this.session.page.keyboard.press("Escape");
+      await this.session.page.waitForTimeout(300);
+      await this.session.page.mouse.click(5, 5);
+      await this.session.page.waitForTimeout(500);
+    } catch {
+      // Reset failures non-fatal — proceed with walk anyway.
+    }
+
+    // 2. Ancestor chain: "a__b__c" → ["a", "a__b", "a__b__c"].
+    const parts = triggerKey.split("__");
+    const ancestors: string[] = [];
+    for (let i = 1; i <= parts.length; i++) ancestors.push(parts.slice(0, i).join("__"));
+
+    const clickedPath: Array<{ key: string; x: number; y: number; gesture?: "click" | "hold"; holdMs?: number }> = [];
+    // External-tab detection (same as discoverVia): the final trigger may open
+    // a new tab (e.g. historyButton → external history page); screenshot it.
+    const tabSlot: Array<import("playwright").Page> = [];
+    const onNewPage = (p: import("playwright").Page): void => { if (tabSlot.length === 0) tabSlot.push(p); };
+    const pageCtx = this.session.page.context();
+
+    try {
+      // 3. Plain click/hold every ancestor to OPEN the state. No verify-click
+      //    agent and no AI detection — we only need the popup visible to shoot.
+      for (let i = 0; i < ancestors.length; i++) {
+        const key = ancestors[i]!;
+        const isLast = i === ancestors.length - 1;
+        const el = this.registry[key];
+        if (!el) return { ok: false, reason: `ancestor missing in registry: ${key} (discover + verify it first)`, clickedPath };
+        if (isLast) pageCtx.on("page", onNewPage);
+        const gesture = (opts.gesture === "hold" || el.preferredGesture === "hold") ? "hold" : "click";
+        const stepHoldMs = Math.max(300, Math.min(15_000, Math.round(el.preferredHoldMs ?? holdMs)));
+        clickedPath.push({ key, x: el.x, y: el.y, gesture, ...(gesture === "hold" ? { holdMs: stepHoldMs } : {}) });
+        try {
+          if (gesture === "hold") {
+            await this.session.page.mouse.move(el.x, el.y);
+            await this.session.page.mouse.down();
+            await this.session.page.waitForTimeout(stepHoldMs);
+            await this.session.page.mouse.up();
+            await this.session.page.waitForTimeout(2000);
+          } else {
+            await this.session.page.mouse.click(el.x, el.y);
+            await this.session.page.waitForTimeout(1500);
+          }
+        } catch (err) {
+          return { ok: false, reason: `click on ${key} (${el.x},${el.y}) failed: ${err instanceof Error ? err.message : String(err)}`, clickedPath };
+        }
+      }
+
+      // 4. Settle, then screenshot the state — the external tab if one opened,
+      //    otherwise the game page.
+      const shotPage = (tabSlot[0] && !tabSlot[0].isClosed()) ? tabSlot[0] : this.session.page;
+      if (shotPage === tabSlot[0]) {
+        await shotPage.waitForLoadState("domcontentloaded", { timeout: 8000 }).catch(() => undefined);
+      }
+      const settleMs = Number(process.env.QA_DISCOVER_SETTLE_MS ?? 1000);
+      if (settleMs > 0) await shotPage.waitForTimeout(settleMs).catch(() => undefined);
+      const pngBuf = await shotPage.screenshot({ type: "png", fullPage: false });
+      const vp = shotPage.viewportSize() ?? { width: 1280, height: 720 };
+
+      // 5. Build markers from the EXISTING registry children (no AI). Every
+      //    namespaced descendant with a real coord becomes a snapshot marker.
+      const prefix = `${stateLabel}__`;
+      const elements = Object.entries(this.registry)
+        .filter(([k, v]) => k.startsWith(prefix) && !!v && Number.isFinite(v.x) && Number.isFinite(v.y))
+        .map(([k, v]) => ({ key: k, x: Math.round(v!.x), y: Math.round(v!.y), ...(Number.isFinite(v!.confidence) ? { confidence: v!.confidence } : {}) }));
+
+      await saveDiscoverySnapshot(
+        this.gameSlug, stateLabel, pngBuf, elements, "discover-substate",
+        { width: vp.width, height: vp.height },
+      );
+      console.log(`[manual/snapshot] snapshot-only for ${stateLabel}: ${elements.length} existing children marked (no AI detect)`);
+      return { ok: true, elementCount: elements.length, clickedPath };
+    } finally {
+      pageCtx.off("page", onNewPage);
+      const leftover = tabSlot[0];
+      if (leftover && !leftover.isClosed()) {
+        try { await leftover.close(); } catch { /* already closed */ }
+      }
+    }
+  }
+
   private async enrichScrollableBetDropdownOptions(
     page: import("playwright").Page,
     safeLabel: string,

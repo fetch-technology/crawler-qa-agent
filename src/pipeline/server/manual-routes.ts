@@ -493,6 +493,23 @@ export async function handleManualRoute(
       return sendJson(res, r.ok ? 200 : 400, { ...r, status: resolveSession(req, body as any, url).status() }), true;
     }
 
+    // POST /api/qa/manual/snapshot-via { triggerKey, stateLabel, gesture?, holdMs? }
+    // Snapshot-only variant of discover-via: opens the state and screenshots it
+    // WITHOUT re-running AI detection. Used when a state's children were copied
+    // between games — captures the discovery snapshot for the existing children
+    // (so "View" works) without adding/overwriting any element.
+    if (url === "/api/qa/manual/snapshot-via" && method === "POST") {
+      const body = await asJsonBody<{ triggerKey?: string; stateLabel?: string; gesture?: "click" | "hold"; holdMs?: number }>(req);
+      if (!body.triggerKey || !body.stateLabel) {
+        return sendJson(res, 400, { error: "triggerKey and stateLabel required" }), true;
+      }
+      const r = await resolveSession(req, body as any, url).snapshotVia(body.triggerKey, body.stateLabel, {
+        gesture: body.gesture,
+        holdMs: body.holdMs,
+      });
+      return sendJson(res, r.ok ? 200 : 400, { ...r, status: resolveSession(req, body as any, url).status() }), true;
+    }
+
     // POST /api/qa/manual/discover-state { stateLabel }
     // Multi-level discovery: AI detect all clickable elements in current
     // sub-screen (popup), namespace them as <stateLabel>__<key>.
