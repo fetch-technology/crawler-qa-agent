@@ -1666,7 +1666,22 @@
         return toast("Failed to load snapshot list", true);
       }
       const manifest = (listResp.snapshots || []).find((s) => s.stateId === parentKey);
-      if (!manifest) return toast(`No discovery snapshot found for ${parentKey}`, true);
+      if (!manifest) {
+        // No snapshot yet — common when children were COPIED between games
+        // (structure copied, but Discover never ran here). Offer a one-click
+        // full Discover instead of a dead-end error, then re-open the view.
+        const run = confirm(
+          `No discovery snapshot found for "${parentKey}".\n\n` +
+          `This happens when children were copied from another game but Discover ` +
+          `has not run here yet.\n\n` +
+          `Run Discover now? AI will open "${parentKey}", detect its children, and ` +
+          `capture the snapshot. This may overwrite copied child coords with fresh ones.`,
+        );
+        if (!run) return;
+        const r = await window.doDiscoverFromButton(parentKey);
+        if (!r || !r.ok) return; // doDiscoverFromButton already toasted the reason
+        return window.viewChildrenSnapshot(parentKey); // re-enter — snapshot now exists
+      }
 
       const existing = document.getElementById("childrenSnapshotModal");
       if (existing) existing.remove();
@@ -6175,7 +6190,8 @@
         } else {
           toast(`Discover failed: ${r.reason}`, true);
         }
-      } catch (err) { toast(err.message, true); }
+        return r; // let callers (e.g. View's no-snapshot recovery) chain on success
+      } catch (err) { toast(err.message, true); return { ok: false, reason: err.message }; }
     };
 
     window.doCaptureClick = async (uiKey) => {
