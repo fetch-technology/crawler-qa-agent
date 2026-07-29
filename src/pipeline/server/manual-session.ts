@@ -59,34 +59,19 @@ import { normalizeAnteOff, verifyAnteOff, ensureAnteOff } from "../step2-detect-
 import { resolvePopupKeywords } from "../registry/popup-keywords.js";
 import { resolveSubStateHints, SUB_STATE_HINTS_DEFAULTS, interpolateSliderStops, type SubStateHint } from "../registry/sub-state-hints.js";
 import { readFile, writeFile } from "node:fs/promises";
-import type { UiRegistry, UiElement } from "../registry/types.js";
+import type { UiRegistry, UiElement, RegistryMeta } from "../registry/types.js";
 
-// historyButton intentionally EXCLUDED — in PP-style games it lives inside the
-// MENU popup (discover as menuButton__historyButton via per-row Discover), not
-// on the main screen. Listing it here gated Auto-Onboard on a level-1 element
-// that doesn't exist on main. Mirrors EXPECTED_UI_ELEMENTS_DEFAULTS /
-// CANONICAL_PRIORITY_ORDER / the dashboard LEVEL1_EXPECTED_KEYS.
-const LEVEL1_EXPECTED_KEYS = [
-  "spinButton",
-  "betPlus",
-  "betMinus",
-  "menuButton",
-  "paytableButton",
-  "autoButton",
-  "buyBonusButton",
-] as const;
+// Level-1 gating primitives now live in registry/onboard-primitives.ts (a
+// browserless module) so the auto-onboard eligibility checker can share them
+// without importing this heavy module. Imported for local use + re-exported
+// for backward-compat with any existing importers.
+import { LEVEL1_EXPECTED_KEYS, hasUsableRegistryCoord, isValidOcrRegion } from "../registry/onboard-primitives.js";
+export { LEVEL1_EXPECTED_KEYS, hasUsableRegistryCoord, isValidOcrRegion };
 
 function baseSlugFromRecordSlug(slug: string): string {
   return slug
     .replace(/_[A-Z]{3}(?:_[a-z]{2}(?:-[a-z]{2})?)?$/i, "")
     .replace(/_[a-z]{2}(?:-[a-z]{2})?$/i, "");
-}
-
-function hasUsableRegistryCoord(el: UiElement | undefined): boolean {
-  return !!el
-    && Number.isFinite(el.x)
-    && Number.isFinite(el.y)
-    && el.status === "verified";
 }
 
 async function findCloneSourceSlug(args: {
@@ -3142,15 +3127,8 @@ export class ManualSessionManager {
     // Auto-Onboard OCR policy: only balance/bet are required and auto-managed.
     // win/freeSpinCounter are intentionally excluded from this phase.
     const autoDetectKeys = requiredKeys;
-    const isValidOcrRegion = (region: { x: number; y: number; width: number; height: number } | undefined): boolean => {
-      if (!region) return false;
-      return Number.isFinite(region.x)
-        && Number.isFinite(region.y)
-        && Number.isFinite(region.width)
-        && Number.isFinite(region.height)
-        && region.width > 0
-        && region.height > 0;
-    };
+    // isValidOcrRegion is now a module-level export (single source of truth,
+    // shared with the browserless auto-onboard eligibility checker).
     const missingRequired = requiredKeys.filter((key) => {
       const region = ocrState.regions?.[key];
       return !isValidOcrRegion(region);
@@ -7537,6 +7515,12 @@ export type RegisteredGame = {
   verifiedCount: number;
   pendingCount: number;
   rejectedCount: number;
+  // Auto-onboard scheduler flags (from _meta.json; undefined when never marked).
+  autoOnboardReady?: boolean;
+  autoOnboardPriority?: number;
+  autoOnboardSchedStatus?: RegistryMeta["autoOnboardSchedStatus"];
+  autoOnboardSchedReason?: string;
+  autoOnboardSchedAt?: string;
 };
 
 /**
@@ -7688,6 +7672,11 @@ export async function listRegisteredGames(): Promise<RegisteredGame[]> {
         verifiedCount: verified,
         pendingCount: pending,
         rejectedCount: rejected,
+        autoOnboardReady: m.autoOnboardReady,
+        autoOnboardPriority: m.autoOnboardPriority,
+        autoOnboardSchedStatus: m.autoOnboardSchedStatus,
+        autoOnboardSchedReason: m.autoOnboardSchedReason,
+        autoOnboardSchedAt: m.autoOnboardSchedAt,
       });
     } catch {
       // skip games with corrupt registry
@@ -7695,6 +7684,62 @@ export async function listRegisteredGames(): Promise<RegisteredGame[]> {
   }
   // Most recent first
   out.sort((a, b) => (b.lastValidatedAt ?? b.createdAt).localeCompare(a.lastValidatedAt ?? a.createdAt));
+  return out;
+}
+
+// ---- Auto-onboard scheduler queue --------------------------------------------
+
+export type AutoOnboardQueueEntry = {
+  gameSlug: string;
+  gameName?: string;
+  ready: boolean;
+  priority: number;
+  schedStatus?: RegistryMeta["autoOnboardSchedStatus"];
+  schedReason?: string;
+  schedAt?: string;
+  schedAttempts: number;
+  /** Live browserless eligibility snapshot (why a game would be skipped). */
+  eligibility: { ok: boolean; reason?: string };
+};
+
+/**
+ * List games marked ready for auto-onboard, annotated with their scheduler
+ * status + a fresh disk-only eligibility check, sorted by priority (lower first,
+ * then slug). Shared by the mark-ready route (max-10 count), the scheduler tick,
+ * and the dashboard endpoint. Reads meta for EVERY registered game (cheap JSON)
+ * and filters to autoOnboardReady.
+ */
+export async function listAutoOnboardQueue(): Promise<AutoOnboardQueueEntry[]> {
+  const { checkAutoOnboardEligibility } = await import("./auto-onboard-eligibility.js");
+  const registryRoot = "fixtures/registry";
+  let dirs: string[] = [];
+  try {
+    dirs = await readdir(registryRoot);
+  } catch {
+    return [];
+  }
+  const out: AutoOnboardQueueEntry[] = [];
+  for (const slug of dirs) {
+    try {
+      const m = await meta.load(slug);
+      if (!m || !m.autoOnboardReady) continue;
+      const pc = await providerCache.load(slug).catch(() => null);
+      out.push({
+        gameSlug: slug,
+        gameName: pc?.gameName,
+        ready: true,
+        priority: typeof m.autoOnboardPriority === "number" ? m.autoOnboardPriority : 5,
+        schedStatus: m.autoOnboardSchedStatus,
+        schedReason: m.autoOnboardSchedReason,
+        schedAt: m.autoOnboardSchedAt,
+        schedAttempts: typeof m.autoOnboardSchedAttempts === "number" ? m.autoOnboardSchedAttempts : 0,
+        eligibility: await checkAutoOnboardEligibility(slug),
+      });
+    } catch {
+      // skip games with corrupt/missing meta
+    }
+  }
+  out.sort((a, b) => (a.priority - b.priority) || a.gameSlug.localeCompare(b.gameSlug));
   return out;
 }
 

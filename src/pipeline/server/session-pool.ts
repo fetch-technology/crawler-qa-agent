@@ -304,11 +304,203 @@ export function remove(slug: string): boolean {
   return had;
 }
 
+// ---- Auto-onboard scheduler --------------------------------------------------
+// Keeps the auto-onboard pipeline filled: when a batch slot AND a browser slot
+// are both free, it opens (resumes) the highest-priority admin-marked game and
+// runs auto-onboard on it — unattended. Mirrors the idle-reaper's interval loop.
+// Master switch persisted in registry/auto-scheduler-store.ts (default OFF).
+//
+// Lives here (not manual-session) so it can read countActiveBatches /
+// countOccupiedSlots / getOrCreate directly; it reaches manual-session +
+// eligibility + meta via lazy dynamic import inside the tick to avoid a static
+// import cycle (manual-session already imports nothing from this file at module
+// top, and the queue/eligibility modules don't import this one).
+
+const SCHED_INTERVAL_MS = 30_000;
+/** Stop auto-retrying a game after this many failed onboard attempts (guards a
+ *  tight failure loop). Re-marking (toggle off→on) resets the counter. */
+export const MAX_SCHED_ATTEMPTS = 2;
+
+/** Minimal shape the pure selection helper needs — matches
+ *  manual-session.AutoOnboardQueueEntry structurally. */
+export type SchedulableGame = {
+  gameSlug: string;
+  ready: boolean;
+  priority: number;
+  schedStatus?: "queued" | "running" | "done" | "failed" | "skipped";
+  schedAttempts: number;
+  eligibility: { ok: boolean; reason?: string };
+};
+
+/**
+ * PURE selection: given the marked-game queue, an `isActive` predicate (a game
+ * already running a batch manually), and the attempts cap, return the next game
+ * to auto-onboard, or null. Deterministic (priority asc, then slug). Excludes
+ * done/running, attempts-exhausted, currently-active, and still-ineligible
+ * skips. Exported for unit testing without disk/browser.
+ */
+export function selectNextAutoOnboard(
+  queue: SchedulableGame[],
+  isActive: (slug: string) => boolean,
+  maxAttempts: number,
+): SchedulableGame | null {
+  const candidates = queue
+    .filter((g) => g.ready)
+    .filter((g) => g.schedStatus !== "done" && g.schedStatus !== "running")
+    .filter((g) => g.schedAttempts < maxAttempts)
+    .filter((g) => !isActive(g.gameSlug))
+    // A game we skipped stays skipped until its eligibility flips to ok —
+    // otherwise it'd be re-skipped every tick forever.
+    .filter((g) => !(g.schedStatus === "skipped" && !g.eligibility.ok))
+    .sort((a, b) => (a.priority - b.priority) || a.gameSlug.localeCompare(b.gameSlug));
+  return candidates[0] ?? null;
+}
+
+let schedulerTimer: ReturnType<typeof setInterval> | null = null;
+let tickRunning = false; // re-entrancy guard — never overlap while awaiting resume
+
+/** One scheduler pass. Admits ready games up to BOTH caps (batch + session).
+ *  Safe to call ad-hoc (e.g. right after enabling, or on batch settle). */
+export async function autoOnboardSchedulerTick(): Promise<void> {
+  if (tickRunning) return;
+  tickRunning = true;
+  try {
+    const { loadSchedulerConfig } = await import("../registry/auto-scheduler-store.js");
+    if (!(await loadSchedulerConfig()).enabled) return; // master switch OFF
+
+    const { listAutoOnboardQueue } = await import("./manual-session.js");
+    const { setAutoOnboardFlags } = await import("../registry/meta.js");
+
+    await reconcileStaleRunning();
+
+    // Recompute both counters each iteration: resume() flips occupiesSlot()
+    // synchronously and autoOnboardInBackground flips occupiesBatchSlot()
+    // synchronously, so the next check reflects the new occupant → no over-admit.
+    while (
+      countActiveBatches() < MAX_ACTIVE_BATCHES &&
+      countOccupiedSlots() < MAX_ACTIVE
+    ) {
+      const queue = await listAutoOnboardQueue();
+      const next = selectNextAutoOnboard(
+        queue,
+        (slug) => { const s = get(slug); return !!s && s.hasActiveBatch(); },
+        MAX_SCHED_ATTEMPTS,
+      );
+      if (!next) break;
+
+      // Eligibility already computed in the queue entry (disk-only). If not ok,
+      // record skipped + reason and move on to the next-priority game.
+      if (!next.eligibility.ok) {
+        await setAutoOnboardFlags(next.gameSlug, {
+          autoOnboardSchedStatus: "skipped",
+          autoOnboardSchedReason: next.eligibility.reason,
+        });
+        continue;
+      }
+
+      // Mark running FIRST (before any await) + bump attempts so a later tick
+      // can't repick it and a crash leaves a reconcilable marker.
+      await setAutoOnboardFlags(next.gameSlug, {
+        autoOnboardSchedStatus: "running",
+        autoOnboardSchedReason: undefined,
+        autoOnboardSchedAttempts: next.schedAttempts + 1,
+      });
+
+      const sess = getOrCreate(next.gameSlug);
+      try {
+        if (!sess.status().active) await sess.resume(next.gameSlug); // unattended browser open
+      } catch (err) {
+        await setAutoOnboardFlags(next.gameSlug, {
+          autoOnboardSchedStatus: "failed",
+          autoOnboardSchedReason: `resume failed: ${err instanceof Error ? err.message : String(err)}`,
+        });
+        try { await sess.stop(); } catch { /* ignore */ }
+        continue;
+      }
+
+      const gate = sess.autoOnboardPreflight();
+      if (!gate.ok) {
+        await setAutoOnboardFlags(next.gameSlug, {
+          autoOnboardSchedStatus: "failed",
+          autoOnboardSchedReason: gate.reason,
+        });
+        try { await sess.stop(); } catch { /* ignore */ }
+        continue;
+      }
+
+      console.log(`[auto-scheduler] onboarding "${next.gameSlug}" (priority ${next.priority}, attempt ${next.schedAttempts + 1})`);
+      const slug = next.gameSlug;
+      admitOrQueueBatch(sess, "auto-onboard", () =>
+        sess.autoOnboardInBackground({}, () => {
+          promoteQueuedBatch();          // preserve the HTTP-route behavior
+          void onAutoOnboardSettled(slug);
+        }));
+    }
+  } catch (err) {
+    console.error("[auto-scheduler] tick failed:", err);
+  } finally {
+    tickRunning = false;
+  }
+}
+
+/** Called when a scheduled auto-onboard settles: read its terminal status,
+ *  record done/failed in meta, stop the browser to free the session slot, and
+ *  kick another tick to pull the next game. */
+async function onAutoOnboardSettled(slug: string): Promise<void> {
+  const sess = get(slug);
+  if (!sess) return;
+  const { setAutoOnboardFlags } = await import("../registry/meta.js");
+  let failed = false;
+  try {
+    const st = sess.status();
+    failed = st.autoOnboardPhases.some((p) => p.status === "fail")
+      || !!st.gameError
+      || st.autoOnboardResumeAvailable; // paused/interrupted → not a clean done
+  } catch { failed = true; }
+  if (failed) {
+    await setAutoOnboardFlags(slug, { autoOnboardSchedStatus: "failed", autoOnboardSchedReason: "onboard did not complete cleanly" });
+  } else {
+    // Done → clear ready so it leaves the queue; keep status for history/UI.
+    await setAutoOnboardFlags(slug, { autoOnboardReady: false, autoOnboardSchedStatus: "done", autoOnboardSchedReason: undefined });
+  }
+  try { await sess.stop(); } catch { /* ignore */ } // free the session slot for the next game
+  void autoOnboardSchedulerTick();
+}
+
+/** Reconcile games stuck at schedStatus "running" whose session isn't actually
+ *  running a batch (process restarted mid-run, or a dropped onSettled). Resets
+ *  them to "queued" so the tick can re-run them (attempts already counted).
+ *  Runs at the start of every tick as a backstop. */
+async function reconcileStaleRunning(): Promise<void> {
+  const { listAutoOnboardQueue } = await import("./manual-session.js");
+  const { setAutoOnboardFlags } = await import("../registry/meta.js");
+  const queue = await listAutoOnboardQueue();
+  for (const g of queue) {
+    if (g.schedStatus !== "running") continue;
+    const s = get(g.gameSlug);
+    if (!s || !s.occupiesBatchSlot()) {
+      await setAutoOnboardFlags(g.gameSlug, { autoOnboardSchedStatus: "queued", autoOnboardSchedReason: undefined });
+    }
+  }
+}
+
+/** Start the periodic auto-onboard scheduler. Call once at server boot. */
+export function startAutoOnboardScheduler(): void {
+  if (schedulerTimer) return;
+  schedulerTimer = setInterval(() => { void autoOnboardSchedulerTick(); }, SCHED_INTERVAL_MS);
+  if (typeof schedulerTimer.unref === "function") schedulerTimer.unref();
+}
+export function stopAutoOnboardScheduler(): void {
+  if (schedulerTimer) { clearInterval(schedulerTimer); schedulerTimer = null; }
+}
+
 /** For tests. */
 export function _resetForTest(): void {
   pool.clear();
   lastUsedSlug = null;
   startQueue.length = 0;
   batchQueue.length = 0;
+  tickRunning = false;
   stopReaper();
+  stopAutoOnboardScheduler();
 }

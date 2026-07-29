@@ -25,6 +25,7 @@
     .badge-active { background: rgba(16,185,129,0.15); color: var(--ok); border: 1px solid rgba(16,185,129,0.3); }
     .badge-idle { background: rgba(156,163,175,0.15); color: var(--muted); border: 1px solid rgba(156,163,175,0.3); }
     .badge-busy { background: rgba(245,158,11,0.15); color: var(--warn); border: 1px solid rgba(245,158,11,0.3); }
+    .badge-err { background: rgba(239,68,68,0.15); color: var(--err); border: 1px solid rgba(239,68,68,0.3); }
 
     .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 8px 0; }
     .stat { background: var(--card-soft); padding: 6px 10px; border-radius: 4px; }
@@ -138,6 +139,18 @@
       <button id="btnStart" title="Start a new session for this URL (slug auto-derived, then opens detail)">Start Session</button>
     </div>
 
+    <!-- Auto-onboard scheduler: master switch + priority queue (admin). -->
+    <div class="auto-sched" id="autoSchedPanel" style="margin: 12px 0; padding: 10px 12px; border: 1px solid var(--border, #2a2a2a); border-radius: 8px;">
+      <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+        <label style="display: flex; align-items: center; gap: 6px; font-weight: 600; cursor: pointer;">
+          <input type="checkbox" id="autoMasterSwitch" /> Auto-Onboard Scheduler
+        </label>
+        <span id="autoSchedState" style="font-size: 12px; color: var(--muted);"></span>
+        <span style="font-size: 11px; color: var(--muted);">Runs up to 2 games at once, by priority. Mark games below (max 10).</span>
+      </div>
+      <div id="autoQueue" style="margin-top: 8px; font-size: 12px;"></div>
+    </div>
+
     <div id="grid" class="grid">
       <div class="empty">Loading…</div>
     </div>
@@ -178,18 +191,24 @@
 
     async function refresh() {
       try {
-        // Fetch on-disk games + live sessions in parallel.
-        const [games, sessions] = await Promise.all([
+        // Fetch on-disk games + live sessions + auto-schedule state in parallel.
+        const [games, sessions, sched] = await Promise.all([
           fetchJson("/api/qa/manual/games").then((r) => r.games || []),
           fetchJson("/api/qa/manual/sessions").then((r) => r.sessions || []).catch(() => []),
+          fetchJson("/api/qa/manual/auto-schedule").catch(() => ({ enabled: false, queue: [] })),
         ]);
 
         // Index live sessions by slug for fast lookup.
         const liveBySlug = new Map();
         for (const s of sessions) liveBySlug.set(s.gameSlug, s.status || {});
+        // Index auto-schedule queue by slug (carries live eligibility per game).
+        const schedBySlug = new Map();
+        for (const q of (sched.queue || [])) schedBySlug.set(q.gameSlug, q);
+        renderAutoSchedule(sched);
 
         const merged = games.map((g) => {
           const live = liveBySlug.get(g.gameSlug) || null;
+          const sq = schedBySlug.get(g.gameSlug) || null;
           return {
             slug: g.gameSlug,
             url: g.gameUrl,
@@ -201,6 +220,11 @@
             live,
             registryCount: live ? Object.keys(live.registry || {}).length : null,
             verifiedCount: live ? Object.values(live.registry || {}).filter((e) => e?.status === "verified").length : null,
+            autoReady: !!g.autoOnboardReady,
+            autoPriority: typeof g.autoOnboardPriority === "number" ? g.autoOnboardPriority : 5,
+            autoSchedStatus: g.autoOnboardSchedStatus,
+            autoSchedReason: g.autoOnboardSchedReason,
+            autoEligibility: sq ? sq.eligibility : null,
           };
         });
 
@@ -230,6 +254,26 @@
             else if (action === "ocnotes") openOcNotes(slug, el.dataset.oc);
           });
         });
+        // Auto-onboard toggle + priority — stop propagation so they don't open
+        // the card. Both persist via POST /auto-schedule/mark.
+        grid.querySelectorAll(".auto-toggle").forEach((el) => {
+          el.addEventListener("click", (ev) => ev.stopPropagation());
+          el.addEventListener("change", async (ev) => {
+            ev.stopPropagation();
+            const slug = el.dataset.slug;
+            const prioEl = grid.querySelector(`.auto-priority[data-slug="${CSS.escape(slug)}"]`);
+            const priority = prioEl ? Number(prioEl.value) || 5 : 5;
+            await markAuto(slug, el.checked, priority);
+          });
+        });
+        grid.querySelectorAll(".auto-priority").forEach((el) => {
+          el.addEventListener("click", (ev) => ev.stopPropagation());
+          el.addEventListener("change", async (ev) => {
+            ev.stopPropagation();
+            const slug = el.dataset.slug;
+            await markAuto(slug, true, Number(el.value) || 5);
+          });
+        });
         // Card click = open
         grid.querySelectorAll(".card").forEach((el) => {
           el.addEventListener("click", () => {
@@ -240,6 +284,50 @@
       } catch (err) {
         $("#grid").innerHTML = `<div class="empty" style="color: var(--err);">Failed to load: ${escapeHtml(err.message)}</div>`;
       }
+    }
+
+    // POST a mark-ready / unmark / priority change, then refresh.
+    async function markAuto(slug, ready, priority) {
+      try {
+        const r = await fetchJson("/api/qa/manual/auto-schedule/mark", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ gameSlug: slug, ready, priority }),
+        });
+        if (r && r.ok === false) alert(r.error || "Failed to update auto-onboard flag");
+      } catch (err) {
+        alert(`Failed: ${err.message}`);
+      }
+      refresh();
+    }
+
+    // Render the master switch + priority-ordered auto queue panel.
+    function renderAutoSchedule(sched) {
+      const chk = $("#autoMasterSwitch");
+      const enabled = !!(sched && sched.enabled);
+      if (chk) chk.checked = enabled;
+      const stateEl = $("#autoSchedState");
+      const queue = (sched && sched.queue) || [];
+      if (stateEl) stateEl.textContent = enabled ? `ON · ${queue.length}/10 marked` : `OFF · ${queue.length}/10 marked`;
+      const panel = $("#autoQueue");
+      if (!panel) return;
+      if (queue.length === 0) {
+        panel.innerHTML = `<span style="color: var(--muted);">No games marked for auto-onboard.</span>`;
+        return;
+      }
+      panel.innerHTML = queue.map((q) => {
+        const st = q.schedStatus || "queued";
+        const cls = st === "done" ? "badge-active" : st === "failed" ? "badge-err" : st === "running" ? "badge-busy" : "badge-idle";
+        const elig = q.eligibility && !q.eligibility.ok
+          ? ` <span style="color: var(--warn);" title="${escapeHtml(q.eligibility.reason || "")}">⚠</span>`
+          : "";
+        const reason = q.schedReason ? ` <span style="color: var(--muted);">(${escapeHtml(q.schedReason)})</span>` : "";
+        return `<div style="display:flex;align-items:center;gap:8px;padding:2px 0;">
+          <span style="color: var(--muted); width: 20px;">#${q.priority}</span>
+          <code>${escapeHtml(q.gameName || q.gameSlug)}</code>
+          <span class="badge ${cls}">${st}</span>${elig}${reason}
+        </div>`;
+      }).join("");
     }
 
     function renderCard(g) {
@@ -268,6 +356,28 @@
         ? `<div style="font-size:11px;color:var(--muted);margin-top:4px;">base=<code>${escapeHtml(g.baseGameSlug || g.slug)}</code>${g.currency ? ` · ${escapeHtml(g.currency)}` : ""}${g.language ? ` · ${escapeHtml(g.language)}` : ""}</div>`
         : "";
 
+      // Auto-onboard scheduler controls + status pill (per-card).
+      const schedPill = (() => {
+        const s = g.autoSchedStatus;
+        if (!s) return "";
+        const cls = s === "done" ? "badge-active" : s === "failed" ? "badge-err" : s === "running" ? "badge-busy" : "badge-idle";
+        const t = g.autoSchedReason ? ` title="${escapeHtml(g.autoSchedReason)}"` : "";
+        return `<span class="badge ${cls}"${t}>${s}</span>`;
+      })();
+      const eligDot = (g.autoReady && g.autoEligibility && !g.autoEligibility.ok)
+        ? `<span title="Not eligible yet: ${escapeHtml(g.autoEligibility.reason || "")}" style="color: var(--warn); font-size: 12px;">⚠ ineligible</span>`
+        : (g.autoReady && g.autoEligibility && g.autoEligibility.ok ? `<span title="Ready to auto-onboard" style="color: var(--ok); font-size: 12px;">✓ eligible</span>` : "");
+      const autoCtl = `
+        <div class="auto-ctl" style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px;flex-wrap:wrap;">
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;" title="Mark this game for unattended auto-onboard">
+            <input type="checkbox" class="auto-toggle" data-slug="${escapeHtml(g.slug)}" ${g.autoReady ? "checked" : ""}/> Auto
+          </label>
+          <label style="display:flex;align-items:center;gap:4px;" title="Run priority (1 = first, 10 = last)">
+            prio <input type="number" class="auto-priority" data-slug="${escapeHtml(g.slug)}" min="1" max="10" value="${g.autoPriority}" ${g.autoReady ? "" : "disabled"} style="width:48px;"/>
+          </label>
+          ${schedPill}${eligDot}
+        </div>`;
+
       return `
         <div class="card" data-slug="${escapeHtml(g.slug)}">
           <div class="card-head">
@@ -277,6 +387,7 @@
           ${identity}
           <div class="stats">${reg}${verified}${created}</div>
           <div class="card-url">${escapeHtml(g.url || "")}</div>
+          ${autoCtl}
           <div class="card-actions">
             <button class="primary" data-action="open" data-slug="${escapeHtml(g.slug)}">Open</button>
             ${g.live
@@ -331,6 +442,24 @@
     }
 
     $("#btnRefresh").addEventListener("click", refresh);
+
+    // Master switch: toggle the whole auto-onboard scheduler (admin only server-
+    // side; a 403 reverts the checkbox). renderAutoSchedule() re-syncs on refresh.
+    $("#autoMasterSwitch").addEventListener("change", async (ev) => {
+      const enabled = ev.target.checked;
+      try {
+        const r = await fetchJson("/api/qa/manual/auto-schedule/master", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ enabled }),
+        });
+        if (r && r.ok === false) { alert(r.error || "Failed"); ev.target.checked = !enabled; }
+      } catch (err) {
+        alert(`Failed: ${err.message}`);
+        ev.target.checked = !enabled;
+      }
+      refresh();
+    });
     // Poll /status until a background start() finishes server-side. /start
     // returns 202 immediately (browser launch + crawl + AI discovery routinely
     // exceeds the proxy's ~60s timeout, which used to surface as "Start failed:

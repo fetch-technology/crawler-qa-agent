@@ -29,3 +29,22 @@ export async function touchValidated(slug: GameSlug): Promise<void> {
   current.lastValidatedAt = new Date().toISOString();
   await meta.save(slug, current);
 }
+
+/** Single write-path for all auto-onboard-scheduler meta fields (read-modify-
+ *  write, mirrors touchValidated). Always stamps autoOnboardSchedAt. Returns
+ *  the updated record, or null when the game has no _meta.json. */
+export async function setAutoOnboardFlags(
+  slug: GameSlug,
+  patch: Partial<Pick<RegistryMeta,
+    | "autoOnboardReady"
+    | "autoOnboardPriority"
+    | "autoOnboardSchedStatus"
+    | "autoOnboardSchedReason"
+    | "autoOnboardSchedAttempts">>,
+): Promise<RegistryMeta | null> {
+  const current = await meta.load(slug);
+  if (!current) return null;
+  Object.assign(current, patch, { autoOnboardSchedAt: new Date().toISOString() });
+  await meta.save(slug, current);
+  return current;
+}

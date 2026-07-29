@@ -302,6 +302,21 @@ export type RegistryMeta = {
   recordSlug?: string;
   clonedFromSlug?: string;
   gameVersionHash?: string;
+  // --- Auto-onboard scheduler (all optional so pre-existing _meta.json still
+  // loads unchanged). Admin marks a game ready + a priority; the scheduler
+  // (session-pool) auto-opens + onboards ready games up to QA_MAX_ACTIVE_BATCHES.
+  /** Admin flagged this game for unattended auto-onboard. */
+  autoOnboardReady?: boolean;
+  /** Run order among ready games, 1..10, lower = sooner. Default 5. */
+  autoOnboardPriority?: number;
+  /** Last scheduler outcome for this game (drives the dashboard status pill). */
+  autoOnboardSchedStatus?: "queued" | "running" | "done" | "failed" | "skipped";
+  /** Skip/fail explanation shown to admins. */
+  autoOnboardSchedReason?: string;
+  /** ISO of the last scheduler state change. */
+  autoOnboardSchedAt?: string;
+  /** Attempt counter — guards against a tight retry loop on repeated failure. */
+  autoOnboardSchedAttempts?: number;
 };
 
 export type ValidationResult = {

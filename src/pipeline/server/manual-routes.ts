@@ -2,13 +2,17 @@
 // src/server/index.ts. Routes prefixed with /api/qa/manual.
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { listRegisteredGames, listCopySources, updateGameUrl, deleteGame, ManualSessionManager } from "./manual-session.js";
-import { getOrCreate, get as peekSession, set as setSession, remove as removeSession, getDefaultOrThrow, listSessions, admitOrQueueStart, promoteQueued, maxActiveSessions, occupiedSlugs, startReaper, admitOrQueueBatch, promoteQueuedBatch, dequeueBatch, maxActiveBatches, activeBatchSlugs } from "./session-pool.js";
+import { listRegisteredGames, listCopySources, updateGameUrl, deleteGame, listAutoOnboardQueue, ManualSessionManager } from "./manual-session.js";
+import { getOrCreate, get as peekSession, set as setSession, remove as removeSession, getDefaultOrThrow, listSessions, admitOrQueueStart, promoteQueued, maxActiveSessions, occupiedSlugs, startReaper, admitOrQueueBatch, promoteQueuedBatch, dequeueBatch, maxActiveBatches, activeBatchSlugs, startAutoOnboardScheduler, autoOnboardSchedulerTick } from "./session-pool.js";
+import { setAutoOnboardFlags } from "../registry/meta.js";
+import { loadSchedulerConfig, setSchedulerEnabled } from "../registry/auto-scheduler-store.js";
 import { deriveGameRecordIdentity } from "../step1-crawl/crawler.js";
 
-// Boot the idle-reaper once when the manual routes module loads (server boot).
-// It only acts when games are queued, so it's a no-op on an idle dashboard.
+// Boot the idle-reaper + auto-onboard scheduler once when the manual routes
+// module loads (server boot). The reaper only acts when games are queued; the
+// scheduler only acts when its master switch is ON — both no-op otherwise.
 startReaper();
+startAutoOnboardScheduler();
 import { getCurrentUser } from "../../server/request-context.js";
 
 /** Resolve the target game slug from header/query WITHOUT consuming the request
@@ -176,6 +180,59 @@ export async function handleManualRoute(
     if (url === "/api/qa/manual/games" && method === "GET") {
       const games = await listRegisteredGames();
       return sendJson(res, 200, { games }), true;
+    }
+
+    // GET /api/qa/manual/auto-schedule — master-switch state + the marked-game
+    // queue (priority order + sched status + live eligibility). Read-only.
+    if (url === "/api/qa/manual/auto-schedule" && method === "GET") {
+      const [cfg, queue] = await Promise.all([loadSchedulerConfig(), listAutoOnboardQueue()]);
+      return sendJson(res, 200, { enabled: cfg.enabled, queue, maxReady: 10 }), true;
+    }
+
+    // POST /api/qa/manual/auto-schedule/master { enabled } — toggle the whole
+    // auto-onboard scheduler. Admin only. Enabling kicks a tick immediately.
+    if (url === "/api/qa/manual/auto-schedule/master" && method === "POST") {
+      const me = getCurrentUser();
+      if (!me || me.role !== "admin") return sendJson(res, 403, { ok: false, error: "admin only" }), true;
+      const body = await asJsonBody<{ enabled?: boolean }>(req);
+      const cfg = await setSchedulerEnabled(body.enabled === true);
+      if (cfg.enabled) void autoOnboardSchedulerTick();
+      return sendJson(res, 200, { ok: true, enabled: cfg.enabled }), true;
+    }
+
+    // POST /api/qa/manual/auto-schedule/mark { gameSlug, ready, priority? } —
+    // admin marks a game ready-for-auto-onboard + priority (1..10). Max 10 games
+    // may be ready at once. Unmarking (ready:false) is never blocked.
+    if (url === "/api/qa/manual/auto-schedule/mark" && method === "POST") {
+      const me = getCurrentUser();
+      if (!me || me.role !== "admin") return sendJson(res, 403, { ok: false, error: "admin only" }), true;
+      const body = await asJsonBody<{ gameSlug?: string; ready?: boolean; priority?: number }>(req);
+      if (!body.gameSlug) return sendJson(res, 400, { ok: false, error: "gameSlug required" }), true;
+      const ready = body.ready === true;
+      if (ready) {
+        // Enforce max-10 (count OTHER ready games).
+        const queue = await listAutoOnboardQueue();
+        const otherReady = queue.filter((g) => g.gameSlug !== body.gameSlug).length;
+        if (otherReady >= 10) return sendJson(res, 409, { ok: false, error: "max 10 games may be marked ready — unmark one first" }), true;
+        const priority = Math.min(10, Math.max(1, Math.round(Number(body.priority ?? 5)) || 5));
+        const updated = await setAutoOnboardFlags(body.gameSlug, {
+          autoOnboardReady: true,
+          autoOnboardPriority: priority,
+          autoOnboardSchedStatus: "queued",
+          autoOnboardSchedReason: undefined,
+          autoOnboardSchedAttempts: 0, // re-marking resets the retry counter
+        });
+        if (!updated) return sendJson(res, 404, { ok: false, error: `no registry for ${body.gameSlug}` }), true;
+        void autoOnboardSchedulerTick(); // pick it up immediately if a slot is free
+      } else {
+        const updated = await setAutoOnboardFlags(body.gameSlug, {
+          autoOnboardReady: false,
+          autoOnboardSchedStatus: undefined,
+          autoOnboardSchedReason: undefined,
+        });
+        if (!updated) return sendJson(res, 404, { ok: false, error: `no registry for ${body.gameSlug}` }), true;
+      }
+      return sendJson(res, 200, { ok: true, queue: await listAutoOnboardQueue() }), true;
     }
 
     // GET /api/qa/manual/copy-sources?gameSlug=<target> — candidate source games
