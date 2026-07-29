@@ -109,6 +109,99 @@ export function queueLength(): number {
   return startQueue.length;
 }
 
+// ---- Batch admission control (run-all-testcases + auto-onboard) --------------
+// SEPARATE from the start-queue above. That queue caps how many games hold a
+// browser; this one caps how many games concurrently run one of the two
+// token-heavy / long batches — `run-all-testcases` and `auto-onboard`. Any
+// further batch trigger is queued FIFO and promoted when a running batch
+// finishes. Every OTHER operation (generate-catalog, retranslate-all,
+// preview-case, start, discover) is ungated. Cap via QA_MAX_ACTIVE_BATCHES
+// (default 2). In-memory + single-process — a restart drops the queue, matching
+// the start-queue's design.
+const MAX_ACTIVE_BATCHES = Math.max(1, Number(process.env.QA_MAX_ACTIVE_BATCHES ?? 2));
+
+export type BatchKind = "run-all" | "auto-onboard";
+type BatchQueueEntry = { sess: ManualSessionManager; start: () => void; kind: BatchKind; enqueuedAt: number };
+const batchQueue: BatchQueueEntry[] = [];
+
+/** Distinct sessions currently running one of the two gated batches. One game
+ *  counts as at most 1 slot — occupiesBatchSlot() is an OR over the two
+ *  batch markers, so a game running both batches still uses a single slot. */
+export function countActiveBatches(): number {
+  let n = 0;
+  for (const m of pool.values()) {
+    try { if (m.occupiesBatchSlot()) n++; } catch { /* broken manager — ignore */ }
+  }
+  return n;
+}
+
+export function maxActiveBatches(): number {
+  return MAX_ACTIVE_BATCHES;
+}
+
+/** gameSlugs currently holding a batch slot — shown to a queued QA so they
+ *  know which games are running tests (the queue can wait indefinitely). */
+export function activeBatchSlugs(): string[] {
+  const out: string[] = [];
+  for (const [slug, m] of pool.entries()) {
+    try { if (m.occupiesBatchSlot()) out.push(slug); } catch { /* ignore */ }
+  }
+  return out;
+}
+
+function refreshBatchQueuePositions(): void {
+  batchQueue.forEach((e, i) => e.sess.setBatchQueued(i + 1, batchQueue.length));
+}
+
+/** Admit a batch now if under cap, else enqueue it FIFO. `start` is the thunk
+ *  that kicks the background batch (runAllTestcasesInBackground /
+ *  autoOnboardInBackground) — invoked immediately when admitted, or later by
+ *  promoteQueuedBatch(). A session that ALREADY holds a batch slot is admitted
+ *  immediately (same slot — one game triggering both batches never self-blocks
+ *  or deadlocks). */
+export function admitOrQueueBatch(
+  sess: ManualSessionManager,
+  kind: BatchKind,
+  start: () => void,
+): { admitted: boolean; position: number } {
+  if (sess.occupiesBatchSlot() || countActiveBatches() < MAX_ACTIVE_BATCHES) {
+    sess.setBatchQueued(null, 0);
+    start();
+    return { admitted: true, position: 0 };
+  }
+  batchQueue.push({ sess, start, kind, enqueuedAt: Date.now() });
+  refreshBatchQueuePositions();
+  return { admitted: false, position: batchQueue.length };
+}
+
+/** Promote queued batches while slots are free. Call after any batch slot
+ *  frees (a background batch settled, or a queued game was stopped/deleted). */
+export function promoteQueuedBatch(): void {
+  while (batchQueue.length > 0 && countActiveBatches() < MAX_ACTIVE_BATCHES) {
+    const e = batchQueue.shift()!;
+    e.sess.setBatchQueued(null, 0);
+    // start() flips the wrapper's batch marker SYNCHRONOUSLY → occupiesBatchSlot()
+    // true on the next loop check, so we never over-admit.
+    try { e.start(); } catch (err) { console.error("[session-pool] promote batch failed:", err); }
+  }
+  refreshBatchQueuePositions();
+}
+
+/** Drop a session's queued batch (e.g. game stopped/deleted before promotion).
+ *  No-op if the session isn't queued. */
+export function dequeueBatch(sess: ManualSessionManager): boolean {
+  const i = batchQueue.findIndex((e) => e.sess === sess);
+  if (i === -1) return false;
+  batchQueue.splice(i, 1);
+  sess.setBatchQueued(null, 0);
+  refreshBatchQueuePositions();
+  return true;
+}
+
+export function batchQueueLength(): number {
+  return batchQueue.length;
+}
+
 // Idle-reaper: ONLY runs when games are waiting (reap-on-demand — never kills a
 // session when nobody needs the slot). Picks the most-idle reapable session
 // (live browser, no batch in progress, idle ≥ REAP_IDLE_MS) and stops it
@@ -216,5 +309,6 @@ export function _resetForTest(): void {
   pool.clear();
   lastUsedSlug = null;
   startQueue.length = 0;
+  batchQueue.length = 0;
   stopReaper();
 }

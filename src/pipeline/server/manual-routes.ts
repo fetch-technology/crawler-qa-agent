@@ -3,7 +3,7 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { listRegisteredGames, listCopySources, updateGameUrl, deleteGame, ManualSessionManager } from "./manual-session.js";
-import { getOrCreate, get as peekSession, set as setSession, remove as removeSession, getDefaultOrThrow, listSessions, admitOrQueueStart, promoteQueued, maxActiveSessions, occupiedSlugs, startReaper } from "./session-pool.js";
+import { getOrCreate, get as peekSession, set as setSession, remove as removeSession, getDefaultOrThrow, listSessions, admitOrQueueStart, promoteQueued, maxActiveSessions, occupiedSlugs, startReaper, admitOrQueueBatch, promoteQueuedBatch, dequeueBatch, maxActiveBatches, activeBatchSlugs } from "./session-pool.js";
 import { deriveGameRecordIdentity } from "../step1-crawl/crawler.js";
 
 // Boot the idle-reaper once when the manual routes module loads (server boot).
@@ -262,8 +262,12 @@ export async function handleManualRoute(
     // DELETE /api/qa/manual/game/:slug — delete a game + ALL related fixtures
     if (url.startsWith("/api/qa/manual/game/") && method === "DELETE") {
       const slug = decodeURIComponent(url.slice("/api/qa/manual/game/".length));
+      // Drop any still-queued batch for this game BEFORE deletion so it's not
+      // promoted into a session that's about to disappear.
+      const doomed = peekSession(slug);
+      if (doomed) dequeueBatch(doomed);
       const r = await deleteGame(slug);
-      if (r.ok) promoteQueued(); // deleting an active game freed a slot
+      if (r.ok) { promoteQueued(); promoteQueuedBatch(); } // freed a start slot and possibly a batch slot
       return sendJson(res, r.ok ? 200 : 400, r), true;
     }
 
@@ -1403,8 +1407,19 @@ CHECK_CODE RULES
     // combined summary so dashboard can show a single "game ready" verdict.
     if (url === "/api/qa/manual/auto-onboard" && method === "POST") {
       const body = await asJsonBody<{ deepDiscover?: { maxDepth?: number; maxAiCalls?: number; maxStates?: number }; calibrationSpinsPerLevel?: number; resume?: boolean }>(req);
-      const r = await resolveSession(req, body as any, url).autoOnboard(body);
-      return sendJson(res, r.ok ? 200 : 400, r), true;
+      const sess = resolveSession(req, body as any, url);
+      // Cheap synchronous guards preserve the immediate 400/409 UX. Deeper
+      // validation stays inside autoOnboard() and surfaces via /status polling.
+      const gate = sess.autoOnboardPreflight();
+      if (!gate.ok) return sendJson(res, gate.code ?? 400, gate), true;
+      // Gate concurrency: max QA_MAX_ACTIVE_BATCHES games running run-all /
+      // auto-onboard at once; else FIFO-queue. Runs in the BACKGROUND (202 now,
+      // dashboard polls /status) so a queued batch can be promoted later with no
+      // live HTTP request. promoteQueuedBatch is passed as onSettled to avoid a
+      // manual-session ⇄ session-pool import cycle.
+      const adm = admitOrQueueBatch(sess, "auto-onboard", () => sess.autoOnboardInBackground(body, promoteQueuedBatch));
+      if (!adm.admitted) console.log(`[manual] auto-onboard QUEUED at #${adm.position} — cap ${maxActiveBatches()} reached; slots held by: ${activeBatchSlugs().join(", ") || "(resolving)"}`);
+      return sendJson(res, 202, sess.status()), true;
     }
 
     // PUT /api/qa/manual/game-spec { betMin?, betMax?, defaultBet?, betLadder?,
@@ -1538,8 +1553,15 @@ CHECK_CODE RULES
     // exist (cold-started game). Returns per-case status + aggregate counts.
     if (url === "/api/qa/manual/run-all-testcases" && method === "POST") {
       const body = await asJsonBody<{ continueOnFail?: boolean; mode?: "all" | "unrun" | "failed" }>(req);
-      const r = await resolveSession(req, body as any, url).runAllTestcases(body);
-      return sendJson(res, r.ok ? 200 : 400, r), true;
+      const sess = resolveSession(req, body as any, url);
+      const gate = sess.runAllPreflight();
+      if (!gate.ok) return sendJson(res, gate.code ?? 400, gate), true;
+      // Gate concurrency (see auto-onboard route above). Background + 202 so a
+      // queued run-all can be promoted when a slot frees; the dashboard already
+      // polls runAllProgress.lastFinishedAt to detect completion.
+      const adm = admitOrQueueBatch(sess, "run-all", () => sess.runAllTestcasesInBackground(body, promoteQueuedBatch));
+      if (!adm.admitted) console.log(`[manual] run-all QUEUED at #${adm.position} — cap ${maxActiveBatches()} reached; slots held by: ${activeBatchSlugs().join(", ") || "(resolving)"}`);
+      return sendJson(res, 202, sess.status()), true;
     }
 
     // GET /api/qa/manual/discovery-snapshots?gameSlug=<slug>
@@ -1715,8 +1737,11 @@ CHECK_CODE RULES
 
     // POST /api/qa/manual/stop
     if (url === "/api/qa/manual/stop" && method === "POST") {
-      await resolveSession(req, null, url).stop();
-      promoteQueued(); // a slot just freed → admit the next queued game
+      const sess = resolveSession(req, null, url);
+      await sess.stop();
+      dequeueBatch(sess);   // drop this game's still-queued batch, if any
+      promoteQueued();      // a start slot just freed → admit the next queued game
+      promoteQueuedBatch(); // a batch slot may have freed too → admit next queued batch
       return sendJson(res, 200, { ok: true }), true;
     }
 

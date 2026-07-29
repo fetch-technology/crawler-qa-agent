@@ -1064,6 +1064,15 @@
         if (btnRunAll) btnRunAll.disabled = true;
         if (btnRunUnrun) btnRunUnrun.disabled = true;
         if (btnRunFailed) btnRunFailed.disabled = true;
+      } else if (status.batchQueuedPosition != null) {
+        // Waiting for a run slot (max QA_MAX_ACTIVE_BATCHES games already running
+        // run-all / auto-onboard). Show it here + keep the run buttons disabled so
+        // QA doesn't stack duplicate triggers.
+        banner.style.display = "block";
+        banner.innerHTML = `<strong>Queued for a run slot</strong> #${status.batchQueuedPosition} of ${status.batchQueuedTotal} — starts when a running game finishes.`;
+        if (btnRunAll) btnRunAll.disabled = true;
+        if (btnRunUnrun) btnRunUnrun.disabled = true;
+        if (btnRunFailed) btnRunFailed.disabled = true;
       } else {
         if (btnRunAll) btnRunAll.disabled = false;
         if (btnRunUnrun) btnRunUnrun.disabled = false;
@@ -1215,7 +1224,13 @@
           btnPause.style.display = "none";
         }
       }
-      if (onboarding) {
+      // Keep the /status poller alive not just while onboarding, but also while
+      // this game holds or is waiting for a batch slot. The auto-onboard route
+      // now returns 202 BEFORE autoOnboardInProgress flips true (it's set after
+      // awaits inside autoOnboard), so we key on occupiesBatchSlot (set
+      // synchronously at admission) + batchQueuedPosition to avoid the poller
+      // dying in that window and missing the whole run.
+      if (onboarding || status.occupiesBatchSlot || status.batchQueuedPosition != null) {
         startOnboardPolling();
       } else {
         stopOnboardPolling();
@@ -2346,6 +2361,13 @@
         startRunAllPolling();
         return;
       }
+      // Already waiting in the batch queue → don't POST again (would double-queue).
+      // Just follow progress; it'll start when a run slot frees.
+      if (status.batchQueuedPosition != null) {
+        toast(`Run All queued for a run slot #${status.batchQueuedPosition} of ${status.batchQueuedTotal}…`);
+        startRunAllPolling();
+        return;
+      }
       const startIso = new Date().toISOString();
       appendLog(`[run-all] server-side ${mode} start requested for ${gameSlug}`);
       const modeLabel = mode === "unrun" ? "Run Unrun" : mode === "failed" ? "Run Failed" : "Run All";
@@ -2370,6 +2392,13 @@
         let s = null;
         try { s = await api("/api/qa/manual/status"); } catch { continue; }
         renderStatus(s);
+        // Capped out → waiting for a run slot (max concurrent run-all/onboard
+        // reached). Keep polling; it starts when a running game finishes.
+        if (s.batchQueuedPosition != null) {
+          const el = $("#runAllProgress");
+          if (el) el.textContent = `queued #${s.batchQueuedPosition}/${s.batchQueuedTotal}`;
+          continue;
+        }
         const done = !s.runAllInProgress
           && s.runAllProgress?.lastFinishedAt
           && s.runAllProgress.lastFinishedAt > startIso;
@@ -6091,18 +6120,18 @@
       btn.disabled = true; btn.textContent = "Onboarding…";
       toast(willResume ? "Resuming Auto-Onboard from prior state…" : "Auto-Onboard started: deep-discover → payout calibrate…");
       try {
+        // Route now returns 202 immediately (background run + admission queue).
+        // The body is a status() snapshot, NOT the final discover/payout result —
+        // completion + final toast are handled by the renderStatus poller when
+        // autoOnboardInProgress transitions true→false. Here we only report
+        // whether it started now or is waiting for a run slot.
         const r = await api("/api/qa/manual/auto-onboard", { method: "POST", body: { resume: !forceFresh } });
-        // Surface the discover sub-result in the persistent panel — it has the
-        // safetyReport + warnings that explain why zero elements might appear.
-        renderDiscoverResult("Auto-Onboard / discover", r.discover);
-        if (r.ok) {
-          await refresh();
-          const p = r.payout || {};
-          const pNote = p.ok ? `payout: ${p.trusted ? "TRUSTED" : "untrusted"} (${p.combosMatched}/${p.combosTotal} combos, coins=${(p.coinLevels || []).length})` : `payout: ${p.reason || "skipped"}`;
-          toast(`Auto-Onboard done — ${pNote}`);
+        if (r && r.batchQueuedPosition != null) {
+          toast(`Auto-Onboard queued for a run slot #${r.batchQueuedPosition} of ${r.batchQueuedTotal} — starts when a running game finishes.`);
         } else {
-          toast(`Auto-Onboard failed: ${r.reason}`, true);
+          toast(willResume ? "Auto-Onboard resuming in background…" : "Auto-Onboard running in background…");
         }
+        if (r) renderStatus(r);
       } catch (err) { toast(err.message, true); }
       finally { btn.disabled = false; btn.textContent = prev; }
     };

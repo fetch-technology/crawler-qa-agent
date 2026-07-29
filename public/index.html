@@ -246,6 +246,17 @@
       const badge = g.live
         ? `<span class="badge badge-active">live</span>`
         : `<span class="badge badge-idle">idle</span>`;
+      // Batch-concurrency badge: running one of the gated batches, or waiting in
+      // the FIFO batch queue (max QA_MAX_ACTIVE_BATCHES run concurrently).
+      const lv = g.live || {};
+      let batchBadge = "";
+      if (lv.batchQueuedPosition != null) {
+        batchBadge = `<span class="badge badge-busy" title="Waiting for a run slot — max concurrent run-all/auto-onboard reached">queued #${lv.batchQueuedPosition}</span>`;
+      } else if (lv.autoOnboardInProgress) {
+        batchBadge = `<span class="badge badge-busy">onboarding</span>`;
+      } else if (lv.runAllInProgress) {
+        batchBadge = `<span class="badge badge-busy">running tests</span>`;
+      }
       const reg = g.registryCount !== null
         ? `<div class="stat"><div class="stat-label">Registry</div><div class="stat-val">${g.registryCount}</div></div>`
         : `<div class="stat"><div class="stat-label">Registry</div><div class="stat-val" style="color: var(--muted);">—</div></div>`;
@@ -261,7 +272,7 @@
         <div class="card" data-slug="${escapeHtml(g.slug)}">
           <div class="card-head">
             <div class="card-slug">${escapeHtml(g.slug)}</div>
-            ${badge}
+            ${badge}${batchBadge}
           </div>
           ${identity}
           <div class="stats">${reg}${verified}${created}</div>

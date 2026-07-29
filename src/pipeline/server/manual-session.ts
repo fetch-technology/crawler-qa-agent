@@ -290,6 +290,10 @@ export type SessionStatus = {
    *  uses this to swap the button label "Auto-Onboard" → "Resume
    *  Auto-Onboard (N/M done)" so QA can pick up where they left off. */
   autoOnboardResumeAvailable: boolean;
+  /** ISO of the last auto-onboard finish (success or failure). Set when the
+   *  background auto-onboard wrapper settles. Lets the dashboard detect
+   *  completion by polling /status when the route returns 202 immediately. */
+  autoOnboardLastFinishedAt: string | null;
   /** True when QA clicked Pause and the server is currently finishing the
    *  active phase before honoring the request. Dashboard shows "Pausing
    *  after current phase…" so QA knows clicking again is a no-op.
@@ -324,6 +328,16 @@ export type SessionStatus = {
    *  "Queued #position of total" while polling /status. */
   queuedPosition: number | null;
   queuedTotal: number;
+  /** Batch-admission state (SEPARATE from the start queue above). When
+   *  QA_MAX_ACTIVE_BATCHES games are already running run-all-testcases or
+   *  auto-onboard, a further batch trigger waits in a FIFO batch queue.
+   *  `occupiesBatchSlot` = this game is running one of the gated batches;
+   *  `batchQueuedPosition` is 1-based (null when not queued); `batchQueuedTotal`
+   *  is the batch-queue length. The dashboard shows "Queued for a run slot
+   *  #position of total" while polling /status. */
+  occupiesBatchSlot: boolean;
+  batchQueuedPosition: number | null;
+  batchQueuedTotal: number;
   /** ISO of the last mutating interaction — feeds the idle-reaper that
    *  auto-stops an abandoned session to free a slot for a queued game. */
   lastActivityAt: string | null;
@@ -767,6 +781,20 @@ export class ManualSessionManager {
   /** Admission/queue bookkeeping (set by session-pool's admission logic). */
   private queuedPosition: number | null = null;
   private queuedTotal = 0;
+  /** Batch-admission markers — OWNED by the *InBackground wrappers, flipped
+   *  SYNCHRONOUSLY before the first await (unlike runAllInProgress /
+   *  autoOnboardInProgress, which flip only after awaits). session-pool's
+   *  countActiveBatches() reads occupiesBatchSlot() (an OR of these) so
+   *  promoteQueuedBatch never over-admits a 3rd concurrent batch. */
+  private runAllBatchActive = false;
+  private autoOnboardBatchActive = false;
+  /** Batch-queue position (set by session-pool's batch-admission logic). */
+  private batchQueuedPosition: number | null = null;
+  private batchQueuedTotal = 0;
+  /** Finish timestamp for auto-onboard — lets the dashboard detect completion
+   *  by polling /status when the route returns 202 immediately (queued or not),
+   *  mirroring startLastFinishedAt. */
+  private autoOnboardLastFinishedAt: string | null = null;
   /** Epoch ms of the last mutating interaction — drives idle-reaping. */
   private lastActivityAt = Date.now();
   private generateCatalogInProgress = false;
@@ -991,6 +1019,78 @@ export class ManualSessionManager {
     this.queuedTotal = total;
   }
 
+  /** Counts toward the batch cap (run-all-testcases + auto-onboard): running
+   *  one of the two gated batches. Read by session-pool.countActiveBatches().
+   *  These markers are flipped SYNCHRONOUSLY by the *InBackground wrappers so
+   *  admission never over-admits. One game = at most 1 slot (OR). */
+  occupiesBatchSlot(): boolean {
+    return this.runAllBatchActive || this.autoOnboardBatchActive;
+  }
+
+  /** Set/clear batch-queue position (session-pool owns the batch queue). */
+  setBatchQueued(position: number | null, total: number): void {
+    this.batchQueuedPosition = position;
+    this.batchQueuedTotal = total;
+  }
+
+  /** Cheap synchronous guards for /run-all-testcases, mirroring the early
+   *  rejects inside runAllTestcases so the route can 400/409 immediately
+   *  before admission. Deeper validation (catalog present) stays inside the
+   *  batch and surfaces via polling. */
+  runAllPreflight(): { ok: boolean; reason?: string; code?: number } {
+    if (!this.session || !this.gameSlug) return { ok: false, reason: "no active session — Open the game first" };
+    if (this.runAllBatchActive || this.runAllInProgress) return { ok: false, reason: "run-all already in progress for this game", code: 409 };
+    return { ok: true };
+  }
+
+  /** Cheap synchronous guards for /auto-onboard. */
+  autoOnboardPreflight(): { ok: boolean; reason?: string; code?: number } {
+    if (!this.session || !this.registry || !this.gameSlug) return { ok: false, reason: "no active session — Open the game first" };
+    if (this.autoOnboardBatchActive || this.autoOnboardInProgress) return { ok: false, reason: "another auto-onboard is already in progress for this game", code: 409 };
+    return { ok: true };
+  }
+
+  /** Fire-and-forget run-all with SYNC batch-slot bookkeeping + request-context
+   *  snapshot. Mirrors startInBackground: the marker flips before the first
+   *  await so session-pool sees the slot immediately; the inner runAllTestcases
+   *  keeps its own runAllInProgress guard/flag/clear untouched. `onSettled` is
+   *  invoked in finally (route passes session-pool.promoteQueuedBatch) so the
+   *  next queued batch starts — passed in to avoid a manual-session ⇄
+   *  session-pool import cycle. */
+  runAllTestcasesInBackground(
+    body: { continueOnFail?: boolean; mode?: "all" | "unrun" | "failed" } = {},
+    onSettled?: () => void,
+  ): void {
+    if (this.runAllBatchActive) return; // idempotent — already running its batch
+    this.runAllBatchActive = true;      // SYNC flip → occupiesBatchSlot() true NOW
+    const ctx = requestContext.getStore();
+    const run = <T>(fn: () => Promise<T>): Promise<T> => ctx ? requestContext.run(ctx, fn) : fn();
+    void run(() => this.runAllTestcases(body))
+      .catch((err) => console.error(`[manual/run-all-bg] ${this.gameSlug ?? "?"}: ${err instanceof Error ? err.message : String(err)}`))
+      .finally(() => {
+        this.runAllBatchActive = false;
+        try { onSettled?.(); } catch (err) { console.error("[manual/run-all-bg] onSettled failed:", err); }
+      });
+  }
+
+  /** Fire-and-forget auto-onboard with the same discipline. */
+  autoOnboardInBackground(
+    body: { deepDiscover?: { maxDepth?: number; maxAiCalls?: number; maxStates?: number }; calibrationSpinsPerLevel?: number; resume?: boolean } = {},
+    onSettled?: () => void,
+  ): void {
+    if (this.autoOnboardBatchActive) return; // idempotent
+    this.autoOnboardBatchActive = true;      // SYNC flip
+    const ctx = requestContext.getStore();
+    const run = <T>(fn: () => Promise<T>): Promise<T> => ctx ? requestContext.run(ctx, fn) : fn();
+    void run(() => this.autoOnboard(body))
+      .catch((err) => console.error(`[manual/auto-onboard-bg] ${this.gameSlug ?? "?"}: ${err instanceof Error ? err.message : String(err)}`))
+      .finally(() => {
+        this.autoOnboardBatchActive = false;
+        this.autoOnboardLastFinishedAt = new Date().toISOString();
+        try { onSettled?.(); } catch (err) { console.error("[manual/auto-onboard-bg] onSettled failed:", err); }
+      });
+  }
+
   /** Idle ms if this session is REAPABLE (auto-stoppable to free a slot):
    *  it holds a live browser, is running no batch, and has been idle for at
    *  least `graceMs`. Returns -1 when not reapable. */
@@ -1071,6 +1171,10 @@ export class ManualSessionManager {
       startError: this.startError,
       queuedPosition: this.queuedPosition,
       queuedTotal: this.queuedTotal,
+      occupiesBatchSlot: this.occupiesBatchSlot(),
+      batchQueuedPosition: this.batchQueuedPosition,
+      batchQueuedTotal: this.batchQueuedTotal,
+      autoOnboardLastFinishedAt: this.autoOnboardLastFinishedAt,
       lastActivityAt: this.lastActivityAt ? new Date(this.lastActivityAt).toISOString() : null,
       generateCatalogInProgress: this.generateCatalogInProgress,
       generateCatalogStartedAt: this.generateCatalogStartedAt,
