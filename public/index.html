@@ -308,7 +308,22 @@
       if (chk) chk.checked = enabled;
       const stateEl = $("#autoSchedState");
       const queue = (sched && sched.queue) || [];
-      if (stateEl) stateEl.textContent = enabled ? `ON · ${queue.length}/10 marked` : `OFF · ${queue.length}/10 marked`;
+      // Claude quota gate: when the master token is rate-limited / out of quota,
+      // the scheduler pauses opening NEW games until a backoff window elapses.
+      const quota = (sched && sched.quota) || null;
+      const blockedMs = quota && quota.blockedUntil ? quota.blockedUntil - Date.now() : 0;
+      let quotaNote = "";
+      if (blockedMs > 0) {
+        const mins = Math.ceil(blockedMs / 60000);
+        const why = quota.reason === "auth" ? "master token missing/invalid"
+          : quota.reason === "rate_limit" ? "Claude usage/rate limit reached"
+          : "Claude call failed";
+        quotaNote = ` · ⏸ paused (${why}) — retry in ~${mins}m`;
+      }
+      if (stateEl) {
+        stateEl.textContent = `${enabled ? "ON" : "OFF"} · ${queue.length}/10 marked${quotaNote}`;
+        stateEl.style.color = blockedMs > 0 ? "var(--warn)" : "var(--muted)";
+      }
       const panel = $("#autoQueue");
       if (!panel) return;
       if (queue.length === 0) {

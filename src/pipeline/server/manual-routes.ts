@@ -3,7 +3,7 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { listRegisteredGames, listCopySources, updateGameUrl, deleteGame, listAutoOnboardQueue, ManualSessionManager } from "./manual-session.js";
-import { getOrCreate, get as peekSession, set as setSession, remove as removeSession, getDefaultOrThrow, listSessions, admitOrQueueStart, promoteQueued, maxActiveSessions, occupiedSlugs, startReaper, admitOrQueueBatch, promoteQueuedBatch, dequeueBatch, maxActiveBatches, activeBatchSlugs, startAutoOnboardScheduler, autoOnboardSchedulerTick } from "./session-pool.js";
+import { getOrCreate, get as peekSession, set as setSession, remove as removeSession, getDefaultOrThrow, listSessions, admitOrQueueStart, promoteQueued, maxActiveSessions, occupiedSlugs, startReaper, admitOrQueueBatch, promoteQueuedBatch, dequeueBatch, maxActiveBatches, activeBatchSlugs, startAutoOnboardScheduler, autoOnboardSchedulerTick, getSchedulerQuotaState } from "./session-pool.js";
 import { setAutoOnboardFlags } from "../registry/meta.js";
 import { loadSchedulerConfig, setSchedulerEnabled } from "../registry/auto-scheduler-store.js";
 import { deriveGameRecordIdentity } from "../step1-crawl/crawler.js";
@@ -186,7 +186,7 @@ export async function handleManualRoute(
     // queue (priority order + sched status + live eligibility). Read-only.
     if (url === "/api/qa/manual/auto-schedule" && method === "GET") {
       const [cfg, queue] = await Promise.all([loadSchedulerConfig(), listAutoOnboardQueue()]);
-      return sendJson(res, 200, { enabled: cfg.enabled, queue, maxReady: 10 }), true;
+      return sendJson(res, 200, { enabled: cfg.enabled, queue, maxReady: 10, quota: getSchedulerQuotaState() }), true;
     }
 
     // POST /api/qa/manual/auto-schedule/master { enabled } — toggle the whole

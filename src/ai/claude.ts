@@ -267,6 +267,39 @@ export async function askClaude(args: {
   return text;
 }
 
+export type ClaudeQuotaProbe = {
+  ok: boolean;
+  /** Present when ok === false. rate_limit = usage/rate/quota exhausted;
+   *  auth = no/invalid master token; error = other transient failure. */
+  reason?: "rate_limit" | "auth" | "error";
+  detail?: string;
+};
+
+/** Cheap liveness/quota probe for the auto-onboard scheduler: fires one tiny
+ *  askClaude ping through the SAME auth path a real onboard uses (per-request
+ *  token if present, else CLAUDE_CODE_OAUTH_TOKEN), so it detects the master
+ *  token being rate-limited / usage-exhausted / missing BEFORE the scheduler
+ *  spends a browser + a 30-min onboard that would just fail. Never throws —
+ *  classifies the failure so the caller can back off vs surface an auth issue. */
+export async function probeClaudeQuota(): Promise<ClaudeQuotaProbe> {
+  try {
+    await askClaude({
+      content: "ping",
+      system: "Reply with the single word: ok.",
+      maxTurns: 1,
+      timeoutMs: 30_000,
+      label: "quota-probe",
+    });
+    return { ok: true };
+  } catch (err) {
+    if (err instanceof MissingClaudeTokenError) return { ok: false, reason: "auth", detail: err.message };
+    const msg = err instanceof Error ? err.message : String(err);
+    // askClaude wraps rate/usage/quota failures as "… Claude usage exhausted …".
+    if (/usage exhausted/i.test(msg) || isUsageExhaustedMessage(msg)) return { ok: false, reason: "rate_limit", detail: msg };
+    return { ok: false, reason: "error", detail: msg };
+  }
+}
+
 export function extractJsonFromText<T = unknown>(raw: string): T | null {
   const trimmed = raw.trim();
   const fence = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/);

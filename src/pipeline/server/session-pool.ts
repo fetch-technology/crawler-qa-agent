@@ -321,6 +321,22 @@ const SCHED_INTERVAL_MS = 30_000;
  *  tight failure loop). Re-marking (toggle off→on) resets the counter. */
 export const MAX_SCHED_ATTEMPTS = 2;
 
+// ---- Claude quota gate -------------------------------------------------------
+// Before opening a NEW game to onboard (which burns dozens of Claude calls over
+// 30+ min), the scheduler probes the master token's quota. If rate-limited /
+// usage-exhausted, it pauses admitting new onboards for a long backoff (limits
+// reset on the order of minutes/hours) rather than re-probing every 30s tick.
+const QUOTA_BACKOFF_MS = Math.max(60_000, Number(process.env.QA_QUOTA_BACKOFF_MS ?? 20 * 60_000));   // 20 min
+const QUOTA_PROBE_TTL_MS = Math.max(30_000, Number(process.env.QA_QUOTA_PROBE_TTL_MS ?? 5 * 60_000)); // trust a good probe this long
+let quotaBackoffUntil = 0;   // epoch ms; while now < this, skip admitting new onboards
+let quotaProbeOkUntil = 0;   // epoch ms; while now < this, skip re-probing (quota believed OK)
+let lastQuotaReason: "rate_limit" | "auth" | "error" | null = null;
+
+/** Current quota-gate state for the dashboard (why new onboards are paused). */
+export function getSchedulerQuotaState(): { blockedUntil: number; reason: "rate_limit" | "auth" | "error" | null } {
+  return { blockedUntil: quotaBackoffUntil, reason: lastQuotaReason };
+}
+
 /** Minimal shape the pure selection helper needs — matches
  *  manual-session.AutoOnboardQueueEntry structurally. */
 export type SchedulableGame = {
@@ -372,6 +388,35 @@ export async function autoOnboardSchedulerTick(): Promise<void> {
     const { setAutoOnboardFlags } = await import("../registry/meta.js");
 
     await reconcileStaleRunning();
+
+    // Claude quota gate: before opening a NEW game, make sure the master token
+    // still has quota. While backing off from a prior rate-limit, do nothing.
+    const nowMs = Date.now();
+    if (nowMs < quotaBackoffUntil) return;
+    if (nowMs >= quotaProbeOkUntil) {
+      // Only spend a probe when there's actually a game to admit + a free slot
+      // (avoid probing on idle ticks). Peek without mutating anything.
+      const slotFree = countActiveBatches() < MAX_ACTIVE_BATCHES && countOccupiedSlots() < MAX_ACTIVE;
+      if (slotFree) {
+        const peek = selectNextAutoOnboard(
+          await listAutoOnboardQueue(),
+          (slug) => { const s = get(slug); return !!s && s.hasActiveBatch(); },
+          MAX_SCHED_ATTEMPTS,
+        );
+        if (peek) {
+          const { probeClaudeQuota } = await import("../../ai/claude.js");
+          const probe = await probeClaudeQuota();
+          if (!probe.ok) {
+            quotaBackoffUntil = Date.now() + QUOTA_BACKOFF_MS;
+            lastQuotaReason = probe.reason ?? "error";
+            console.log(`[auto-scheduler] Claude ${probe.reason} — pausing new onboards for ${Math.round(QUOTA_BACKOFF_MS / 60_000)}m (${probe.detail ?? ""})`);
+            return;
+          }
+          quotaProbeOkUntil = Date.now() + QUOTA_PROBE_TTL_MS; // quota OK → skip re-probing for a while
+          lastQuotaReason = null;
+        }
+      }
+    }
 
     // Recompute both counters each iteration: resume() flips occupiesSlot()
     // synchronously and autoOnboardInBackground flips occupiesBatchSlot()
@@ -501,6 +546,9 @@ export function _resetForTest(): void {
   startQueue.length = 0;
   batchQueue.length = 0;
   tickRunning = false;
+  quotaBackoffUntil = 0;
+  quotaProbeOkUntil = 0;
+  lastQuotaReason = null;
   stopReaper();
   stopAutoOnboardScheduler();
 }
